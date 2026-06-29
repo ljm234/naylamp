@@ -19,9 +19,10 @@ func (idx *Index) randomLayer() int {
 }
 
 // Insert adds the vector with the given id to the index and wires it into the
-// graph. It assigns a random top layer, then on each layer finds the nearest
-// existing nodes and connects to them bidirectionally, so future searches can
-// navigate to and through the new node.
+// graph. If the id already exists, it is removed first so the update does not
+// leave stale connections pointing at an outdated node (an upsert is therefore
+// a clean delete-then-insert). It assigns a random top layer, then on each
+// layer finds the nearest existing nodes and connects bidirectionally.
 func (idx *Index) Insert(id uint64) error {
 	data, ok := idx.vectorData(id)
 	if !ok {
@@ -30,6 +31,13 @@ func (idx *Index) Insert(id uint64) error {
 
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
+
+	// If this id is already in the graph (an update), remove the old node and
+	// all its connections first. Otherwise stale edges would linger and corrupt
+	// search results. deleteLocked assumes the lock is already held.
+	if _, exists := idx.nodes[id]; exists {
+		idx.deleteLocked(id)
+	}
 
 	topLayer := idx.randomLayer()
 	n := newNode(id, topLayer)

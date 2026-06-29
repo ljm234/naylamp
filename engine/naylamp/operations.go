@@ -35,8 +35,15 @@ func (c *Collection) Query(data []float32, k int) ([]vector.Neighbor, error) {
 	return c.index.Search(data, k), nil
 }
 
-// Delete removes a vector from the collection's store. The id is also excluded
-// from future search results. Returns vector.ErrNotFound if the id is unknown.
+// Delete removes a vector from the collection: it is dropped from both the
+// store (ground-truth data) and the HNSW index (graph structure). Removing it
+// from the index is essential, otherwise the graph would keep a "ghost" node
+// pointing at data that no longer exists. Returns vector.ErrNotFound if the id
+// is unknown to the store.
 func (c *Collection) Delete(id uint64) error {
-	return c.store.Delete(id)
+	if err := c.store.Delete(id); err != nil {
+		return err
+	}
+	c.index.Delete(id)
+	return nil
 }
