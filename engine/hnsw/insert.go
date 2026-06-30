@@ -21,8 +21,9 @@ func (idx *Index) randomLayer() int {
 // Insert adds the vector with the given id to the index and wires it into the
 // graph. If the id already exists, it is removed first so the update does not
 // leave stale connections pointing at an outdated node (an upsert is therefore
-// a clean delete-then-insert). It assigns a random top layer, then on each
-// layer finds the nearest existing nodes and connects bidirectionally.
+// a clean delete-then-insert). On each layer it selects up to M diverse
+// neighbors and links to them; existing neighbors that grow past their cap are
+// pruned, but the new node is not (it already chose its best M).
 func (idx *Index) Insert(id uint64) error {
 	data, ok := idx.vectorData(id)
 	if !ok {
@@ -40,8 +41,12 @@ func (idx *Index) Insert(id uint64) error {
 	}
 
 	topLayer := idx.randomLayer()
-	n := newNode(id, topLayer)
+	n := newNode(id, data, topLayer)
 	idx.nodes[id] = n
+
+	// The new vector's norm, computed once and reused for the layer searches
+	// below (matching the query-norm optimization used during queries).
+	dataNorm := n.norm
 
 	// First node ever: it becomes the entry point, no neighbors to connect.
 	if !idx.hasEntry {
@@ -55,27 +60,33 @@ func (idx *Index) Insert(id uint64) error {
 	// layer, greedily moving to the closest node (ef = 1) to get a good entry.
 	entry := []uint64{idx.entryPoint}
 	for layer := idx.maxLayer; layer > topLayer; layer-- {
-		found := idx.searchLayer(data, entry, 1, layer)
+		found := idx.searchLayer(data, dataNorm, entry, 1, layer)
 		if len(found) > 0 {
 			entry = []uint64{found[0].id}
 		}
 	}
 
-	// From the new node's top layer down to 0, find nearby nodes and connect.
+	// From the new node's top layer down to 0, select a diverse set of M
+	// neighbors and link to them. The new node's own list is built exactly from
+	// these M (already optimal), so it is never shrunk. Each existing neighbor
+	// gains one edge and is shrunk only if it now exceeds its cap.
 	for layer := min(topLayer, idx.maxLayer); layer >= 0; layer-- {
-		found := idx.searchLayer(data, entry, idx.params.EfConstruction, layer)
+		found := idx.searchLayer(data, dataNorm, entry, idx.params.EfConstruction, layer)
+		selected := idx.selectNeighbors(found, idx.params.M)
 
-		// Connect to the closest M neighbors on this layer, both directions.
-		count := 0
-		for _, c := range found {
-			if count >= idx.params.M {
-				break
+		maxConn := idx.maxConnections(layer)
+		for _, c := range selected {
+			nbr, ok := idx.nodes[c.id]
+			if !ok || layer > nbr.layer() {
+				continue
 			}
-			idx.connect(id, c.id, layer)
-			count++
+			// Link both directions.
+			n.neighbors[layer] = append(n.neighbors[layer], c.id)
+			nbr.neighbors[layer] = append(nbr.neighbors[layer], id)
+			// Only the existing neighbor may have overflowed; prune it if so.
+			idx.shrinkNeighbors(c.id, layer, maxConn)
 		}
 
-		// Carry the closest found node forward as the entry for the next layer.
 		if len(found) > 0 {
 			entry = []uint64{found[0].id}
 		}
@@ -89,19 +100,12 @@ func (idx *Index) Insert(id uint64) error {
 	return nil
 }
 
-// connect adds a bidirectional link between two nodes on the given layer.
-// "Bidirectional" means each node lists the other as a neighbor, so the graph
-// can be traversed from either side.
-func (idx *Index) connect(a, b uint64, layer int) {
-	nodeA, okA := idx.nodes[a]
-	nodeB, okB := idx.nodes[b]
-	if !okA || !okB {
-		return
+// maxConnections returns the maximum number of neighbors a node may keep on the
+// given layer. Following the HNSW paper, layer 0 allows 2*M (it is the densest,
+// most-traversed layer) while upper layers allow M.
+func (idx *Index) maxConnections(layer int) int {
+	if layer == 0 {
+		return 2 * idx.params.M
 	}
-	if layer <= nodeA.layer() {
-		nodeA.neighbors[layer] = append(nodeA.neighbors[layer], b)
-	}
-	if layer <= nodeB.layer() {
-		nodeB.neighbors[layer] = append(nodeB.neighbors[layer], a)
-	}
+	return idx.params.M
 }

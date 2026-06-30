@@ -12,47 +12,109 @@ func (idx *Index) Delete(id uint64) {
 }
 
 // deleteLocked performs the actual removal and ASSUMES the caller already holds
-// idx.mu. It exists so Insert (which already holds the lock during an update)
-// can remove a stale node without trying to lock twice, which would deadlock.
-// It drops the node and scrubs every reference to it from its neighbors'
-// adjacency lists on all layers. If the removed node was the entry point, a new
-// one is chosen from whatever remains.
+// idx.mu. It drops the node, scrubs every reference to it from its neighbors'
+// adjacency lists, and then repairs the hole: the now-disconnected neighbors
+// are re-linked to each other so the graph does not fragment.
+//
+// Without this repair, every delete leaves the removed node's neighbors with
+// one fewer connection and nothing to replace it. Over many deletes, a node can
+// lose all its neighbors and become unreachable, which the deterministic
+// simulation test exposed (a node present in the graph but with zero usable
+// links, so search could never reach it).
 func (idx *Index) deleteLocked(id uint64) {
 	target, ok := idx.nodes[id]
 	if !ok {
 		return // nothing to delete
 	}
 
-	// Remove this id from every neighbor's adjacency list, on every layer it
-	// participated in.
+	// For each layer, collect the target's neighbors, detach the target from
+	// them, then re-link those neighbors to each other to fill the hole.
 	for layer := 0; layer <= target.layer(); layer++ {
-		for _, neighborID := range target.neighbors[layer] {
-			neighbor, ok := idx.nodes[neighborID]
-			if !ok || layer > neighbor.layer() {
+		neighbors := target.neighbors[layer]
+
+		// Detach target from each neighbor's adjacency list.
+		for _, nbrID := range neighbors {
+			nbr, ok := idx.nodes[nbrID]
+			if !ok || layer > nbr.layer() {
 				continue
 			}
-			neighbor.neighbors[layer] = removeID(neighbor.neighbors[layer], id)
+			nbr.neighbors[layer] = removeID(nbr.neighbors[layer], id)
 		}
+
+		// Repair: re-link the orphaned neighbors to each other. They were all
+		// close to the deleted node, so they make good replacement links. We
+		// connect each to its nearest few among the group, capped by maxConn.
+		idx.repairNeighborhood(neighbors, layer)
 	}
 
 	// Remove the node itself.
 	delete(idx.nodes, id)
 
-	// If we just removed the entry point, pick a new one (the remaining node
-	// with the highest layer), or clear the entry if the graph is now empty.
+	// If we just removed the entry point, pick a new one.
 	if idx.hasEntry && idx.entryPoint == id {
 		idx.reassignEntryPoint()
 	}
 }
 
-// removeID returns the slice with the first occurrence of target removed.
-func removeID(ids []uint64, target uint64) []uint64 {
-	for i, v := range ids {
-		if v == target {
-			return append(ids[:i], ids[i+1:]...)
+// repairNeighborhood re-links a set of nodes (the former neighbors of a deleted
+// node) to each other on the given layer, so the graph stays connected after a
+// deletion. For each node in the group it adds links to the others it is not
+// already connected to, respecting the per-layer connection cap.
+func (idx *Index) repairNeighborhood(group []uint64, layer int) {
+	maxConn := idx.maxConnections(layer)
+
+	for _, aID := range group {
+		a, ok := idx.nodes[aID]
+		if !ok || layer > a.layer() {
+			continue
+		}
+
+		for _, bID := range group {
+			if aID == bID {
+				continue
+			}
+			if len(a.neighbors[layer]) >= maxConn {
+				break
+			}
+			b, ok := idx.nodes[bID]
+			if !ok || layer > b.layer() {
+				continue
+			}
+			// Skip if already connected.
+			if containsID(a.neighbors[layer], bID) {
+				continue
+			}
+			// Link both directions (each side respects its own cap).
+			a.neighbors[layer] = append(a.neighbors[layer], bID)
+			if len(b.neighbors[layer]) < maxConn && !containsID(b.neighbors[layer], aID) {
+				b.neighbors[layer] = append(b.neighbors[layer], aID)
+			}
 		}
 	}
-	return ids
+}
+
+// containsID reports whether ids contains target.
+func containsID(ids []uint64, target uint64) bool {
+	for _, v := range ids {
+		if v == target {
+			return true
+		}
+	}
+	return false
+}
+
+// removeID returns a NEW slice with the first occurrence of target removed.
+// It deliberately allocates a fresh slice rather than mutating in place, since
+// adjacency slices can share backing arrays after appends, and an in-place
+// removal would corrupt other nodes' neighbor lists.
+func removeID(ids []uint64, target uint64) []uint64 {
+	out := make([]uint64, 0, len(ids))
+	for _, v := range ids {
+		if v != target {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // reassignEntryPoint scans remaining nodes and sets the entry point to the one
@@ -64,7 +126,6 @@ func (idx *Index) reassignEntryPoint() {
 	bestLayer := -1
 	for nodeID, n := range idx.nodes {
 		nodeLayer := n.layer()
-		// Higher layer wins; on a tie, the smaller id wins (deterministic).
 		if nodeLayer > bestLayer || (nodeLayer == bestLayer && nodeID < bestID) {
 			bestLayer = nodeLayer
 			bestID = nodeID

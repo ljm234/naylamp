@@ -5,22 +5,30 @@ package hnsw
 import (
 	"math"
 	"math/rand/v2"
+	"reflect"
 	"sync"
 
 	"naylamp/engine/vector"
 )
 
-// Default index parameters. These are the well-established starting values
-// from the HNSW paper and are good for most datasets.
+// Default index parameters. These favor recall at larger scale (tens of
+// thousands of vectors and up), at the cost of more memory per node and
+// somewhat slower search. For small datasets, smaller values would be faster
+// with comparable recall.
 const (
 	// DefaultM is how many neighbor connections each node keeps per layer.
-	// Higher M means better search quality but more memory per node.
-	DefaultM = 16
+	// Higher M sustains recall as the dataset grows, at the cost of memory.
+	DefaultM = 32
 
 	// DefaultEfConstruction is how many candidate neighbors the builder
 	// considers when inserting a node. Higher means a better-quality graph
 	// but slower construction.
-	DefaultEfConstruction = 200
+	DefaultEfConstruction = 400
+
+	// DefaultEfSearch is how many candidates the search explores on layer 0.
+	// Higher sustains recall at scale, at the cost of slower queries. It must
+	// be >= k for a given query; Search raises it if not.
+	DefaultEfSearch = 300
 )
 
 // Params configures an HNSW index.
@@ -29,6 +37,8 @@ type Params struct {
 	M int
 	// EfConstruction is the size of the candidate list during insertion.
 	EfConstruction int
+	// EfSearch is the size of the candidate list during a query on layer 0.
+	EfSearch int
 }
 
 // DefaultParams returns Params populated with the standard values.
@@ -36,6 +46,7 @@ func DefaultParams() Params {
 	return Params{
 		M:              DefaultM,
 		EfConstruction: DefaultEfConstruction,
+		EfSearch:       DefaultEfSearch,
 	}
 }
 
@@ -49,6 +60,11 @@ type Index struct {
 
 	params Params
 	metric vector.MetricFunc
+
+	// useCosineFast is true when metric is vector.CosineDistance, enabling an
+	// internal fast path that reuses each node's precomputed norm instead of
+	// recomputing norms on every distance call.
+	useCosineFast bool
 
 	// vectorData returns the raw components for a given id, sourced from the
 	// vector store. The index needs these to measure distances during search.
@@ -68,13 +84,21 @@ type Index struct {
 // essential for the reproducible testing we add later.
 func NewIndex(params Params, metric vector.MetricFunc, vectorData func(id uint64) ([]float32, bool), seed uint64) *Index {
 	return &Index{
-		params:     params,
-		metric:     metric,
-		vectorData: vectorData,
-		nodes:      make(map[uint64]*node),
-		levelMult:  1.0 / math.Log(float64(params.M)),
-		rng:        rand.New(rand.NewPCG(seed, 0)), //nolint:gosec // deterministic RNG for reproducible graph construction, not security
+		params:        params,
+		metric:        metric,
+		useCosineFast: sameFunc(metric, vector.CosineDistance),
+		vectorData:    vectorData,
+		nodes:         make(map[uint64]*node),
+		levelMult:     1.0 / math.Log(float64(params.M)),
+		rng:           rand.New(rand.NewPCG(seed, 0)), //nolint:gosec // deterministic RNG for reproducible graph construction, not security
 	}
+}
+
+// sameFunc reports whether two metric functions are the same underlying
+// function, used to detect when the cosine fast path applies. Go cannot compare
+// funcs with ==, so we compare their code pointers via reflect.
+func sameFunc(a, b vector.MetricFunc) bool {
+	return reflect.ValueOf(a).Pointer() == reflect.ValueOf(b).Pointer()
 }
 
 // Len returns how many nodes are in the index.
