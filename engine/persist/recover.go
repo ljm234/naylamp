@@ -7,12 +7,25 @@ import (
 	"naylamp/engine/vector"
 )
 
+// compactionThreshold is the number of WAL records replayed during recovery
+// above which a fresh snapshot is taken automatically (startup compaction). If
+// recovery replayed at least this many records, the WAL was large enough that
+// snapshotting now makes the next startup fast; below it, snapshotting would be
+// wasted work. The value is a balance: low enough to catch slow recoveries, high
+// enough to skip trivial ones.
+const compactionThreshold = 5000
+
 // RecoveredState is the result of recovering a database from disk: a rebuilt
 // vector store and the HNSW index that reads from it. Together they are the
 // engine state as of the last acknowledged write before shutdown or crash.
 type RecoveredState struct {
 	Store *vector.Store
 	Index *hnsw.Index
+
+	// ReplayedRecords is how many WAL records were applied during recovery. It
+	// lets callers decide whether a startup compaction (fresh snapshot) is worth
+	// taking to speed up the next startup.
+	ReplayedRecords int
 }
 
 // Recover reconstructs engine state from the data directory. It loads the
@@ -75,6 +88,7 @@ func Recover(dir string, metric vector.MetricFunc, seed uint64) (*RecoveredState
 	if err != nil {
 		return nil, fmt.Errorf("persist: recover read wal: %w", err)
 	}
+	replayed := 0
 	for _, rec := range records {
 		if rec.LSN <= watermark {
 			continue // already captured by the snapshot
@@ -82,9 +96,10 @@ func Recover(dir string, metric vector.MetricFunc, seed uint64) (*RecoveredState
 		if aerr := applyRecord(store, idx, rec); aerr != nil {
 			return nil, fmt.Errorf("persist: recover apply lsn %d: %w", rec.LSN, aerr)
 		}
+		replayed++
 	}
 
-	return &RecoveredState{Store: store, Index: idx}, nil
+	return &RecoveredState{Store: store, Index: idx, ReplayedRecords: replayed}, nil
 }
 
 // applyRecord applies a single WAL record to the store and index during replay.

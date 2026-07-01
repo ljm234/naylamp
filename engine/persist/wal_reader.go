@@ -13,10 +13,12 @@ import (
 // replay mutations after a restart.
 //
 // Segments are read in ascending order. A clean end of a segment continues to
-// the next. A torn or corrupt record (the signature of a crash mid-append)
-// stops the read at the last valid record and returns everything before it;
-// because records are contiguous across segments, a hole means the durable log
-// ends there. No segments returns no records (a fresh database).
+// the next. A torn, corrupt, or unrecognizable record (the signature of a crash
+// mid-append, which can leave truncated bytes, a bad checksum, or arbitrary
+// garbage on the tail) stops the read at the last valid record and returns
+// everything before it. Because records are contiguous and append-only, the
+// first unreadable block means the durable log ends there. No segments returns
+// no records (a fresh database).
 func ReadAllRecords(dir string) ([]WALRecord, error) {
 	nums, err := listSegments(dir)
 	if err != nil {
@@ -41,8 +43,8 @@ func ReadAllRecords(dir string) ([]WALRecord, error) {
 }
 
 // readSegmentInto appends every valid record from one segment to records. It
-// returns done=true if a torn or corrupt tail was hit (replay must stop
-// entirely), or done=false if the segment was read cleanly to its end.
+// returns done=true if a torn, corrupt, or unrecognizable tail was hit (replay
+// must stop entirely), or done=false if the segment was read cleanly to its end.
 func readSegmentInto(records *[]WALRecord, path string) (done bool, err error) {
 	f, oerr := os.Open(path) //nolint:gosec // path is built from a caller-provided data dir, not untrusted input
 	if oerr != nil {
@@ -60,8 +62,14 @@ func readSegmentInto(records *[]WALRecord, path string) (done bool, err error) {
 			if errors.Is(rerr, io.EOF) {
 				return false, nil // clean end of this segment
 			}
-			if errors.Is(rerr, ErrShortBlock) || errors.Is(rerr, ErrChecksum) {
-				return true, nil // torn/corrupt tail: stop everything
+			// Any unreadable block on the tail (truncated, bad checksum, or
+			// unrecognizable magic) is the mark of a crash mid-append. Stop
+			// cleanly: everything before it is durable, everything after is not.
+			if errors.Is(rerr, ErrShortBlock) ||
+				errors.Is(rerr, ErrChecksum) ||
+				errors.Is(rerr, ErrBadMagic) ||
+				errors.Is(rerr, ErrUnknownVersion) {
+				return true, nil
 			}
 			return false, fmt.Errorf("persist: read wal segment: %w", rerr)
 		}

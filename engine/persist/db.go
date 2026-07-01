@@ -25,10 +25,28 @@ type DB struct {
 // are logged. A fresh dir yields an empty, ready database. The metric must match
 // the one the data was written with; seed is used only when there is no prior
 // snapshot to restore.
+//
+// Startup compaction: if recovery had to replay a large number of WAL records,
+// Open takes a fresh snapshot and truncates the WAL before returning. This makes
+// the next startup fast (it will load the snapshot instead of replaying the
+// whole WAL again), so a slow recovery from a large WAL happens at most once.
 func Open(dir string, metric vector.MetricFunc, policy FsyncPolicy, seed uint64) (*DB, error) {
 	state, err := Recover(dir, metric, seed)
 	if err != nil {
 		return nil, fmt.Errorf("persist: open recover: %w", err)
+	}
+
+	// Startup compaction: if the replay was large, snapshot now so the next
+	// startup is fast. Done before opening the WAL for appending, using the
+	// recovered index and the current on-disk WAL position.
+	if state.ReplayedRecords >= compactionThreshold {
+		lastLSN, lerr := lastLSNOnDisk(dir)
+		if lerr != nil {
+			return nil, fmt.Errorf("persist: open compaction lsn: %w", lerr)
+		}
+		if cerr := Checkpoint(dir, state.Index.Export(), lastLSN); cerr != nil {
+			return nil, fmt.Errorf("persist: open startup compaction: %w", cerr)
+		}
 	}
 
 	wal, err := OpenWAL(dir, policy)
@@ -43,6 +61,27 @@ func Open(dir string, metric vector.MetricFunc, policy FsyncPolicy, seed uint64)
 		wal:    wal,
 		metric: metric,
 	}, nil
+}
+
+// lastLSNOnDisk returns the highest LSN currently present in the WAL on disk, by
+// scanning all segments. Used during startup compaction to set the snapshot's
+// watermark to exactly what the WAL covers.
+func lastLSNOnDisk(dir string) (uint64, error) {
+	nums, err := listSegments(dir)
+	if err != nil {
+		return 0, err
+	}
+	var maxLSN uint64
+	for _, num := range nums {
+		lastLSN, _, serr := scanSegment(segmentPath(dir, num))
+		if serr != nil {
+			return 0, serr
+		}
+		if lastLSN > maxLSN {
+			maxLSN = lastLSN
+		}
+	}
+	return maxLSN, nil
 }
 
 // Upsert durably inserts or updates a vector. The mutation is written to the WAL
