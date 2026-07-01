@@ -77,7 +77,7 @@ func TestIndex_RoundTripSearchMatches(t *testing.T) {
 			return nil, false
 		}
 		return v.Data, true
-	})
+	}, 1)
 
 	// The restored index must report the same size.
 	if restored.Len() != idx.Len() {

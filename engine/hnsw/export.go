@@ -2,6 +2,7 @@ package hnsw
 
 import (
 	"math"
+	"math/rand/v2"
 
 	"naylamp/engine/vector"
 )
@@ -86,9 +87,12 @@ func (idx *Index) Export() IndexSnapshot {
 // RestoreIndex rebuilds an index from a snapshot produced by Export. The metric
 // and vectorData closure are not part of the snapshot (they are functions, not
 // data), so the caller supplies them, exactly as when constructing a fresh
-// index. The reconstructed graph is identical to the original: same nodes, same
-// neighbor lists, same entry point, so searches return the same results.
-func RestoreIndex(snap IndexSnapshot, metric vector.MetricFunc, vectorData func(id uint64) ([]float32, bool)) *Index {
+// index. The seed initializes the random layer generator for any inserts made
+// after restoration (the snapshot's own nodes are already placed, but the index
+// must be able to accept new vectors, e.g. during WAL replay). The reconstructed
+// graph is identical to the original: same nodes, same neighbor lists, same
+// entry point, so searches return the same results.
+func RestoreIndex(snap IndexSnapshot, metric vector.MetricFunc, vectorData func(id uint64) ([]float32, bool), seed uint64) *Index {
 	params := Params{
 		M:              snap.M,
 		EfConstruction: snap.EfConstruction,
@@ -105,6 +109,7 @@ func RestoreIndex(snap IndexSnapshot, metric vector.MetricFunc, vectorData func(
 		maxLayer:      snap.MaxLayer,
 		hasEntry:      snap.HasEntry,
 		levelMult:     1.0 / math.Log(float64(params.M)),
+		rng:           rand.New(rand.NewPCG(seed, 0)), //nolint:gosec // deterministic RNG for reproducible graph construction, not security
 	}
 
 	for _, ns := range snap.Nodes {

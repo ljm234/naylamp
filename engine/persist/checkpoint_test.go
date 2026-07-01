@@ -85,7 +85,7 @@ func TestSnapshot_RoundTripOnDisk(t *testing.T) {
 			return nil, false
 		}
 		return v.Data, true
-	})
+	}, 1)
 
 	if restored.Len() != idx.Len() {
 		t.Fatalf("len mismatch: restored %d original %d", restored.Len(), idx.Len())
