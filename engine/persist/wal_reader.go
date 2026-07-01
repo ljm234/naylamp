@@ -6,59 +6,72 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 )
 
-// ReadAllRecords opens the WAL in dir and returns every valid record it holds,
-// in the order they were written. It is the read side of the log, used by
-// recovery to replay mutations after a restart.
+// ReadAllRecords reads every valid record across all WAL segments in dir, in
+// order, and returns them. It is the read side of the log, used by recovery to
+// replay mutations after a restart.
 //
-// A clean end of file ends the read normally. A torn or corrupt record at the
-// tail (the signature of a crash mid-append) stops the read at the last valid
-// record rather than failing: everything durably written before the crash is
-// returned, and the incomplete tail is discarded. A missing log returns no
-// records (a fresh, never-written database).
+// Segments are read in ascending order. A clean end of a segment continues to
+// the next. A torn or corrupt record (the signature of a crash mid-append)
+// stops the read at the last valid record and returns everything before it;
+// because records are contiguous across segments, a hole means the durable log
+// ends there. No segments returns no records (a fresh database).
 func ReadAllRecords(dir string) ([]WALRecord, error) {
-	path := filepath.Join(dir, walFileName)
-
-	f, err := os.Open(path) //nolint:gosec // path is built from a caller-provided data dir, not untrusted input
+	nums, err := listSegments(dir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil // no log yet: nothing to replay
+		return nil, err
+	}
+	if len(nums) == 0 {
+		return nil, nil
+	}
+
+	var records []WALRecord
+	for _, num := range nums {
+		done, rerr := readSegmentInto(&records, segmentPath(dir, num))
+		if rerr != nil {
+			return records, rerr
 		}
-		return nil, fmt.Errorf("persist: open wal for read: %w", err)
+		if done {
+			// A torn or corrupt tail was hit: stop reading further segments.
+			break
+		}
+	}
+	return records, nil
+}
+
+// readSegmentInto appends every valid record from one segment to records. It
+// returns done=true if a torn or corrupt tail was hit (replay must stop
+// entirely), or done=false if the segment was read cleanly to its end.
+func readSegmentInto(records *[]WALRecord, path string) (done bool, err error) {
+	f, oerr := os.Open(path) //nolint:gosec // path is built from a caller-provided data dir, not untrusted input
+	if oerr != nil {
+		if os.IsNotExist(oerr) {
+			return false, nil
+		}
+		return false, fmt.Errorf("persist: open wal segment for read: %w", oerr)
 	}
 	defer func() { _ = f.Close() }()
 
 	r := bufio.NewReader(f)
-	var records []WALRecord
-
 	for {
-		typ, payload, err := readBlock(r)
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break // clean end at a block boundary
+		typ, payload, rerr := readBlock(r)
+		if rerr != nil {
+			if errors.Is(rerr, io.EOF) {
+				return false, nil // clean end of this segment
 			}
-			if errors.Is(err, ErrShortBlock) || errors.Is(err, ErrChecksum) {
-				// Torn or corrupt tail record: a crash interrupted a write.
-				// Stop cleanly, keeping every complete record before it.
-				break
+			if errors.Is(rerr, ErrShortBlock) || errors.Is(rerr, ErrChecksum) {
+				return true, nil // torn/corrupt tail: stop everything
 			}
-			return records, fmt.Errorf("persist: read wal: %w", err)
+			return false, fmt.Errorf("persist: read wal segment: %w", rerr)
 		}
-
 		if typ != BlockWALRecord {
-			return records, fmt.Errorf("persist: unexpected block type %d in wal", typ)
+			return false, fmt.Errorf("persist: unexpected block type %d in wal", typ)
 		}
-
 		rec, derr := decodeWALRecord(payload)
 		if derr != nil {
-			// A record that framed correctly (CRC ok) but decodes wrong is a
-			// deeper inconsistency; stop and keep what precedes it.
-			break
+			return true, nil // framed but undecodable: stop
 		}
-		records = append(records, rec)
+		*records = append(*records, rec)
 	}
-
-	return records, nil
 }
