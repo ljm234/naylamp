@@ -20,26 +20,28 @@ type DB struct {
 	metric vector.MetricFunc
 }
 
-// Open opens a durable database rooted at dir. It recovers any existing state
-// (snapshot plus WAL replay), then opens the WAL for appending so new mutations
-// are logged. A fresh dir yields an empty, ready database. The metric must match
-// the one the data was written with; seed is used only when there is no prior
-// snapshot to restore.
-//
-// Startup compaction: if recovery had to replay a large number of WAL records,
-// Open takes a fresh snapshot and truncates the WAL before returning. This makes
-// the next startup fast (it will load the snapshot instead of replaying the
-// whole WAL again), so a slow recovery from a large WAL happens at most once.
+// Open opens a durable database rooted at dir using the default compaction
+// policy. It recovers any existing state (snapshot plus WAL replay), then opens
+// the WAL for appending. See OpenWithPolicy to control startup compaction.
 func Open(dir string, metric vector.MetricFunc, policy FsyncPolicy, seed uint64) (*DB, error) {
+	return OpenWithPolicy(dir, metric, policy, seed, DefaultCompactionPolicy)
+}
+
+// OpenWithPolicy opens a durable database with an explicit compaction policy.
+//
+// Startup compaction: if recovery replayed enough of the WAL (per the
+// compaction policy), Open takes a fresh snapshot and truncates the WAL before
+// returning, so the next startup loads the snapshot instead of replaying the
+// whole WAL again. A slow recovery from a large WAL therefore happens at most
+// once. The metric must match the data on disk; seed is used only when there is
+// no prior snapshot to restore.
+func OpenWithPolicy(dir string, metric vector.MetricFunc, policy FsyncPolicy, seed uint64, compaction CompactionPolicy) (*DB, error) {
 	state, err := Recover(dir, metric, seed)
 	if err != nil {
 		return nil, fmt.Errorf("persist: open recover: %w", err)
 	}
 
-	// Startup compaction: if the replay was large, snapshot now so the next
-	// startup is fast. Done before opening the WAL for appending, using the
-	// recovered index and the current on-disk WAL position.
-	if state.ReplayedRecords >= compactionThreshold {
+	if shouldCompact(state.ReplayedRecords, state.SnapshotRecords, compaction) {
 		lastLSN, lerr := lastLSNOnDisk(dir)
 		if lerr != nil {
 			return nil, fmt.Errorf("persist: open compaction lsn: %w", lerr)
@@ -92,12 +94,10 @@ func (db *DB) Upsert(v vector.Vector) error {
 		return fmt.Errorf("persist: upsert validate: %w", err)
 	}
 
-	// Log first (durability), then apply to memory.
 	if _, err := db.wal.Append(OpUpsert, v); err != nil {
 		return fmt.Errorf("persist: upsert wal: %w", err)
 	}
 
-	// Apply: replace any existing vector, then insert into store and index.
 	if _, gerr := db.store.Get(v.ID); gerr == nil {
 		if derr := db.store.Delete(v.ID); derr != nil {
 			return fmt.Errorf("persist: upsert delete-old: %w", derr)

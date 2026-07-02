@@ -8,13 +8,40 @@ import (
 	"naylamp/engine/vector"
 )
 
-// This file verifies startup compaction (B1): after recovery replays a large
-// WAL, Open takes a fresh snapshot and truncates the WAL, so the next startup
-// loads the snapshot instead of replaying everything again. The slow recovery
-// from a large WAL happens at most once.
+// This file verifies startup compaction: after recovery replays a large WAL,
+// Open takes a fresh snapshot and truncates the WAL, so the next startup loads
+// the snapshot instead of replaying everything again.
+
+// TestShouldCompact_PureLogic unit-tests the compaction decision in isolation,
+// covering the cold-start floor, the LSM-style ratio, and the no-compaction
+// cases, with no I/O.
+func TestShouldCompact_PureLogic(t *testing.T) {
+	p := CompactionPolicy{Factor: 1.0, MinFloor: 1000}
+
+	cases := []struct {
+		name        string
+		replayed    int
+		snapshotted int
+		want        bool
+	}{
+		{"below floor, no snapshot", 500, 0, false},
+		{"at floor, no snapshot", 1000, 0, true},
+		{"above floor, no snapshot", 2000, 0, true},
+		{"below floor but ratio exceeded triggers", 600, 500, true}, // floor not met, but 600 > 1.0*500 triggers via ratio
+		{"ratio exceeded, above floor", 1200, 500, true},
+		{"large snapshot, small replay", 200, 100000, false},
+		{"ratio exactly at factor does not trigger", 500, 500, false}, // strictly greater required
+	}
+	for _, c := range cases {
+		got := shouldCompact(c.replayed, c.snapshotted, p)
+		if got != c.want {
+			t.Errorf("%s: shouldCompact(%d,%d)=%v want %v", c.name, c.replayed, c.snapshotted, got, c.want)
+		}
+	}
+}
 
 // TestCompaction_TriggeredAfterLargeReplay writes more than the compaction
-// threshold of records, closes, and reopens. The reopen must (a) recover the
+// floor of records, closes, and reopens. The reopen must (a) recover the
 // correct state, and (b) leave a snapshot on disk with a truncated WAL, proving
 // compaction ran. A second reopen must still see the same state.
 func TestCompaction_TriggeredAfterLargeReplay(t *testing.T) {
@@ -24,15 +51,12 @@ func TestCompaction_TriggeredAfterLargeReplay(t *testing.T) {
 	)
 	dir := t.TempDir()
 
-	// Write enough records to exceed the compaction threshold. Use FsyncNever
-	// for speed here; durability is tested elsewhere, this test is about
-	// compaction behavior.
 	db, err := Open(dir, vector.CosineDistance, FsyncNever, seed)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 
-	n := compactionThreshold + 500
+	n := DefaultCompactionPolicy.MinFloor + 500
 	rng := rand.New(rand.NewPCG(seed, 0)) //nolint:gosec // deterministic RNG for reproducible test data, not security
 	for i := 1; i <= n; i++ {
 		data := make([]float32, dim)
@@ -48,14 +72,12 @@ func TestCompaction_TriggeredAfterLargeReplay(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 
-	// Before reopen: there should be no snapshot yet (we never checkpointed).
 	if _, ok, serr := LoadSnapshot(dir); serr != nil {
 		t.Fatalf("pre-reopen load snapshot: %v", serr)
 	} else if ok {
 		t.Fatalf("did not expect a snapshot before the compacting reopen")
 	}
 
-	// Reopen: recovery replays the large WAL and should trigger compaction.
 	db2, err := Open(dir, vector.CosineDistance, FsyncNever, seed)
 	if err != nil {
 		t.Fatalf("reopen (compacting): %v", err)
@@ -64,7 +86,6 @@ func TestCompaction_TriggeredAfterLargeReplay(t *testing.T) {
 		t.Fatalf("len after compacting recovery: got %d want %d", db2.Len(), beforeLen)
 	}
 
-	// After the compacting reopen: a snapshot must now exist on disk.
 	snap, ok, err := LoadSnapshot(dir)
 	if err != nil {
 		t.Fatalf("post-reopen load snapshot: %v", err)
@@ -76,7 +97,6 @@ func TestCompaction_TriggeredAfterLargeReplay(t *testing.T) {
 		t.Fatalf("snapshot node count: got %d want %d", len(snap.Nodes), beforeLen)
 	}
 
-	// The manifest must record a non-zero watermark (the WAL is now covered).
 	m, ok, err := ReadManifest(dir)
 	if err != nil || !ok {
 		t.Fatalf("read manifest after compaction: ok=%v err=%v", ok, err)
@@ -89,8 +109,6 @@ func TestCompaction_TriggeredAfterLargeReplay(t *testing.T) {
 		t.Fatalf("close db2: %v", err)
 	}
 
-	// Second reopen: state must still be identical (now served largely from the
-	// snapshot plus a short WAL tail).
 	db3, err := Open(dir, vector.CosineDistance, FsyncNever, seed)
 	if err != nil {
 		t.Fatalf("reopen 2: %v", err)
@@ -101,9 +119,8 @@ func TestCompaction_TriggeredAfterLargeReplay(t *testing.T) {
 	}
 }
 
-// TestCompaction_SkippedForSmallReplay checks the opposite: a small WAL (below
-// the threshold) does NOT trigger compaction, so no snapshot is created. This
-// avoids paying the snapshot cost when it would not help.
+// TestCompaction_SkippedForSmallReplay checks that a small WAL (below the floor)
+// does NOT trigger compaction, so no snapshot is created.
 func TestCompaction_SkippedForSmallReplay(t *testing.T) {
 	const (
 		dim  = 8
@@ -115,7 +132,6 @@ func TestCompaction_SkippedForSmallReplay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	// Well below the threshold.
 	for i := 1; i <= 100; i++ {
 		if err := db.Upsert(vector.Vector{ID: uint64(i), Data: makeVec(uint64(i), dim).Data}); err != nil {
 			t.Fatalf("upsert %d: %v", i, err)
@@ -125,14 +141,12 @@ func TestCompaction_SkippedForSmallReplay(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 
-	// Reopen: small replay, so no compaction.
 	db2, err := Open(dir, vector.CosineDistance, FsyncNever, seed)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
 	defer func() { _ = db2.Close() }()
 
-	// No snapshot should have been created.
 	if _, ok, serr := LoadSnapshot(dir); serr != nil {
 		t.Fatalf("load snapshot: %v", serr)
 	} else if ok {

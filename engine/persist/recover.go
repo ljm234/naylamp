@@ -7,14 +7,6 @@ import (
 	"naylamp/engine/vector"
 )
 
-// compactionThreshold is the number of WAL records replayed during recovery
-// above which a fresh snapshot is taken automatically (startup compaction). If
-// recovery replayed at least this many records, the WAL was large enough that
-// snapshotting now makes the next startup fast; below it, snapshotting would be
-// wasted work. The value is a balance: low enough to catch slow recoveries, high
-// enough to skip trivial ones.
-const compactionThreshold = 5000
-
 // RecoveredState is the result of recovering a database from disk: a rebuilt
 // vector store and the HNSW index that reads from it. Together they are the
 // engine state as of the last acknowledged write before shutdown or crash.
@@ -22,10 +14,12 @@ type RecoveredState struct {
 	Store *vector.Store
 	Index *hnsw.Index
 
-	// ReplayedRecords is how many WAL records were applied during recovery. It
-	// lets callers decide whether a startup compaction (fresh snapshot) is worth
-	// taking to speed up the next startup.
+	// ReplayedRecords is how many WAL records were applied during recovery.
+	// SnapshotRecords is how many records the loaded snapshot held (0 if none).
+	// Together they let a caller apply a compaction policy to decide whether a
+	// startup compaction is worth taking to speed up the next startup.
 	ReplayedRecords int
+	SnapshotRecords int
 }
 
 // Recover reconstructs engine state from the data directory. It loads the
@@ -44,7 +38,6 @@ type RecoveredState struct {
 func Recover(dir string, metric vector.MetricFunc, seed uint64) (*RecoveredState, error) {
 	store := vector.NewStore()
 
-	// vectorData lets the index read components from the store we are rebuilding.
 	vectorData := func(id uint64) ([]float32, bool) {
 		v, err := store.Get(id)
 		if err != nil {
@@ -60,17 +53,16 @@ func Recover(dir string, metric vector.MetricFunc, seed uint64) (*RecoveredState
 	}
 
 	var idx *hnsw.Index
+	snapshotRecords := 0
 	if hasSnapshot {
-		// Seed the store from the snapshot's node data (each node carries its
-		// vector components), so the restored index can read them back.
 		for _, n := range snap.Nodes {
 			if serr := store.Insert(vector.Vector{ID: n.ID, Data: n.Data}); serr != nil {
 				return nil, fmt.Errorf("persist: recover seed store from snapshot: %w", serr)
 			}
 		}
+		snapshotRecords = len(snap.Nodes)
 		idx = hnsw.RestoreIndex(snap, metric, vectorData, seed)
 	} else {
-		// No snapshot: start with an empty index; the WAL replay below builds it.
 		idx = hnsw.NewIndex(hnsw.DefaultParams(), metric, vectorData, seed)
 	}
 
@@ -91,7 +83,7 @@ func Recover(dir string, metric vector.MetricFunc, seed uint64) (*RecoveredState
 	replayed := 0
 	for _, rec := range records {
 		if rec.LSN <= watermark {
-			continue // already captured by the snapshot
+			continue
 		}
 		if aerr := applyRecord(store, idx, rec); aerr != nil {
 			return nil, fmt.Errorf("persist: recover apply lsn %d: %w", rec.LSN, aerr)
@@ -99,7 +91,12 @@ func Recover(dir string, metric vector.MetricFunc, seed uint64) (*RecoveredState
 		replayed++
 	}
 
-	return &RecoveredState{Store: store, Index: idx, ReplayedRecords: replayed}, nil
+	return &RecoveredState{
+		Store:           store,
+		Index:           idx,
+		ReplayedRecords: replayed,
+		SnapshotRecords: snapshotRecords,
+	}, nil
 }
 
 // applyRecord applies a single WAL record to the store and index during replay.
@@ -108,9 +105,7 @@ func Recover(dir string, metric vector.MetricFunc, seed uint64) (*RecoveredState
 func applyRecord(store *vector.Store, idx *hnsw.Index, rec WALRecord) error {
 	switch rec.Op {
 	case OpUpsert:
-		// Replace any existing vector, then (re)insert into the index.
 		if _, err := store.Get(rec.Vector.ID); err == nil {
-			// Existing: update store and index (index update is delete+insert).
 			if derr := store.Delete(rec.Vector.ID); derr != nil {
 				return fmt.Errorf("update delete-old: %w", derr)
 			}
@@ -124,7 +119,6 @@ func applyRecord(store *vector.Store, idx *hnsw.Index, rec WALRecord) error {
 		}
 	case OpDelete:
 		if derr := store.Delete(rec.Vector.ID); derr != nil {
-			// A delete of a missing id during replay is not fatal; skip it.
 			return nil //nolint:nilerr // deleting an absent id is a no-op during replay
 		}
 		idx.Delete(rec.Vector.ID)
