@@ -116,8 +116,8 @@ func TestHNSW_BuildScale(t *testing.T) {
 	// result. At n=1.5M and dim=64 this costs on the order of a second per
 	// query, so a fixed set of queries keeps it cheap while giving a true,
 	// unbiased measurement. The earlier sampled estimator compared against
-	// the top k of a one-in-thirty sample, which cannot measure index
-	// quality: a perfect index would score about 0.033 against it.
+	// the top k of a one-in-fifteen sample, which cannot measure index
+	// quality: a perfect index would score about 0.067 against it.
 	const recallQueries = 50
 	var hitSum float64
 	for q := 0; q < recallQueries; q++ {
