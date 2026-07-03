@@ -25,3 +25,4 @@ node_modules/
 
 # Scale test artifact
 engine/hnsw/scale_result.txt
+engine/hnsw/scale_sweep_result.txt
