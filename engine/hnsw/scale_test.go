@@ -111,35 +111,47 @@ func TestHNSW_BuildScale(t *testing.T) {
 	record("query latency: %.0f microseconds/query (avg over %d queries)",
 		float64(qDur.Microseconds())/float64(nQ), nQ)
 
-	// Estimated recall@k against a sampled ground truth. For each query we scan
-	// a uniform sample of ids and take the k closest among them, then measure
-	// overlap with the index result. This is an ESTIMATE, biased slightly high.
+	// Exact recall@k. For each query, brute-force the entire corpus and take
+	// the k closest as ground truth, then measure the overlap with the index
+	// result. At n=1.5M and dim=64 this costs on the order of a second per
+	// query, so a fixed set of queries keeps it cheap while giving a true,
+	// unbiased measurement. The earlier sampled estimator compared against
+	// the top k of a one-in-thirty sample, which cannot measure index
+	// quality: a perfect index would score about 0.033 against it.
 	const recallQueries = 50
-	const sampleStride = 15 // scan every 15th id as sampled ground truth
 	var hitSum float64
 	for q := 0; q < recallQueries; q++ {
 		query := queries[q%nQ]
 
-		var sampled []vector.Neighbor
-		for id := uint64(1); id <= uint64(n); id += sampleStride {
+		// Exact ground truth: running top-k over every vector in the store.
+		truth := make([]vector.Neighbor, 0, k)
+		for id := uint64(1); id <= uint64(n); id++ {
 			v, err := store.Get(id)
 			if err != nil {
 				continue
 			}
 			d := vector.CosineDistance(query, v.Data)
-			sampled = append(sampled, vector.Neighbor{ID: id, Distance: d})
-		}
-		// Select the k smallest by a simple partial selection.
-		truthSet := make(map[uint64]bool, k)
-		for i := 0; i < k && i < len(sampled); i++ {
-			minIdx := i
-			for j := i + 1; j < len(sampled); j++ {
-				if sampled[j].Distance < sampled[minIdx].Distance {
-					minIdx = j
+			if len(truth) < k {
+				truth = append(truth, vector.Neighbor{ID: id, Distance: d})
+				if len(truth) == k {
+					sortNeighbors(truth)
 				}
+				continue
 			}
-			sampled[i], sampled[minIdx] = sampled[minIdx], sampled[i]
-			truthSet[sampled[i].ID] = true
+			if d >= truth[k-1].Distance {
+				continue
+			}
+			pos := k - 1
+			for pos > 0 && truth[pos-1].Distance > d {
+				truth[pos] = truth[pos-1]
+				pos--
+			}
+			truth[pos] = vector.Neighbor{ID: id, Distance: d}
+		}
+
+		truthSet := make(map[uint64]bool, len(truth))
+		for _, tn := range truth {
+			truthSet[tn.ID] = true
 		}
 
 		got := idx.Search(query, k)
@@ -151,8 +163,8 @@ func TestHNSW_BuildScale(t *testing.T) {
 		}
 		hitSum += float64(hits) / float64(k)
 	}
-	estRecall := hitSum / float64(recallQueries)
-	record("ESTIMATED recall@%d (sampled ground truth, biased high) = %.3f", k, estRecall)
+	exactRecall := hitSum / float64(recallQueries)
+	record("EXACT recall@%d (full brute-force ground truth, %d queries) = %.3f", k, recallQueries, exactRecall)
 	record("DONE.")
 }
 
@@ -163,6 +175,20 @@ func joinScaleLines(lines []string) string {
 		s += l + "\n"
 	}
 	return s
+}
+
+// sortNeighbors sorts a small neighbor slice ascending by distance with an
+// insertion sort; it only ever runs on k elements.
+func sortNeighbors(s []vector.Neighbor) {
+	for i := 1; i < len(s); i++ {
+		cur := s[i]
+		j := i - 1
+		for j >= 0 && s[j].Distance > cur.Distance {
+			s[j+1] = s[j]
+			j--
+		}
+		s[j+1] = cur
+	}
 }
 
 // newScaleRNG returns a small deterministic Gaussian generator without pulling

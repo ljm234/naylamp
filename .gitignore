@@ -22,3 +22,6 @@ node_modules/
 .env
 .env.local
 *.pem
+
+# Scale test artifact
+engine/hnsw/scale_result.txt
