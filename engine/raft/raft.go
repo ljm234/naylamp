@@ -52,13 +52,17 @@ type Options struct {
 func DefaultOptions() Options { return Options{ElectionTicks: 10, HeartbeatTicks: 2} }
 
 // Ready bundles everything the runtime must act on after one call into the
-// core: messages to hand to the transport, committed entries to apply in
-// order, and the current HardState with a Dirty flag. The 3.3 runtime must
-// persist a dirty HardState BEFORE sending the messages: a vote or an ack
-// that leaves the node before it is durable is how a crashed node votes
-// twice. In 3.2 the harness only asserts on it.
+// core, in the order it must act: Entries are the log records not yet
+// durable and must be persisted first; then a dirty HardState must be
+// persisted; only then may Msgs be handed to the transport, and Committed
+// applied to the state machine. A vote or an ack that leaves the node before
+// its state is durable is how a crashed node votes twice. Entries are handed
+// exactly once; a conflict that overwrites already-handed indices hands the
+// affected suffix again, and the storage's supersession makes replaying that
+// suffix idempotent.
 type Ready struct {
 	Msgs      []Message
+	Entries   []Entry
 	Committed []Entry
 	HardState HardState
 	Dirty     bool
@@ -85,6 +89,10 @@ type Raft struct {
 
 	// applied trails hs.Commit; the gap is what Ready.Committed drains.
 	applied uint64
+
+	// stableTo is the highest log index already handed out (or restored) as
+	// durable. Ready.Entries covers everything above it.
+	stableTo uint64
 
 	electionElapsed   int
 	heartbeatElapsed  int
@@ -118,6 +126,39 @@ func New(id cluster.NodeID, cfg cluster.Config, rng *rand.Rand, opts Options) (*
 	r := &Raft{id: id, cfg: cfg, opts: opts, rng: rng, log: NewLog()}
 	r.becomeFollower(0, cluster.None)
 	return r, nil
+}
+
+// Restore seeds a fresh core with the state a node's storage recovered:
+// the persisted hard state and the durable log entries, contiguous from
+// index 1. Restored entries are already durable, so they are never handed
+// out again through Ready.Entries; the committed prefix is deliberately NOT
+// marked applied, so the first Ready after Restore replays it through the
+// normal Committed path and the state machine rebuilds with zero special
+// recovery code. Restore is only valid on a core that has processed nothing.
+func (r *Raft) Restore(hs HardState, entries []Entry) error {
+	if r.hs.Term != 0 || r.hs.Vote != cluster.None || r.log.LastIndex() != 0 || r.applied != 0 {
+		return errors.New("raft: restore on a core that already has state")
+	}
+	for i, e := range entries {
+		if e.Index != uint64(i)+1 {
+			return fmt.Errorf("raft: restored entries have a gap at position %d", i)
+		}
+	}
+	if len(entries) > 0 {
+		if err := r.log.Append(entries...); err != nil {
+			return fmt.Errorf("raft: restore append: %w", err)
+		}
+		if r.log.LastTerm() > hs.Term {
+			return errors.New("raft: restored log term exceeds hard state term")
+		}
+	}
+	if hs.Commit > r.log.LastIndex() {
+		return errors.New("raft: restored commit exceeds restored log")
+	}
+	r.hs = hs
+	r.stableTo = r.log.LastIndex()
+	r.dirty = false
+	return nil
 }
 
 // ID returns this node's id.
@@ -326,6 +367,14 @@ func (r *Raft) handleApp(m Message) Message {
 	if _, ok := r.log.TryAppend(m.LogIndex, m.LogTerm, m.Entries); !ok {
 		return Message{Kind: MsgAppResp, From: r.id, To: m.From, Term: r.hs.Term, LastIndex: r.log.LastIndex()}
 	}
+	if len(m.Entries) > 0 && m.LogIndex < r.stableTo {
+		// The batch may have overwritten indices already handed out as
+		// durable: hand the affected suffix again. Conservative on purpose;
+		// storage supersession makes replaying an identical suffix
+		// idempotent, and precision here is an optimization to measure once
+		// the runtime exists, not a correctness requirement.
+		r.stableTo = m.LogIndex
+	}
 	if m.Commit > r.hs.Commit {
 		r.hs.Commit = min(m.Commit, lastNew)
 		r.dirty = true
@@ -435,9 +484,26 @@ func (r *Raft) takeCommitted() []Entry {
 	return out
 }
 
-// ready packages one call's outcome.
+// takeUnstable hands out the log suffix not yet durable, exactly once.
+func (r *Raft) takeUnstable() []Entry {
+	if r.log.LastIndex() <= r.stableTo {
+		return nil
+	}
+	out := r.log.Slice(r.stableTo + 1)
+	r.stableTo = r.log.LastIndex()
+	return out
+}
+
+// ready packages one call's outcome. Order matters and mirrors the runtime
+// contract: unstable entries first, then hard state, then messages.
 func (r *Raft) ready(msgs []Message) Ready {
-	rd := Ready{Msgs: msgs, Committed: r.takeCommitted(), HardState: r.hs, Dirty: r.dirty}
+	rd := Ready{
+		Msgs:      msgs,
+		Entries:   r.takeUnstable(),
+		Committed: r.takeCommitted(),
+		HardState: r.hs,
+		Dirty:     r.dirty,
+	}
 	r.dirty = false
 	return rd
 }
