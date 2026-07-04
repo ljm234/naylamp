@@ -8,10 +8,19 @@ import "io"
 // framing for its wire messages, so every byte that crosses the network
 // carries the same integrity guarantees as every byte that touches disk. The
 // wrappers are additive: nothing in the sealed persistence paths changes.
+// The block type registry below is the single authority for cross-package
+// types, so two packages can never collide on a number.
 
 // BlockClusterMessage frames a cluster wire message. It extends the block
 // type registry defined in format.go.
 const BlockClusterMessage BlockType = 5
+
+// BlockRaftHardState frames a Raft node's persisted hard state (term, vote,
+// commit), the part of consensus state that must survive a crash.
+const BlockRaftHardState BlockType = 6
+
+// BlockRaftEntry frames one replicated log entry in the Raft durable log.
+const BlockRaftEntry BlockType = 7
 
 // WriteBlock frames payload with the block format (magic, version, type,
 // length, CRC32C) and writes it to w, returning the bytes written.
