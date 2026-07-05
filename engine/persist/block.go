@@ -22,6 +22,10 @@ const BlockRaftHardState BlockType = 6
 // BlockRaftEntry frames one replicated log entry in the Raft durable log.
 const BlockRaftEntry BlockType = 7
 
+// BlockRaftSnapshot frames the durable snapshot of a Raft node: the applied
+// state machine image at a log position, plus that position's index and term.
+const BlockRaftSnapshot BlockType = 8
+
 // WriteBlock frames payload with the block format (magic, version, type,
 // length, CRC32C) and writes it to w, returning the bytes written.
 func WriteBlock(w io.Writer, typ BlockType, payload []byte) (int, error) {

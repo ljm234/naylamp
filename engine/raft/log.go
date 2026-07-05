@@ -163,6 +163,24 @@ func (l *Log) CompactTo(index, term uint64) error {
 	return nil
 }
 
+// ResetToSnapshot installs a snapshot position as the new compaction base,
+// following section 7 of the paper: when the log still holds an entry at
+// (index, term), the suffix beyond it is retained; any other content is
+// stale history and the whole log is discarded. A snapshot at or below the
+// current base is itself stale and is a no-op.
+func (l *Log) ResetToSnapshot(index, term uint64) {
+	if index <= l.baseIndex {
+		return
+	}
+	if got, ok := l.Term(index); ok && got == term {
+		l.entries = append([]Entry(nil), l.entries[index-l.baseIndex:]...)
+	} else {
+		l.entries = nil
+	}
+	l.baseIndex = index
+	l.baseTerm = term
+}
+
 // IsUpToDate implements the voting restriction of section 5.4.1: a vote may
 // only go to a candidate whose log is at least as complete as ours, which is
 // what keeps every committed entry present in any electable leader.

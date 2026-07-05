@@ -176,3 +176,39 @@ func TestLog_IsUpToDate(t *testing.T) {
 		}
 	}
 }
+
+func TestLog_ResetToSnapshot(t *testing.T) {
+	// Matching position: the suffix survives.
+	l := NewLog()
+	mustAppend(t, l, ent(1, 1), ent(2, 1), ent(3, 2), ent(4, 2), ent(5, 3), ent(6, 3))
+	l.ResetToSnapshot(4, 2)
+	if l.LastIndex() != 6 || l.LastTerm() != 3 {
+		t.Fatalf("suffix lost: last=(%d,%d)", l.LastIndex(), l.LastTerm())
+	}
+	if term, ok := l.Term(4); !ok || term != 2 {
+		t.Fatalf("base wrong: (%d,%v)", term, ok)
+	}
+	if _, ok := l.Entry(4); ok {
+		t.Fatalf("entry at base survived")
+	}
+	// Stale snapshot: no-op.
+	l.ResetToSnapshot(2, 1)
+	if l.LastIndex() != 6 {
+		t.Fatalf("stale snapshot mutated the log")
+	}
+	// Mismatching term at the position: everything is stale history.
+	l.ResetToSnapshot(5, 9)
+	if l.LastIndex() != 5 || l.LastTerm() != 9 || len(l.entries) != 0 {
+		t.Fatalf("mismatch did not discard: last=(%d,%d) n=%d", l.LastIndex(), l.LastTerm(), len(l.entries))
+	}
+	// Snapshot beyond the log: fresh base, appends continue after it.
+	l2 := NewLog()
+	mustAppend(t, l2, ent(1, 1))
+	l2.ResetToSnapshot(10, 4)
+	if l2.LastIndex() != 10 || l2.LastTerm() != 4 {
+		t.Fatalf("beyond-log reset wrong: (%d,%d)", l2.LastIndex(), l2.LastTerm())
+	}
+	if err := l2.Append(ent(11, 4)); err != nil {
+		t.Fatalf("append after reset: %v", err)
+	}
+}
