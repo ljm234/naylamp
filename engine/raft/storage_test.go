@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"naylamp/engine/cluster"
+	"naylamp/engine/persist"
 )
 
 func dataEnt(index, term uint64, data string) Entry {
@@ -364,5 +365,32 @@ func TestStorage_LaterSnapshotSupersedesEarlier(t *testing.T) {
 	}
 	if s2.LastIndex() != 12 {
 		t.Fatalf("tail wrong after supersession: %d", s2.LastIndex())
+	}
+}
+
+func TestStorage_GapBetweenSnapshotAndLogIsFatal(t *testing.T) {
+	dir := t.TempDir()
+	s, _, _, _ := openForTest(t, dir)
+	if err := s.SaveSnapshot(Snapshot{Index: 3, Term: 1, Data: []byte("st")}); err != nil {
+		t.Fatalf("save snapshot: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	// Hand-craft a segment whose first surviving entry skips the index right
+	// after the snapshot: replay must refuse the gap as corruption, because
+	// silently accepting it would fabricate a hole in committed history.
+	f, err := os.OpenFile(filepath.Join(dir, "raft-000002.log"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec // test-controlled path
+	if err != nil {
+		t.Fatalf("craft segment: %v", err)
+	}
+	if _, werr := persist.WriteBlock(f, persist.BlockRaftEntry, encodeEntryPayload(dataEnt(5, 1, "gap"))); werr != nil {
+		t.Fatalf("write crafted entry: %v", werr)
+	}
+	if cerr := f.Close(); cerr != nil {
+		t.Fatalf("close crafted: %v", cerr)
+	}
+	if _, _, _, _, oerr := OpenStorage(dir, 256); !errors.Is(oerr, ErrCorruptLog) {
+		t.Fatalf("gap after snapshot accepted: %v", oerr)
 	}
 }
