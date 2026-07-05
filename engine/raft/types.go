@@ -17,16 +17,14 @@ type Entry struct {
 // crash. Term and Vote protect the one-vote-per-term rule: a node that
 // forgets its vote can hand out a second one and help elect two leaders.
 // Commit is persisted as an optimization so a restarted node does not need
-// a leader round trip to relearn what was already committed. In 3.2 it
-// lives in memory only; 3.3 persists it before any message that depends on
-// it leaves the node.
+// a leader round trip to relearn what was already committed.
 type HardState struct {
 	Term   uint64
 	Vote   cluster.NodeID
 	Commit uint64
 }
 
-// MsgKind enumerates the four message families of core Raft.
+// MsgKind enumerates the message families of core Raft.
 type MsgKind uint16
 
 const (
@@ -39,13 +37,20 @@ const (
 	MsgApp MsgKind = 3
 	// MsgAppResp answers a MsgApp.
 	MsgAppResp MsgKind = 4
+	// MsgSnap carries one chunk of a snapshot being installed on a follower
+	// that fell behind the leader's compacted log.
+	MsgSnap MsgKind = 5
+	// MsgSnapResp acknowledges a snapshot chunk with the next byte offset
+	// the follower expects, which doubles as a resync hint on loss or
+	// reordering.
+	MsgSnapResp MsgKind = 6
 )
 
 // Message is the single unit exchanged between Raft nodes: one flat struct
-// for all four kinds, with the fields a kind does not use left zero. A flat
-// message keeps the pure core's Step signature trivial and the future wire
-// codec free of per-kind cases, and it mirrors how the protocol reads:
-// every message carries the sender's term first, the rest is qualification.
+// for all kinds, with the fields a kind does not use left zero. A flat
+// message keeps the pure core's Step signature trivial and the wire codec
+// free of per-kind cases, and it mirrors how the protocol reads: every
+// message carries the sender's term first, the rest is qualification.
 //
 // Field usage by kind:
 //
@@ -56,6 +61,12 @@ const (
 //	MsgAppResp:  Term, From, To, Granted, LastIndex = last replicated index
 //	             when Granted, the follower's last log index as a catch-up
 //	             hint when rejected
+//	MsgSnap:     Term, From, To, LogIndex/LogTerm = snapshot position,
+//	             Offset = byte offset of Chunk, Chunk, Done = final chunk,
+//	             Commit = leader commit
+//	MsgSnapResp: Term, From, To, LogIndex = snapshot position in transfer,
+//	             Granted = chunk landed at the expected offset, Offset =
+//	             next byte offset the follower expects
 type Message struct {
 	Kind      MsgKind
 	From      cluster.NodeID
@@ -67,4 +78,7 @@ type Message struct {
 	Commit    uint64
 	Granted   bool
 	LastIndex uint64
+	Offset    uint64
+	Chunk     []byte
+	Done      bool
 }

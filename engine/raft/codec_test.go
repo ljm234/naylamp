@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"encoding/binary"
 	"errors"
 	"reflect"
 	"testing"
@@ -37,6 +38,64 @@ func TestCodec_RoundTripAllKinds(t *testing.T) {
 	}
 }
 
+func TestCodec_SnapshotRoundTripAndBounds(t *testing.T) {
+	msgs := []Message{
+		{Kind: MsgSnap, From: 1, To: 2, Term: 9, LogIndex: 120, LogTerm: 7, Commit: 130,
+			Offset: 0, Chunk: []byte("first-chunk")},
+		{Kind: MsgSnap, From: 1, To: 2, Term: 9, LogIndex: 120, LogTerm: 7,
+			Offset: 11, Chunk: []byte{0x00, 0xFF}, Done: true},
+		{Kind: MsgSnap, From: 1, To: 2, Term: 9, LogIndex: 120, LogTerm: 7,
+			Offset: 13, Done: true}, // empty final chunk survives
+		{Kind: MsgSnapResp, From: 2, To: 1, Term: 9, LogIndex: 120, Granted: true, Offset: 11},
+		{Kind: MsgSnapResp, From: 2, To: 1, Term: 9, LogIndex: 120, Offset: 0},
+	}
+	for _, want := range msgs {
+		raw, err := EncodeMsg(want)
+		if err != nil {
+			t.Fatalf("encode %+v: %v", want, err)
+		}
+		got, err := DecodeMsg(raw)
+		if err != nil {
+			t.Fatalf("decode %+v: %v", want, err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("round-trip mismatch:\n got %+v\nwant %+v", got, want)
+		}
+	}
+
+	// Unknown flag bits fail loudly instead of being silently ignored.
+	raw, err := EncodeMsg(msgs[0])
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	env, err := cluster.DecodeMessage(raw)
+	if err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	env.Payload[50] |= 1 << 2
+	if _, derr := DecodeMsgEnvelope(env); !errors.Is(derr, ErrMalformedMessage) {
+		t.Fatalf("invalid flag bit accepted: %v", derr)
+	}
+
+	// A chunk length lying beyond the payload is rejected before any
+	// allocation sized by it.
+	lie := make([]byte, msgHeaderSize)
+	binary.LittleEndian.PutUint32(lie[55:59], 500)
+	if _, derr := DecodeMsgEnvelope(cluster.Envelope{From: 1, To: 2, Kind: EnvelopeKind,
+		Payload: lie}); !errors.Is(derr, ErrMalformedMessage) {
+		t.Fatalf("impossible chunk length accepted: %v", derr)
+	}
+
+	// Entries and chunk together must account for every byte: a trailing
+	// byte after the declared chunk is a framing bug and fails loudly.
+	trailing := append(append([]byte(nil), env.Payload...), 0xAA)
+	trailing[50] &^= 1 << 2 // restore valid flags on the copy
+	if _, derr := DecodeMsgEnvelope(cluster.Envelope{From: 1, To: 2, Kind: EnvelopeKind,
+		Payload: trailing}); !errors.Is(derr, ErrMalformedMessage) {
+		t.Fatalf("trailing byte after chunk accepted: %v", derr)
+	}
+}
+
 func TestCodec_CorruptionDetected(t *testing.T) {
 	raw, err := EncodeMsg(Message{Kind: MsgApp, From: 1, To: 2, Term: 3,
 		Entries: []Entry{{Index: 1, Term: 3, Data: []byte("x")}}})
@@ -68,15 +127,15 @@ func TestCodec_MalformedBodies(t *testing.T) {
 
 	// Entry count that cannot fit in the payload.
 	lie := make([]byte, msgHeaderSize)
-	lie[43] = 200 // claims 200 entries, zero bytes behind them
+	lie[51] = 200 // claims 200 entries, zero bytes behind them
 	if _, err := DecodeMsgEnvelope(cluster.Envelope{From: 1, To: 2, Kind: EnvelopeKind,
 		Payload: lie}); !errors.Is(err, ErrMalformedMessage) {
 		t.Fatalf("impossible entry count accepted: %v", err)
 	}
 
-	// Invalid granted flag.
+	// Invalid flag bits.
 	badFlag := make([]byte, msgHeaderSize)
-	badFlag[42] = 2
+	badFlag[50] = 4
 	if _, err := DecodeMsgEnvelope(cluster.Envelope{From: 1, To: 2, Kind: EnvelopeKind,
 		Payload: badFlag}); !errors.Is(err, ErrMalformedMessage) {
 		t.Fatalf("invalid flag accepted: %v", err)
