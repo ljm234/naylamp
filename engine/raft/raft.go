@@ -119,7 +119,10 @@ type Raft struct {
 	heartbeatElapsed  int
 	randomizedTimeout int
 
-	votes      map[cluster.NodeID]bool
+	votes map[cluster.NodeID]bool
+	// prevotes counts would-grants of the pending pre-vote round; nil when
+	// no round is pending.
+	prevotes   map[cluster.NodeID]bool
 	nextIndex  map[cluster.NodeID]uint64
 	matchIndex map[cluster.NodeID]uint64
 
@@ -243,7 +246,7 @@ func (r *Raft) Tick() Ready {
 	} else {
 		r.electionElapsed++
 		if r.electionElapsed >= r.randomizedTimeout {
-			msgs = r.campaign()
+			msgs = r.preCampaign()
 		}
 	}
 	return r.ready(msgs)
@@ -274,6 +277,18 @@ func (r *Raft) Step(m Message) Ready {
 	if m.To != r.id {
 		return r.ready(nil) // misrouted: the transport attributes, we verify
 	}
+
+	// Pre-vote traffic is handled before the uniform term rules on purpose:
+	// a MsgPreVote carries a PROSPECTIVE term that must never bump the
+	// receiver, and a MsgPreVoteResp either echoes that prospective term or
+	// carries a real one, which its handler inspects itself.
+	switch m.Kind {
+	case MsgPreVote:
+		return r.ready([]Message{r.handlePreVote(m)})
+	case MsgPreVoteResp:
+		return r.ready(r.handlePreVoteResp(m))
+	}
+
 	var msgs []Message
 	switch {
 	case m.Term > r.hs.Term:
@@ -324,8 +339,74 @@ func (r *Raft) becomeFollower(term uint64, leader cluster.NodeID) {
 	r.role = RoleFollower
 	r.leader = leader
 	r.votes = nil
+	r.prevotes = nil
 	r.snapXfer = nil
 	r.resetElectionTimer()
+}
+
+// preCampaign runs the pre-vote round: before incrementing its term, a node
+// asks whether a majority WOULD grant it a vote for the next one. Nothing
+// durable changes during the round, so an isolated replica whose timer
+// fires forever cannot inflate terms and force a re-election when it
+// rejoins. Only a majority of would-grants starts the real campaign.
+func (r *Raft) preCampaign() []Message {
+	r.resetElectionTimer()
+	r.prevotes = map[cluster.NodeID]bool{r.id: true}
+	if len(r.prevotes) >= r.cfg.Quorum() {
+		r.prevotes = nil
+		return r.campaign() // single-node cluster: nothing to ask
+	}
+	msgs := make([]Message, 0, len(r.cfg.Nodes)-1)
+	for _, peer := range r.cfg.Peers(r.id) {
+		msgs = append(msgs, Message{
+			Kind: MsgPreVote, From: r.id, To: peer, Term: r.hs.Term + 1,
+			LogIndex: r.log.LastIndex(), LogTerm: r.log.LastTerm(),
+		})
+	}
+	return msgs
+}
+
+// handlePreVote answers whether this node WOULD vote for the prospective
+// term, changing no state at all. It refuses while it believes in a fresh
+// leader, one heard from within a full election timeout, or while it is the
+// leader itself: pre-vote exists to protect a healthy leader from a
+// disruptive rejoiner, and log completeness alone cannot tell those apart.
+// The one-vote-per-term rule does not apply, since nothing is granted yet,
+// only predicted.
+func (r *Raft) handlePreVote(m Message) Message {
+	leaderFresh := r.role == RoleLeader ||
+		(r.leader != cluster.None && r.electionElapsed < r.opts.ElectionTicks)
+	grant := !leaderFresh &&
+		m.Term > r.hs.Term &&
+		r.log.IsUpToDate(m.LogIndex, m.LogTerm)
+	resp := Message{Kind: MsgPreVoteResp, From: r.id, To: m.From, Granted: grant}
+	if grant {
+		resp.Term = m.Term // echo the prospective term the grant is for
+	} else {
+		resp.Term = r.hs.Term // a stale pre-candidate learns the real term
+	}
+	return resp
+}
+
+// handlePreVoteResp counts would-grants for the pending round and starts
+// the real campaign on a majority. A rejection carrying a term above ours
+// converts to follower at it: a real term exists this node has not seen.
+func (r *Raft) handlePreVoteResp(m Message) []Message {
+	if !m.Granted {
+		if m.Term > r.hs.Term {
+			r.becomeFollower(m.Term, cluster.None)
+		}
+		return nil
+	}
+	if r.prevotes == nil || m.Term != r.hs.Term+1 || r.role == RoleLeader {
+		return nil // stale response from an abandoned or finished round
+	}
+	r.prevotes[m.From] = true
+	if len(r.prevotes) >= r.cfg.Quorum() {
+		r.prevotes = nil
+		return r.campaign()
+	}
+	return nil
 }
 
 // campaign starts (or restarts, on a split vote) an election.
@@ -358,6 +439,7 @@ func (r *Raft) becomeLeader() []Message {
 	r.role = RoleLeader
 	r.leader = r.id
 	r.heartbeatElapsed = 0
+	r.prevotes = nil
 	r.nextIndex = make(map[cluster.NodeID]uint64, len(r.cfg.Nodes))
 	r.matchIndex = make(map[cluster.NodeID]uint64, len(r.cfg.Nodes))
 	r.snapXfer = make(map[cluster.NodeID]uint64)
@@ -447,6 +529,7 @@ func (r *Raft) recognizeLeader(from cluster.NodeID) {
 		r.becomeFollower(r.hs.Term, from)
 	case RoleFollower:
 		r.leader = from
+		r.prevotes = nil
 		r.resetElectionTimer()
 	}
 }

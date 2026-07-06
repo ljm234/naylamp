@@ -19,8 +19,16 @@ func makeSnapLeader(t *testing.T, seed uint64, entries int, compactTo uint64, im
 	if err != nil {
 		t.Fatalf("new leader: %v", err)
 	}
-	for i := 0; i < 40 && r.Role() != RoleCandidate; i++ {
-		r.Tick()
+	// A real election now begins with a pre-vote round: the fired timer
+	// sends MsgPreVote and the node stays a follower until a majority
+	// would grant it. The helper answers those asks so the round reaches
+	// quorum and the real campaign starts.
+	for i := 0; i < 40 && r.Role() == RoleFollower; i++ {
+		for _, m := range r.Tick().Msgs {
+			if m.Kind == MsgPreVote {
+				r.Step(Message{Kind: MsgPreVoteResp, From: 2, To: 1, Term: m.Term, Granted: true})
+			}
+		}
 	}
 	if r.Role() != RoleCandidate {
 		t.Fatalf("never campaigned")

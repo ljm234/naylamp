@@ -208,3 +208,46 @@ func TestRaft_SafetyInvariants_Seeded(t *testing.T) {
 	t.Logf("seeds=%d elections=%d committed=%d sent=%d dropped=%d dup=%d partitionDrops=%d",
 		seeds, elections, committed, stats.Sent, stats.DroppedByFault, stats.Duplicated, stats.DroppedByPartition)
 }
+
+func TestRaft_PreVoteNoTermInflation(t *testing.T) {
+	h := newHarness(t, 3, 17, cluster.DefaultSimConfig())
+	lead := h.waitLeader(300)
+	if !h.propose([]byte("stable")) {
+		t.Fatalf("proposal rejected")
+	}
+	h.waitCommittedData("stable", 300)
+	termBefore := lead.Term()
+
+	// Fully isolate one follower, both directions, and let its election
+	// timer fire many times. Without pre-vote each timeout increments its
+	// term; with pre-vote it never wins a round, so the term must not move.
+	var isolated *Raft
+	for _, id := range h.cfg.IDs() {
+		if id != lead.ID() {
+			isolated = h.nodes[id]
+			break
+		}
+	}
+	for _, id := range h.cfg.IDs() {
+		if id != isolated.ID() {
+			h.fab.Partition(isolated.ID(), id)
+			h.fab.Partition(id, isolated.ID())
+		}
+	}
+	h.runTicks(400)
+	if got := isolated.Term(); got != termBefore {
+		t.Fatalf("isolated node inflated its term: %d, want %d", got, termBefore)
+	}
+
+	// Heal: the rejoiner must slot back in as a follower of the SAME term
+	// and leadership must not change hands.
+	h.fab.HealAll()
+	h.runTicks(120)
+	if lead.Role() != RoleLeader || lead.Term() != termBefore {
+		t.Fatalf("stable leader disrupted after heal: role=%v term=%d", lead.Role(), lead.Term())
+	}
+	if isolated.Term() != termBefore || isolated.Role() != RoleFollower {
+		t.Fatalf("rejoiner state wrong: role=%v term=%d, want follower at %d", isolated.Role(), isolated.Term(), termBefore)
+	}
+	h.quiesce(800)
+}

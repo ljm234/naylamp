@@ -44,6 +44,16 @@ const (
 	// the follower expects, which doubles as a resync hint on loss or
 	// reordering.
 	MsgSnapResp MsgKind = 6
+	// MsgPreVote asks whether a vote WOULD be granted for the prospective
+	// term it carries, without anyone changing state. A node whose election
+	// timer fires first confirms it could win before incrementing its term,
+	// so an isolated replica cannot inflate terms and disrupt a stable
+	// leader on rejoin.
+	MsgPreVote MsgKind = 7
+	// MsgPreVoteResp answers a MsgPreVote. A grant echoes the prospective
+	// term it is for; a rejection carries the responder's real current term
+	// so a stale pre-candidate learns it.
+	MsgPreVoteResp MsgKind = 8
 )
 
 // Message is the single unit exchanged between Raft nodes: one flat struct
@@ -67,6 +77,10 @@ const (
 //	MsgSnapResp: Term, From, To, LogIndex = snapshot position in transfer,
 //	             Granted = chunk landed at the expected offset, Offset =
 //	             next byte offset the follower expects
+//	MsgPreVote:  Term = prospective term (current+1), From, To,
+//	             LogIndex/LogTerm = candidate's last entry
+//	MsgPreVoteResp: Term (prospective echoed on grant, responder's real
+//	             term on rejection), From, To, Granted
 type Message struct {
 	Kind      MsgKind
 	From      cluster.NodeID
