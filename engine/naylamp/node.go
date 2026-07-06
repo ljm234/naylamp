@@ -33,6 +33,12 @@ const imageVersion byte = 1
 // with silently wrong state.
 var ErrMalformedImage = errors.New("naylamp: malformed state machine image")
 
+// ErrInvalidArgument reports input rejected before any proposal: the state
+// machine was never touched and nothing entered the log. Callers fix their
+// input and retry. A host treats this like the control errors, never as
+// node failure, because a caller mistake must not poison a healthy replica.
+var ErrInvalidArgument = errors.New("naylamp: invalid argument")
+
 // NodeOptions tunes a node. CompactEvery bounds how far the applied index may
 // run ahead of the last snapshot before the node folds its log into a fresh
 // one; 0 disables compaction entirely.
@@ -157,10 +163,10 @@ func (n *Node) Tick() ([][]byte, error) {
 // caller can redirect.
 func (n *Node) Upsert(id uint64, vec []float32) (uint64, [][]byte, error) {
 	if len(vec) != n.dim {
-		return 0, nil, fmt.Errorf("naylamp: vector has dim %d, node requires %d", len(vec), n.dim)
+		return 0, nil, fmt.Errorf("%w: vector has dim %d, node requires %d", ErrInvalidArgument, len(vec), n.dim)
 	}
 	if err := (vector.Vector{ID: id, Data: vec}).Validate(); err != nil {
-		return 0, nil, err
+		return 0, nil, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 	}
 	idx, rd, err := n.core.Propose(encodeUpsert(id, vec))
 	if err != nil {
@@ -195,10 +201,10 @@ func (n *Node) Delete(id uint64) (uint64, [][]byte, error) {
 // and serve the Search once ReadServable reports true for its context.
 func (n *Node) Search(query []float32, k int) ([]vector.Neighbor, error) {
 	if len(query) != n.dim {
-		return nil, fmt.Errorf("naylamp: query has dim %d, node requires %d", len(query), n.dim)
+		return nil, fmt.Errorf("%w: query has dim %d, node requires %d", ErrInvalidArgument, len(query), n.dim)
 	}
 	if k <= 0 {
-		return nil, fmt.Errorf("naylamp: k must be positive, got %d", k)
+		return nil, fmt.Errorf("%w: k must be positive, got %d", ErrInvalidArgument, k)
 	}
 	return n.index.Search(query, k), nil
 }
