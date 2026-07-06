@@ -62,18 +62,39 @@ const snapChunkSize = 64 << 10
 // only then may Msgs be handed to the transport, and Committed applied to
 // the state machine. A vote or an ack that leaves the node before its state
 // is durable is how a crashed node votes twice. Entries and Snapshot are
-// each handed exactly once.
+// each handed exactly once. ReadStates are reads whose leadership round
+// completed; each is servable once applied reaches its index.
 type Ready struct {
-	Msgs      []Message
-	Entries   []Entry
-	Snapshot  *Snapshot
-	Committed []Entry
-	HardState HardState
-	Dirty     bool
+	Msgs       []Message
+	Entries    []Entry
+	Snapshot   *Snapshot
+	Committed  []Entry
+	ReadStates []ReadState
+	HardState  HardState
+	Dirty      bool
 }
 
 // ErrNotLeader rejects proposals on non-leaders; the caller redirects.
 var ErrNotLeader = errors.New("raft: not the leader")
+
+// ErrNotReady rejects a linearizable read on a leader that has not yet
+// committed an entry of its own term; the caller retries shortly.
+var ErrNotReady = errors.New("raft: leader has no commit in its term yet")
+
+// ReadState is one confirmed linearizable read: a majority answered a
+// message sent after the read was registered, so no newer leadership can
+// have committed writes this node has not seen up to Index. The caller
+// serves the read from its state machine once applied reaches Index.
+type ReadState struct {
+	Ctx   uint64
+	Index uint64
+}
+
+// pendingRead tracks one read round awaiting its majority.
+type pendingRead struct {
+	index uint64
+	acks  map[cluster.NodeID]bool
+}
 
 // Raft is the pure consensus core: a deterministic state machine with no
 // goroutines, no timers, no wall clock and no global randomness. Time enters
@@ -122,9 +143,17 @@ type Raft struct {
 	votes map[cluster.NodeID]bool
 	// prevotes counts would-grants of the pending pre-vote round; nil when
 	// no round is pending.
-	prevotes   map[cluster.NodeID]bool
-	nextIndex  map[cluster.NodeID]uint64
-	matchIndex map[cluster.NodeID]uint64
+	prevotes map[cluster.NodeID]bool
+	// noopIndex is the index of the no-op this leader appended on taking
+	// office; reads are refused until it commits.
+	noopIndex uint64
+	// readSeq numbers read rounds; pendingReads holds the ones awaiting a
+	// majority and readStates the confirmed ones not yet handed out.
+	readSeq      uint64
+	pendingReads map[uint64]*pendingRead
+	readStates   []ReadState
+	nextIndex    map[cluster.NodeID]uint64
+	matchIndex   map[cluster.NodeID]uint64
 
 	dirty bool
 }
@@ -340,6 +369,7 @@ func (r *Raft) becomeFollower(term uint64, leader cluster.NodeID) {
 	r.leader = leader
 	r.votes = nil
 	r.prevotes = nil
+	r.pendingReads = nil
 	r.snapXfer = nil
 	r.resetElectionTimer()
 }
@@ -453,6 +483,8 @@ func (r *Raft) becomeLeader() []Message {
 		// programming error it would be.
 		panic(err)
 	}
+	r.noopIndex = noop.Index
+	r.pendingReads = make(map[uint64]*pendingRead)
 	r.maybeCommit()
 	return r.bcastAppend()
 }
@@ -500,7 +532,7 @@ func (r *Raft) handleApp(m Message) Message {
 	r.recognizeLeader(m.From)
 	lastNew := m.LogIndex + uint64(len(m.Entries))
 	if _, ok := r.log.TryAppend(m.LogIndex, m.LogTerm, m.Entries); !ok {
-		return Message{Kind: MsgAppResp, From: r.id, To: m.From, Term: r.hs.Term, LastIndex: r.log.LastIndex()}
+		return Message{Kind: MsgAppResp, From: r.id, To: m.From, Term: r.hs.Term, LastIndex: r.log.LastIndex(), ReadCtx: m.ReadCtx}
 	}
 	if len(m.Entries) > 0 && m.LogIndex < r.stableTo {
 		// The batch may have overwritten indices already handed out as
@@ -514,7 +546,7 @@ func (r *Raft) handleApp(m Message) Message {
 		r.hs.Commit = min(m.Commit, lastNew)
 		r.dirty = true
 	}
-	return Message{Kind: MsgAppResp, From: r.id, To: m.From, Term: r.hs.Term, Granted: true, LastIndex: lastNew}
+	return Message{Kind: MsgAppResp, From: r.id, To: m.From, Term: r.hs.Term, Granted: true, LastIndex: lastNew, ReadCtx: m.ReadCtx}
 }
 
 // recognizeLeader is the shared reaction to leader traffic at the current
@@ -636,6 +668,12 @@ func (r *Raft) handleAppResp(m Message) []Message {
 	if r.role != RoleLeader {
 		return nil
 	}
+	if m.ReadCtx != 0 {
+		// Any answer at this term counts toward the read round, granted or
+		// not: a log mismatch is repair business, while the answer itself
+		// proves the sender still recognizes this leadership.
+		r.confirmRead(m.ReadCtx, m.From)
+	}
 	if m.Granted {
 		if m.LastIndex > r.matchIndex[m.From] {
 			r.matchIndex[m.From] = m.LastIndex
@@ -662,6 +700,51 @@ func (r *Raft) handleAppResp(m Message) []Message {
 	}
 	r.nextIndex[m.From] = next
 	return []Message{r.buildAppend(m.From)}
+}
+
+// RequestRead registers a linearizable read. It captures the commit index as
+// the read's index and confirms leadership with an append round carrying the
+// read's context: only answers to messages sent after this registration
+// count, and a majority of them proves no newer leader can have committed
+// writes this node has not seen. The read arrives through Ready.ReadStates;
+// the caller serves it once applied reaches the delivered index. A single
+// node cluster is its own majority and confirms on the spot.
+func (r *Raft) RequestRead() (uint64, Ready, error) {
+	if r.role != RoleLeader {
+		return 0, r.ready(nil), ErrNotLeader
+	}
+	if r.hs.Commit < r.noopIndex {
+		return 0, r.ready(nil), ErrNotReady
+	}
+	r.readSeq++
+	seq := r.readSeq
+	if r.cfg.Quorum() == 1 {
+		r.readStates = append(r.readStates, ReadState{Ctx: seq, Index: r.hs.Commit})
+		return seq, r.ready(nil), nil
+	}
+	r.pendingReads[seq] = &pendingRead{index: r.hs.Commit, acks: map[cluster.NodeID]bool{r.id: true}}
+	msgs := r.bcastAppend()
+	for i := range msgs {
+		if msgs[i].Kind == MsgApp {
+			msgs[i].ReadCtx = seq
+		}
+	}
+	r.heartbeatElapsed = 0
+	return seq, r.ready(msgs), nil
+}
+
+// confirmRead counts one answer toward a pending read round and delivers the
+// read when a majority has answered.
+func (r *Raft) confirmRead(ctx uint64, from cluster.NodeID) {
+	w, ok := r.pendingReads[ctx]
+	if !ok {
+		return // finished, or dropped by a deposition
+	}
+	w.acks[from] = true
+	if len(w.acks) >= r.cfg.Quorum() {
+		delete(r.pendingReads, ctx)
+		r.readStates = append(r.readStates, ReadState{Ctx: ctx, Index: w.index})
+	}
 }
 
 // maybeCommit advances the commit index to the highest position replicated
@@ -803,13 +886,15 @@ func (r *Raft) takeSnapshot() *Snapshot {
 // state, then messages.
 func (r *Raft) ready(msgs []Message) Ready {
 	rd := Ready{
-		Msgs:      msgs,
-		Entries:   r.takeUnstable(),
-		Snapshot:  r.takeSnapshot(),
-		Committed: r.takeCommitted(),
-		HardState: r.hs,
-		Dirty:     r.dirty,
+		Msgs:       msgs,
+		Entries:    r.takeUnstable(),
+		Snapshot:   r.takeSnapshot(),
+		Committed:  r.takeCommitted(),
+		ReadStates: r.readStates,
+		HardState:  r.hs,
+		Dirty:      r.dirty,
 	}
 	r.dirty = false
+	r.readStates = nil
 	return rd
 }

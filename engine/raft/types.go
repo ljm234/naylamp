@@ -67,10 +67,11 @@ const (
 //	MsgVote:     Term, From, To, LogIndex/LogTerm = candidate's last entry
 //	MsgVoteResp: Term, From, To, Granted
 //	MsgApp:      Term, From, To, LogIndex/LogTerm = entry preceding Entries
-//	             (prevLogIndex/prevLogTerm), Entries, Commit = leader commit
+//	             (prevLogIndex/prevLogTerm), Entries, Commit = leader commit,
+//	             ReadCtx = pending read round when nonzero
 //	MsgAppResp:  Term, From, To, Granted, LastIndex = last replicated index
 //	             when Granted, the follower's last log index as a catch-up
-//	             hint when rejected
+//	             hint when rejected, ReadCtx echoed from the append it answers
 //	MsgSnap:     Term, From, To, LogIndex/LogTerm = snapshot position,
 //	             Offset = byte offset of Chunk, Chunk, Done = final chunk,
 //	             Commit = leader commit
@@ -95,4 +96,5 @@ type Message struct {
 	Offset    uint64
 	Chunk     []byte
 	Done      bool
+	ReadCtx   uint64
 }

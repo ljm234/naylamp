@@ -23,13 +23,14 @@ const EnvelopeKind cluster.Kind = 1
 //	commit    uint64
 //	lastIndex uint64
 //	offset    uint64
+//	readCtx   uint64
 //	flags     uint8 (bit 0 granted, bit 1 done; any other bit is invalid)
 //	nEntries  uint32
 //	chunkLen  uint32
 //	entries   nEntries times: index uint64, term uint64, dataLen uint32, data
 //	chunk     chunkLen bytes
 const (
-	msgHeaderSize  = 2 + 8 + 8 + 8 + 8 + 8 + 8 + 1 + 4 + 4
+	msgHeaderSize  = 2 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 1 + 4 + 4
 	entryFixedSize = 8 + 8 + 4
 
 	flagGranted = 1 << 0
@@ -57,7 +58,7 @@ func EncodeMsg(m Message) ([]byte, error) {
 
 	binary.LittleEndian.PutUint16(scratch[:2], uint16(m.Kind))
 	body = append(body, scratch[:2]...)
-	for _, v := range []uint64{m.Term, m.LogIndex, m.LogTerm, m.Commit, m.LastIndex, m.Offset} {
+	for _, v := range []uint64{m.Term, m.LogIndex, m.LogTerm, m.Commit, m.LastIndex, m.Offset, m.ReadCtx} {
 		binary.LittleEndian.PutUint64(scratch[:8], v)
 		body = append(body, scratch[:8]...)
 	}
@@ -117,14 +118,15 @@ func DecodeMsgEnvelope(env cluster.Envelope) (Message, error) {
 	m.Commit = binary.LittleEndian.Uint64(b[26:34])
 	m.LastIndex = binary.LittleEndian.Uint64(b[34:42])
 	m.Offset = binary.LittleEndian.Uint64(b[42:50])
-	flags := b[50]
+	m.ReadCtx = binary.LittleEndian.Uint64(b[50:58])
+	flags := b[58]
 	if flags&^(byte(flagGranted)|byte(flagDone)) != 0 {
 		return Message{}, fmt.Errorf("%w: invalid flags %#x", ErrMalformedMessage, flags)
 	}
 	m.Granted = flags&flagGranted != 0
 	m.Done = flags&flagDone != 0
-	n := binary.LittleEndian.Uint32(b[51:55])
-	chunkLen := binary.LittleEndian.Uint32(b[55:59])
+	n := binary.LittleEndian.Uint32(b[59:63])
+	chunkLen := binary.LittleEndian.Uint32(b[63:67])
 	rest := len(b) - msgHeaderSize
 	if uint64(n)*entryFixedSize+uint64(chunkLen) > uint64(rest) { //nolint:gosec // rest >= 0 by the length check above, so the conversion cannot wrap
 		return Message{}, ErrMalformedMessage
