@@ -522,3 +522,91 @@ func TestNode_LinearizableReadOnLeader(t *testing.T) {
 		t.Fatalf("linearizable read wrong nearest: %+v", res)
 	}
 }
+
+func TestNode_LeaderKillRestartNoAckedWriteLost(t *testing.T) {
+	ids := []cluster.NodeID{1, 2, 3}
+	cfg := cluster.Config{Nodes: []cluster.NodeAddr{{ID: 1}, {ID: 2}, {ID: 3}}}
+	dirs := map[cluster.NodeID]string{}
+	nodes := map[cluster.NodeID]*Node{}
+	for _, id := range ids {
+		dir := t.TempDir()
+		dirs[id] = dir
+		n, err := OpenNode(dir, id, cfg, 3, testRNG(uint64(id)+500), NodeOptions{})
+		if err != nil {
+			t.Fatalf("open %d: %v", id, err)
+		}
+		nodes[id] = n
+	}
+	defer func() {
+		for _, n := range nodes {
+			_ = n.Close()
+		}
+	}()
+
+	lead := driveUntilLeader(t, nodes, ids, 300)
+	vecs := map[uint64][]float32{
+		1: {1, 0, 0}, 2: {0, 1, 0}, 3: {0, 0, 1}, 4: {1, 1, 0}, 5: {0, 1, 1},
+	}
+	for id := uint64(1); id <= 3; id++ {
+		_, out, err := nodes[lead].Upsert(id, vecs[id])
+		if err != nil {
+			t.Fatalf("upsert %d: %v", id, err)
+		}
+		pump(t, nodes, out, 4000)
+	}
+	if !driveUntilConverged(t, nodes, ids, 300) {
+		t.Fatalf("initial cluster did not converge")
+	}
+
+	// Kill the leader: every write acknowledged above must survive it.
+	oldLead := lead
+	if err := nodes[oldLead].Close(); err != nil {
+		t.Fatalf("close leader %d: %v", oldLead, err)
+	}
+	delete(nodes, oldLead)
+
+	// The surviving majority elects a new leader and keeps committing.
+	newLead := driveUntilLeader(t, nodes, ids, 600)
+	for id := uint64(4); id <= 5; id++ {
+		_, out, err := nodes[newLead].Upsert(id, vecs[id])
+		if err != nil {
+			t.Fatalf("upsert %d on new leader: %v", id, err)
+		}
+		pump(t, nodes, out, 4000)
+	}
+	if !driveUntilConverged(t, nodes, ids, 300) {
+		t.Fatalf("majority did not converge after the kill")
+	}
+
+	// The old leader restarts from its own disk. It must rejoin as a
+	// follower, since pre-vote keeps a rejoiner from disrupting a healthy
+	// leadership, and catch up through normal replication.
+	n2, err := OpenNode(dirs[oldLead], oldLead, cfg, 3, testRNG(777), NodeOptions{})
+	if err != nil {
+		t.Fatalf("reopen old leader %d: %v", oldLead, err)
+	}
+	nodes[oldLead] = n2
+	if !driveUntilConverged(t, nodes, ids, 500) {
+		t.Fatalf("restarted leader did not catch up")
+	}
+	if n2.Role() == raft.RoleLeader {
+		t.Fatalf("restarted leader retook office against a healthy leadership")
+	}
+	want := nodes[newLead].StateHash()
+	for _, id := range ids {
+		if got := nodes[id].StateHash(); got != want {
+			t.Fatalf("node %d hash differs after leader restart: %x vs %x", id, got, want)
+		}
+	}
+	// Every acknowledged write, before and after the kill, is present on
+	// the restarted node.
+	for id := uint64(1); id <= 5; id++ {
+		res, err := n2.Search(vecs[id], 1)
+		if err != nil {
+			t.Fatalf("search %d: %v", id, err)
+		}
+		if len(res) != 1 || res[0].ID != id {
+			t.Fatalf("acked write %d lost after leader kill and restart: %+v", id, res)
+		}
+	}
+}
