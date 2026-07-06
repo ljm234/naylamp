@@ -87,7 +87,7 @@ func TestReady_RestoreSeedsDurableState(t *testing.T) {
 	}
 	hs := HardState{Term: 3, Vote: 2, Commit: 2}
 	entries := []Entry{dataEnt(1, 1, "a"), dataEnt(2, 1, "b"), dataEnt(3, 3, "c")}
-	if err := r.Restore(hs, entries); err != nil {
+	if err := r.Restore(hs, nil, entries); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
 	if r.Term() != 3 || r.LastIndex() != 3 {
@@ -102,19 +102,23 @@ func TestReady_RestoreSeedsDurableState(t *testing.T) {
 	}
 
 	// Misuse fails loudly.
-	if err := r.Restore(hs, nil); err == nil {
+	if err := r.Restore(hs, nil, nil); err == nil {
 		t.Fatalf("second restore accepted")
 	}
 	r2, _ := New(1, cfg, testRNG(8), DefaultOptions())
-	if err := r2.Restore(HardState{Term: 1}, []Entry{dataEnt(2, 1, "gap")}); err == nil {
+	if err := r2.Restore(HardState{Term: 1}, nil, []Entry{dataEnt(2, 1, "gap")}); err == nil {
 		t.Fatalf("gapped restore accepted")
 	}
 	r3, _ := New(1, cfg, testRNG(9), DefaultOptions())
-	if err := r3.Restore(HardState{Term: 1, Commit: 5}, []Entry{dataEnt(1, 1, "a")}); err == nil {
+	if err := r3.Restore(HardState{Term: 1, Commit: 5}, nil, []Entry{dataEnt(1, 1, "a")}); err == nil {
 		t.Fatalf("commit beyond log accepted")
 	}
 	r4, _ := New(1, cfg, testRNG(10), DefaultOptions())
-	if err := r4.Restore(HardState{Term: 1}, []Entry{dataEnt(1, 2, "future")}); err == nil {
+	if err := r4.Restore(HardState{Term: 1}, nil, []Entry{dataEnt(1, 2, "future")}); err == nil {
 		t.Fatalf("log term above hard state term accepted")
+	}
+	r5, _ := New(1, cfg, testRNG(11), DefaultOptions())
+	if err := r5.Restore(HardState{Term: 2}, &Snapshot{Index: 4, Term: 2}, []Entry{dataEnt(6, 2, "gap")}); err == nil {
+		t.Fatalf("entries gapped from snapshot accepted")
 	}
 }

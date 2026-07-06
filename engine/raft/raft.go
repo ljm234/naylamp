@@ -1,8 +1,8 @@
 // Package raft implements the Raft consensus core as a deterministic state
 // machine: time enters through Tick, messages through Step, and everything a
 // node must act on leaves through a Ready bundle. It owns leader election, log
-// replication and the four safety properties, with no goroutines, wall clock
-// or global randomness of its own.
+// replication, snapshot transfer and the four safety properties, with no
+// goroutines, wall clock or global randomness of its own.
 package raft
 
 import (
@@ -51,18 +51,22 @@ type Options struct {
 // DefaultOptions keeps heartbeats well below the election timeout.
 func DefaultOptions() Options { return Options{ElectionTicks: 10, HeartbeatTicks: 2} }
 
+// snapChunkSize bounds one snapshot chunk on the wire, well below the
+// envelope payload cap so framing overhead never pushes a chunk over it.
+const snapChunkSize = 64 << 10
+
 // Ready bundles everything the runtime must act on after one call into the
 // core, in the order it must act: Entries are the log records not yet
-// durable and must be persisted first; then a dirty HardState must be
-// persisted; only then may Msgs be handed to the transport, and Committed
-// applied to the state machine. A vote or an ack that leaves the node before
-// its state is durable is how a crashed node votes twice. Entries are handed
-// exactly once; a conflict that overwrites already-handed indices hands the
-// affected suffix again, and the storage's supersession makes replaying that
-// suffix idempotent.
+// durable and must be persisted first; Snapshot, when present, is a fully
+// received image that must be saved durably next; then a dirty HardState;
+// only then may Msgs be handed to the transport, and Committed applied to
+// the state machine. A vote or an ack that leaves the node before its state
+// is durable is how a crashed node votes twice. Entries and Snapshot are
+// each handed exactly once.
 type Ready struct {
 	Msgs      []Message
 	Entries   []Entry
+	Snapshot  *Snapshot
 	Committed []Entry
 	HardState HardState
 	Dirty     bool
@@ -93,6 +97,23 @@ type Raft struct {
 	// stableTo is the highest log index already handed out (or restored) as
 	// durable. Ready.Entries covers everything above it.
 	stableTo uint64
+
+	// snap is the latest snapshot this node holds, kept so a leader can
+	// serve followers whose needed entries were compacted away.
+	snap *Snapshot
+
+	// inSnap assembles an incoming snapshot chunk by chunk; the buffered
+	// length is the expected offset, so resync is just stating it.
+	inSnap *Snapshot
+
+	// pendingSnap is a fully received snapshot awaiting its one-time
+	// delivery through Ready.
+	pendingSnap *Snapshot
+
+	// snapXfer tracks, per follower, the byte offset of the outstanding
+	// chunk of an in-flight snapshot transfer (stop and wait: one chunk in
+	// flight, retransmitted on the heartbeat cadence).
+	snapXfer map[cluster.NodeID]uint64
 
 	electionElapsed   int
 	heartbeatElapsed  int
@@ -128,19 +149,33 @@ func New(id cluster.NodeID, cfg cluster.Config, rng *rand.Rand, opts Options) (*
 	return r, nil
 }
 
-// Restore seeds a fresh core with the state a node's storage recovered:
-// the persisted hard state and the durable log entries, contiguous from
-// index 1. Restored entries are already durable, so they are never handed
-// out again through Ready.Entries; the committed prefix is deliberately NOT
-// marked applied, so the first Ready after Restore replays it through the
-// normal Committed path and the state machine rebuilds with zero special
-// recovery code. Restore is only valid on a core that has processed nothing.
-func (r *Raft) Restore(hs HardState, entries []Entry) error {
+// Restore seeds a fresh core with the state a node's storage recovered: the
+// persisted hard state, the durable snapshot when one exists, and the
+// surviving log entries, contiguous from the position right after the
+// snapshot (or from index 1 without one). Restored entries and snapshot are
+// already durable, so they are never handed out again; the committed prefix
+// beyond the snapshot is deliberately NOT marked applied, so the first Ready
+// replays it through the normal Committed path. The snapshot itself is the
+// applied image and the runtime rebuilds from it directly, so applied starts
+// at its index, and the effective commit can never sit below it: a snapshot
+// is committed state by construction. Restore is only valid on a core that
+// has processed nothing.
+func (r *Raft) Restore(hs HardState, snap *Snapshot, entries []Entry) error {
 	if r.hs.Term != 0 || r.hs.Vote != cluster.None || r.log.LastIndex() != 0 || r.applied != 0 {
 		return errors.New("raft: restore on a core that already has state")
 	}
+	base := uint64(0)
+	if snap != nil {
+		if snap.Index == 0 {
+			return errors.New("raft: restored snapshot at index zero")
+		}
+		r.log.ResetToSnapshot(snap.Index, snap.Term)
+		r.snap = snap
+		r.applied = snap.Index
+		base = snap.Index
+	}
 	for i, e := range entries {
-		if e.Index != uint64(i)+1 {
+		if e.Index != base+uint64(i)+1 {
 			return fmt.Errorf("raft: restored entries have a gap at position %d", i)
 		}
 	}
@@ -156,8 +191,26 @@ func (r *Raft) Restore(hs HardState, entries []Entry) error {
 		return errors.New("raft: restored commit exceeds restored log")
 	}
 	r.hs = hs
+	if snap != nil && r.hs.Commit < snap.Index {
+		r.hs.Commit = snap.Index
+		r.dirty = true // persist the corrected floor on the next flush
+	}
 	r.stableTo = r.log.LastIndex()
-	r.dirty = false
+	return nil
+}
+
+// Compact folds the applied prefix through index into the given snapshot
+// image and keeps the bytes so this node, as a leader, can bring far-behind
+// followers up by installation. Only committed history may ever be
+// compacted, and the position must exist in the log with that exact term.
+func (r *Raft) Compact(index, term uint64, data []byte) error {
+	if index > r.hs.Commit {
+		return fmt.Errorf("raft: compact to %d beyond commit %d", index, r.hs.Commit)
+	}
+	if err := r.log.CompactTo(index, term); err != nil {
+		return err
+	}
+	r.snap = &Snapshot{Index: index, Term: term, Data: data}
 	return nil
 }
 
@@ -177,7 +230,8 @@ func (r *Raft) Leader() cluster.NodeID { return r.leader }
 func (r *Raft) LastIndex() uint64 { return r.log.LastIndex() }
 
 // Tick advances logical time by one unit. Followers and candidates count
-// toward an election timeout; leaders count toward the heartbeat cadence.
+// toward an election timeout; leaders count toward the heartbeat cadence,
+// which doubles as the retransmission timer for in-flight snapshot chunks.
 func (r *Raft) Tick() Ready {
 	var msgs []Message
 	if r.role == RoleLeader {
@@ -224,7 +278,7 @@ func (r *Raft) Step(m Message) Ready {
 	switch {
 	case m.Term > r.hs.Term:
 		lead := cluster.None
-		if m.Kind == MsgApp {
+		if m.Kind == MsgApp || m.Kind == MsgSnap {
 			lead = m.From
 		}
 		r.becomeFollower(m.Term, lead)
@@ -234,6 +288,8 @@ func (r *Raft) Step(m Message) Ready {
 			msgs = append(msgs, Message{Kind: MsgVoteResp, From: r.id, To: m.From, Term: r.hs.Term})
 		case MsgApp:
 			msgs = append(msgs, Message{Kind: MsgAppResp, From: r.id, To: m.From, Term: r.hs.Term, LastIndex: r.log.LastIndex()})
+		case MsgSnap:
+			msgs = append(msgs, Message{Kind: MsgSnapResp, From: r.id, To: m.From, Term: r.hs.Term, LogIndex: m.LogIndex})
 		}
 		return r.ready(msgs)
 	}
@@ -247,13 +303,18 @@ func (r *Raft) Step(m Message) Ready {
 		msgs = append(msgs, r.handleApp(m))
 	case MsgAppResp:
 		msgs = append(msgs, r.handleAppResp(m)...)
+	case MsgSnap:
+		msgs = append(msgs, r.handleSnap(m))
+	case MsgSnapResp:
+		msgs = append(msgs, r.handleSnapResp(m)...)
 	}
 	return r.ready(msgs)
 }
 
 // becomeFollower converts the node. The vote clears only when the term
 // advances: within one term a node never forgets who it voted for, that is
-// the one-vote-per-term rule.
+// the one-vote-per-term rule. Outbound transfer state belongs to leadership
+// and is dropped with it.
 func (r *Raft) becomeFollower(term uint64, leader cluster.NodeID) {
 	if term > r.hs.Term {
 		r.hs.Term = term
@@ -263,6 +324,7 @@ func (r *Raft) becomeFollower(term uint64, leader cluster.NodeID) {
 	r.role = RoleFollower
 	r.leader = leader
 	r.votes = nil
+	r.snapXfer = nil
 	r.resetElectionTimer()
 }
 
@@ -298,6 +360,7 @@ func (r *Raft) becomeLeader() []Message {
 	r.heartbeatElapsed = 0
 	r.nextIndex = make(map[cluster.NodeID]uint64, len(r.cfg.Nodes))
 	r.matchIndex = make(map[cluster.NodeID]uint64, len(r.cfg.Nodes))
+	r.snapXfer = make(map[cluster.NodeID]uint64)
 	for _, peer := range r.cfg.Peers(r.id) {
 		r.nextIndex[peer] = r.log.LastIndex() + 1
 		r.matchIndex[peer] = 0
@@ -352,17 +415,7 @@ func (r *Raft) handleVoteResp(m Message) []Message {
 // log, and advance the commit index capped at the last position this batch
 // actually confirmed (a longer stale tail must not ride along).
 func (r *Raft) handleApp(m Message) Message {
-	switch r.role {
-	case RoleCandidate:
-		r.becomeFollower(m.Term, m.From) // a leader exists for this term
-	case RoleFollower:
-		r.leader = m.From
-		r.resetElectionTimer()
-	}
-	// A leader receiving MsgApp at its own term would mean two leaders in
-	// one term; absent that safety violation it cannot happen, and the
-	// harness invariant checker is the alarm if it ever does.
-
+	r.recognizeLeader(m.From)
 	lastNew := m.LogIndex + uint64(len(m.Entries))
 	if _, ok := r.log.TryAppend(m.LogIndex, m.LogTerm, m.Entries); !ok {
 		return Message{Kind: MsgAppResp, From: r.id, To: m.From, Term: r.hs.Term, LastIndex: r.log.LastIndex()}
@@ -382,6 +435,116 @@ func (r *Raft) handleApp(m Message) Message {
 	return Message{Kind: MsgAppResp, From: r.id, To: m.From, Term: r.hs.Term, Granted: true, LastIndex: lastNew}
 }
 
+// recognizeLeader is the shared reaction to leader traffic at the current
+// term: a candidate learns a leader exists and steps down, a follower notes
+// it and resets its election timer. A leader receiving leader traffic at its
+// own term would mean two leaders in one term; absent that safety violation
+// it cannot happen, and the harness invariant checker is the alarm if it
+// ever does.
+func (r *Raft) recognizeLeader(from cluster.NodeID) {
+	switch r.role {
+	case RoleCandidate:
+		r.becomeFollower(r.hs.Term, from)
+	case RoleFollower:
+		r.leader = from
+		r.resetElectionTimer()
+	}
+}
+
+// handleSnap is the follower side of chunked snapshot installation. The
+// buffered length is the expected offset: a chunk landing exactly there is
+// appended and acknowledged, anything else is answered with the expected
+// offset so the sender resyncs, which covers loss, duplication and
+// reordering on an at-most-once transport. A chunk for a snapshot at or
+// below the log's base is history this node already holds, so it is
+// acknowledged semantically instead of restarting a finished transfer. The
+// final chunk installs: the log resets per section 7, applied jumps to the
+// snapshot position because the image IS the applied state, commit takes it
+// as a floor, and the image is handed to the runtime exactly once through
+// Ready for durable saving before any message leaves.
+func (r *Raft) handleSnap(m Message) Message {
+	r.recognizeLeader(m.From)
+	resp := Message{Kind: MsgSnapResp, From: r.id, To: m.From, Term: r.hs.Term, LogIndex: m.LogIndex}
+
+	if m.LogIndex <= r.log.baseIndex {
+		resp.Granted = true
+		resp.Offset = m.Offset + uint64(len(m.Chunk))
+		return resp
+	}
+	if r.inSnap == nil || r.inSnap.Index != m.LogIndex || r.inSnap.Term != m.LogTerm {
+		r.inSnap = &Snapshot{Index: m.LogIndex, Term: m.LogTerm}
+	}
+	expected := uint64(len(r.inSnap.Data))
+	if m.Offset != expected {
+		resp.Offset = expected
+		return resp
+	}
+	r.inSnap.Data = append(r.inSnap.Data, m.Chunk...)
+	resp.Granted = true
+	resp.Offset = uint64(len(r.inSnap.Data))
+	if !m.Done {
+		return resp
+	}
+
+	snap := r.inSnap
+	r.inSnap = nil
+	r.log.ResetToSnapshot(snap.Index, snap.Term)
+	r.snap = snap
+	if snap.Index > r.applied {
+		r.applied = snap.Index
+	}
+	if snap.Index > r.hs.Commit {
+		r.hs.Commit = snap.Index
+		r.dirty = true
+	}
+	if m.Commit > r.hs.Commit {
+		r.hs.Commit = min(m.Commit, r.log.LastIndex())
+		r.dirty = true
+	}
+	if r.stableTo < snap.Index {
+		r.stableTo = snap.Index
+	}
+	if r.stableTo > r.log.LastIndex() {
+		r.stableTo = r.log.LastIndex()
+	}
+	r.pendingSnap = snap
+	return resp
+}
+
+// handleSnapResp drives one follower's transfer forward. The follower's
+// stated offset is authoritative: a refusal resyncs to it, an ack advances
+// to it, and an ack covering the whole image completes the transfer, which
+// counts the snapshot position as replicated and resumes normal appends.
+func (r *Raft) handleSnapResp(m Message) []Message {
+	if r.role != RoleLeader {
+		return nil
+	}
+	if _, inXfer := r.snapXfer[m.From]; !inXfer || r.snap == nil {
+		return nil // stale response from a finished or abandoned transfer
+	}
+	if m.Granted && m.Offset >= uint64(len(r.snap.Data)) {
+		delete(r.snapXfer, m.From)
+		// A completed installation is direct evidence: the follower holds
+		// exactly the snapshot position, whatever the leader's bookkeeping
+		// said. matchIndex only ever rises, preserving the commit
+		// arithmetic, but nextIndex must resume right after the snapshot or
+		// a stale high match would loop the transfer forever.
+		if r.snap.Index > r.matchIndex[m.From] {
+			r.matchIndex[m.From] = r.snap.Index
+			r.maybeCommit()
+		}
+		if r.nextIndex[m.From] <= r.snap.Index {
+			r.nextIndex[m.From] = r.snap.Index + 1
+		}
+		if r.nextIndex[m.From] <= r.log.LastIndex() {
+			return []Message{r.buildAppend(m.From)}
+		}
+		return nil
+	}
+	r.snapXfer[m.From] = m.Offset
+	return []Message{r.buildSnapChunk(m.From)}
+}
+
 // handleAppResp advances or repairs replication to one follower. On success
 // the match moves forward and the commit rule runs; on rejection nextIndex
 // backs off, guided by the follower's own last index, and the probe resends
@@ -393,8 +556,14 @@ func (r *Raft) handleAppResp(m Message) []Message {
 	if m.Granted {
 		if m.LastIndex > r.matchIndex[m.From] {
 			r.matchIndex[m.From] = m.LastIndex
-			r.nextIndex[m.From] = m.LastIndex + 1
 			r.maybeCommit()
+		}
+		// nextIndex follows the direct evidence of the ack even when
+		// matchIndex, which is deliberately monotone, does not move:
+		// without this a stale high match turns every ack into an
+		// identical resend, a silent livelock.
+		if m.LastIndex+1 > r.nextIndex[m.From] {
+			r.nextIndex[m.From] = m.LastIndex + 1
 		}
 		if r.nextIndex[m.From] <= r.log.LastIndex() {
 			return []Message{r.buildAppend(m.From)}
@@ -414,7 +583,10 @@ func (r *Raft) handleAppResp(m Message) []Message {
 
 // maybeCommit advances the commit index to the highest position replicated
 // on a majority, restricted to entries of the current term (5.4.2): counting
-// an old-term majority is the paper's figure 8 data-loss scenario.
+// an old-term majority is the paper's figure 8 data-loss scenario. A
+// position at the compaction base is exempt from the term restriction only
+// in the sense that it is already committed by construction, so the check
+// below can never move commit backwards through it.
 func (r *Raft) maybeCommit() {
 	matches := make([]uint64, 0, len(r.cfg.Nodes))
 	matches = append(matches, r.log.LastIndex())
@@ -433,17 +605,25 @@ func (r *Raft) maybeCommit() {
 	r.dirty = true
 }
 
-// bcastAppend sends every follower its next batch, or a heartbeat when it is
-// already caught up. Peers are visited in config order: determinism again.
+// bcastAppend sends every follower its next batch, a heartbeat when it is
+// caught up, or the outstanding snapshot chunk when a transfer is in flight,
+// which makes the heartbeat cadence the retransmission timer. Peers are
+// visited in config order: determinism again.
 func (r *Raft) bcastAppend() []Message {
 	msgs := make([]Message, 0, len(r.cfg.Nodes)-1)
 	for _, peer := range r.cfg.Peers(r.id) {
+		if _, inXfer := r.snapXfer[peer]; inXfer {
+			msgs = append(msgs, r.buildSnapChunk(peer))
+			continue
+		}
 		msgs = append(msgs, r.buildAppend(peer))
 	}
 	return msgs
 }
 
-// buildAppend assembles the MsgApp for one follower from its nextIndex.
+// buildAppend assembles the MsgApp for one follower from its nextIndex,
+// falling back to snapshot installation when the entries the follower needs
+// were compacted away.
 func (r *Raft) buildAppend(to cluster.NodeID) Message {
 	if r.nextIndex[to] > r.log.LastIndex()+1 {
 		// The follower hinted a longer stale log than ours; clamp to our tail.
@@ -452,11 +632,22 @@ func (r *Raft) buildAppend(to cluster.NodeID) Message {
 	if r.nextIndex[to] < 1 {
 		r.nextIndex[to] = 1
 	}
+	if r.nextIndex[to] <= r.log.baseIndex {
+		// The follower needs history at or below the compaction base, which
+		// only the snapshot holds now. The base only advances through
+		// Compact or Restore, both of which set the image, so its absence
+		// here is a programming error.
+		if r.snap == nil {
+			panic(fmt.Sprintf("raft: follower %d needs compacted history but no snapshot is held", to))
+		}
+		if _, inXfer := r.snapXfer[to]; !inXfer {
+			r.snapXfer[to] = 0
+		}
+		return r.buildSnapChunk(to)
+	}
 	prev := r.nextIndex[to] - 1
 	prevTerm, ok := r.log.Term(prev)
 	if !ok {
-		// Below the compaction base: 3.3 answers this with InstallSnapshot.
-		// The 3.2 log never compacts, so reaching here is a programming error.
 		panic(fmt.Sprintf("raft: no term for prev index %d", prev))
 	}
 	return Message{
@@ -464,6 +655,29 @@ func (r *Raft) buildAppend(to cluster.NodeID) Message {
 		LogIndex: prev, LogTerm: prevTerm,
 		Entries: r.log.Slice(r.nextIndex[to]),
 		Commit:  r.hs.Commit,
+	}
+}
+
+// buildSnapChunk assembles the outstanding chunk for one follower's
+// transfer: stop and wait, one chunk in flight, the done flag riding on the
+// final one. An empty image still sends one empty final chunk so the
+// receiver has a definite end.
+func (r *Raft) buildSnapChunk(to cluster.NodeID) Message {
+	off := r.snapXfer[to]
+	data := r.snap.Data
+	if off > uint64(len(data)) {
+		off = uint64(len(data))
+		r.snapXfer[to] = off
+	}
+	end := off + snapChunkSize
+	if end > uint64(len(data)) {
+		end = uint64(len(data))
+	}
+	return Message{
+		Kind: MsgSnap, From: r.id, To: to, Term: r.hs.Term,
+		LogIndex: r.snap.Index, LogTerm: r.snap.Term,
+		Offset: off, Chunk: data[off:end], Done: end == uint64(len(data)),
+		Commit: r.hs.Commit,
 	}
 }
 
@@ -494,12 +708,21 @@ func (r *Raft) takeUnstable() []Entry {
 	return out
 }
 
+// takeSnapshot hands out a fully received snapshot, exactly once.
+func (r *Raft) takeSnapshot() *Snapshot {
+	s := r.pendingSnap
+	r.pendingSnap = nil
+	return s
+}
+
 // ready packages one call's outcome. Order matters and mirrors the runtime
-// contract: unstable entries first, then hard state, then messages.
+// contract: unstable entries first, then the received snapshot, then hard
+// state, then messages.
 func (r *Raft) ready(msgs []Message) Ready {
 	rd := Ready{
 		Msgs:      msgs,
 		Entries:   r.takeUnstable(),
+		Snapshot:  r.takeSnapshot(),
 		Committed: r.takeCommitted(),
 		HardState: r.hs,
 		Dirty:     r.dirty,
