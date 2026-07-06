@@ -66,6 +66,9 @@ type Node struct {
 	// lastSnapIndex is the log index of the most recent snapshot, the point
 	// CompactEvery measures the applied index against.
 	lastSnapIndex uint64
+	// reads maps a confirmed linearizable read's context to the log index
+	// it must wait for; a context is removed the moment it is served.
+	reads map[uint64]uint64
 
 	opts NodeOptions
 }
@@ -188,8 +191,8 @@ func (n *Node) Delete(id uint64) (uint64, [][]byte, error) {
 // Search returns the k nearest neighbors to the query from this node's local
 // index. This is a LOCAL read: it reflects only what this node has applied,
 // which on a follower can lag the leader and is not linearizable on any node.
-// Linearizable reads arrive with ReadIndex in the next piece; until then a
-// caller needing freshness should read from a confirmed leader.
+// For a linearizable read, call BeginRead, drive the returned messages,
+// and serve the Search once ReadServable reports true for its context.
 func (n *Node) Search(query []float32, k int) ([]vector.Neighbor, error) {
 	if len(query) != n.dim {
 		return nil, fmt.Errorf("naylamp: query has dim %d, node requires %d", len(query), n.dim)
@@ -198,6 +201,45 @@ func (n *Node) Search(query []float32, k int) ([]vector.Neighbor, error) {
 		return nil, fmt.Errorf("naylamp: k must be positive, got %d", k)
 	}
 	return n.index.Search(query, k), nil
+}
+
+// BeginRead registers a linearizable read on the leader and returns its
+// context plus the outbound messages of the confirmation round. The caller
+// drives those messages like any other traffic, then polls ReadServable
+// with the context; once it reports true, a Search on this node reflects
+// every write committed before BeginRead was called, which is the promise
+// a local Search alone cannot make. A follower returns raft.ErrNotLeader
+// unchanged so the caller can redirect, and a fresh leader that has not
+// yet committed an entry of its own term returns raft.ErrNotReady, which
+// is retryable.
+func (n *Node) BeginRead() (uint64, [][]byte, error) {
+	ctx, rd, err := n.core.RequestRead()
+	if err != nil {
+		return 0, nil, err
+	}
+	out, err := n.processReady(rd)
+	if err != nil {
+		return 0, nil, err
+	}
+	return ctx, out, nil
+}
+
+// ReadServable reports whether the read registered under ctx can be served
+// now: its leadership round has confirmed and the applied state has reached
+// the read's index. It returns true exactly once and then forgets the
+// context, so served reads do not accumulate. An unknown context stays
+// false: either its round has not confirmed yet, or its leadership was
+// deposed and it never will, in which case the caller begins a fresh read.
+func (n *Node) ReadServable(ctx uint64) bool {
+	idx, ok := n.reads[ctx]
+	if !ok {
+		return false
+	}
+	if n.appliedIndex < idx {
+		return false
+	}
+	delete(n.reads, ctx)
+	return true
 }
 
 // Leader returns the node this replica believes leads the current term.
@@ -274,6 +316,13 @@ func (n *Node) processReady(rd raft.Ready) ([][]byte, error) {
 		}
 		n.appliedIndex = e.Index
 		n.appliedTerm = e.Term
+	}
+
+	for _, rs := range rd.ReadStates {
+		if n.reads == nil {
+			n.reads = make(map[uint64]uint64)
+		}
+		n.reads[rs.Ctx] = rs.Index
 	}
 
 	if err := n.maybeCompact(); err != nil {

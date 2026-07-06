@@ -1,6 +1,7 @@
 package naylamp
 
 import (
+	"errors"
 	"math/rand/v2"
 	"testing"
 
@@ -457,5 +458,67 @@ func TestNode_LiveSnapshotInstallOnNewFollower(t *testing.T) {
 	}
 	if len(res) != 1 || res[0].ID != 6 {
 		t.Fatalf("follower wrong nearest after install: %+v", res)
+	}
+}
+
+func TestNode_LinearizableReadOnLeader(t *testing.T) {
+	ids := []cluster.NodeID{1, 2, 3}
+	cfg := cluster.Config{Nodes: []cluster.NodeAddr{{ID: 1}, {ID: 2}, {ID: 3}}}
+	nodes := map[cluster.NodeID]*Node{}
+	for _, id := range ids {
+		n, err := OpenNode(t.TempDir(), id, cfg, 3, testRNG(uint64(id)+400), NodeOptions{})
+		if err != nil {
+			t.Fatalf("open %d: %v", id, err)
+		}
+		nodes[id] = n
+	}
+	defer func() {
+		for _, n := range nodes {
+			_ = n.Close()
+		}
+	}()
+
+	lead := driveUntilLeader(t, nodes, ids, 300)
+	_, out, err := nodes[lead].Upsert(9, []float32{0, 1, 1})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	pump(t, nodes, out, 4000)
+	if !driveUntilConverged(t, nodes, ids, 300) {
+		t.Fatalf("cluster did not converge")
+	}
+
+	// A follower refuses to begin a linearizable read.
+	for _, id := range ids {
+		if id == lead {
+			continue
+		}
+		if _, _, err := nodes[id].BeginRead(); !errors.Is(err, raft.ErrNotLeader) {
+			t.Fatalf("follower %d began a read: %v", id, err)
+		}
+		break
+	}
+
+	ctx, out, err := nodes[lead].BeginRead()
+	if err != nil {
+		t.Fatalf("begin read: %v", err)
+	}
+	if nodes[lead].ReadServable(ctx) {
+		t.Fatalf("read servable before the confirmation round completed")
+	}
+	pump(t, nodes, out, 4000)
+	if !nodes[lead].ReadServable(ctx) {
+		t.Fatalf("read not servable after the round completed")
+	}
+	// Served exactly once: the context is forgotten afterwards.
+	if nodes[lead].ReadServable(ctx) {
+		t.Fatalf("read served twice")
+	}
+	res, err := nodes[lead].Search([]float32{0, 1, 1}, 1)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(res) != 1 || res[0].ID != 9 {
+		t.Fatalf("linearizable read wrong nearest: %+v", res)
 	}
 }
