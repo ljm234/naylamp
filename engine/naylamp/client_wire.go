@@ -10,11 +10,17 @@ import (
 	"naylamp/engine/vector"
 )
 
-// ClientKind is the cluster envelope family for client traffic: requests from
-// a coordinator to a replica and the responses back. It is separate from the
-// consensus family so one transport carries both without confusion; the
-// envelope already supplies From, To and a CRC over the whole frame.
+// ClientKind is the cluster envelope family for client REQUESTS: from a
+// coordinator to a replica. Responses travel under ClientRespKind, because a
+// node that both serves requests and awaits responses must tell the two
+// apart before parsing; the envelope kind is the self-describing routing bit
+// that does it. The envelope already supplies From, To and a CRC over the
+// whole frame.
 const ClientKind cluster.Kind = 2
+
+// ClientRespKind is the cluster envelope family for client responses: from a
+// replica back to the requester.
+const ClientRespKind cluster.Kind = 3
 
 // ClientOp names the operation a request carries.
 type ClientOp uint8
@@ -198,7 +204,7 @@ func EncodeClientResponse(from, to cluster.NodeID, r ClientResponse) ([]byte, er
 		binary.LittleEndian.PutUint32(scratch[:4], math.Float32bits(n.Distance))
 		body = append(body, scratch[:4]...)
 	}
-	return cluster.EncodeMessage(cluster.Envelope{From: from, To: to, Kind: ClientKind, Payload: body})
+	return cluster.EncodeMessage(cluster.Envelope{From: from, To: to, Kind: ClientRespKind, Payload: body})
 }
 
 // DecodeClientResponse parses a response out of an already-decoded envelope,
@@ -207,7 +213,7 @@ func EncodeClientResponse(from, to cluster.NodeID, r ClientResponse) ([]byte, er
 // when both have index zero and no neighbors; that ambiguity does not exist in
 // practice because the requester knows the op it sent under this reqID.
 func DecodeClientResponse(env cluster.Envelope) (ClientResponse, error) {
-	if env.Kind != ClientKind {
+	if env.Kind != ClientRespKind {
 		return ClientResponse{}, fmt.Errorf("%w: kind %d", ErrWrongClientKind, env.Kind)
 	}
 	b := env.Payload

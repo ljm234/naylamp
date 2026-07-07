@@ -95,6 +95,9 @@ func TestClientWire_MalformedFailsLoudly(t *testing.T) {
 	env := func(payload []byte) cluster.Envelope {
 		return cluster.Envelope{From: 1, To: 2, Kind: ClientKind, Payload: payload}
 	}
+	respEnv := func(payload []byte) cluster.Envelope {
+		return cluster.Envelope{From: 1, To: 2, Kind: ClientRespKind, Payload: payload}
+	}
 
 	reqCases := []struct {
 		name string
@@ -130,17 +133,25 @@ func TestClientWire_MalformedFailsLoudly(t *testing.T) {
 		{"not-leader with an index", respBody(1, byte(StatusNotLeader), 7, 5, 0, nil)},
 	}
 	for _, c := range respCases {
-		if _, err := DecodeClientResponse(env(c.body)); !errors.Is(err, ErrMalformedClientMessage) {
+		if _, err := DecodeClientResponse(respEnv(c.body)); !errors.Is(err, ErrMalformedClientMessage) {
 			t.Fatalf("response %q: got %v, want ErrMalformedClientMessage", c.name, err)
 		}
 	}
 
-	// A foreign envelope kind is rejected before the body is even read.
+	// A foreign envelope kind is rejected before the body is even read, and
+	// each decoder accepts exactly its own family: a request-kind frame is
+	// the wrong family for the response decoder and vice versa.
 	foreign := cluster.Envelope{From: 1, To: 2, Kind: 99, Payload: reqBody(byte(ReqDelete), 1, 5, 0, 0, nil)}
 	if _, err := DecodeClientRequest(foreign); !errors.Is(err, ErrWrongClientKind) {
 		t.Fatalf("wrong-kind request: got %v, want ErrWrongClientKind", err)
 	}
 	if _, err := DecodeClientResponse(foreign); !errors.Is(err, ErrWrongClientKind) {
 		t.Fatalf("wrong-kind response: got %v, want ErrWrongClientKind", err)
+	}
+	if _, err := DecodeClientResponse(env(respBody(1, byte(StatusOK), 0, 42, 0, nil))); !errors.Is(err, ErrWrongClientKind) {
+		t.Fatalf("request-kind fed to the response decoder: got %v, want ErrWrongClientKind", err)
+	}
+	if _, err := DecodeClientRequest(respEnv(reqBody(byte(ReqDelete), 1, 5, 0, 0, nil))); !errors.Is(err, ErrWrongClientKind) {
+		t.Fatalf("response-kind fed to the request decoder: got %v, want ErrWrongClientKind", err)
 	}
 }
