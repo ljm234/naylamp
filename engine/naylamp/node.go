@@ -76,7 +76,39 @@ type Node struct {
 	// it must wait for; a context is removed the moment it is served.
 	reads map[uint64]uint64
 
+	// pendingWrites parks a client write, keyed by the log index its command
+	// was proposed at, until that index commits (see processReady). term is the
+	// term the entry was proposed in, so a commit at that index in another term
+	// is a supersession, not this write.
+	pendingWrites map[uint64]pendingWrite
+	// pendingSearches parks a client search, keyed by its linearizable read
+	// context, until the read round confirms and the applied state reaches the
+	// read's index. searchQueue holds those contexts in arrival order so the
+	// resolution scan iterates a slice, never a map: a map range would make the
+	// order of emitted responses non-deterministic and break the DST.
+	pendingSearches map[uint64]pendingSearch
+	searchQueue     []uint64
+
 	opts NodeOptions
+}
+
+// pendingWrite is a client write awaiting the commit of its proposed entry. A
+// commit at its index in a matching term is the durability promise fulfilled;
+// a differing term means another leader superseded it.
+type pendingWrite struct {
+	reqID uint64
+	from  cluster.NodeID
+	term  uint64
+}
+
+// pendingSearch is a client search awaiting a linearizable read. The query and
+// k are held so the search can run against the applied state the instant its
+// read index is reached, on this same node.
+type pendingSearch struct {
+	reqID uint64
+	from  cluster.NodeID
+	query []float32
+	k     int
 }
 
 // lookup reads a vector's components from the current store for the index. It
@@ -140,14 +172,133 @@ func OpenNode(dir string, id cluster.NodeID, cfg cluster.Config, dim int, rng *r
 	return n, nil
 }
 
-// HandleMessage decodes one framed inbound message, steps the core with it, and
-// returns the outbound messages the step produced.
+// HandleMessage decodes one framed inbound message and dispatches it by
+// envelope kind: consensus traffic steps the core, a client request is served,
+// and anything else fails loud. The envelope is decoded exactly once here; the
+// kind is the self-describing routing bit the frame carries for this purpose.
 func (n *Node) HandleMessage(data []byte) ([][]byte, error) {
-	m, err := raft.DecodeMsg(data)
+	env, err := cluster.DecodeMessage(data)
 	if err != nil {
 		return nil, err
 	}
-	return n.processReady(n.core.Step(m))
+	switch env.Kind {
+	case raft.EnvelopeKind:
+		m, err := raft.DecodeMsgEnvelope(env)
+		if err != nil {
+			return nil, err
+		}
+		return n.processReady(n.core.Step(m))
+	case ClientKind:
+		return n.handleClientRequest(env)
+	default:
+		// A ClientRespKind frame, or any unknown kind, is fatal here. The
+		// router of the next piece will claim responses; nothing in this layer
+		// sends requests today, so receiving a response or a foreign family
+		// can only be a routing bug or version skew, never a value to act on.
+		return nil, fmt.Errorf("naylamp: node received an unexpected envelope kind %d", env.Kind)
+	}
+}
+
+// handleClientRequest serves one decoded client request. A write is proposed
+// and its client parked until the entry commits, so the acknowledgement is a
+// durability promise and not a proposal receipt. A search registers a
+// linearizable read and parks its client until the round confirms and the
+// applied state reaches the read's index. Control answers and caller mistakes
+// come back to the client as a status; only a core error that is neither is
+// fatal. What makes a value merely invalid is settled here, not in the codec:
+// the wire stays a transport and validation policy stays in one place.
+func (n *Node) handleClientRequest(env cluster.Envelope) ([][]byte, error) {
+	req, err := DecodeClientRequest(env)
+	if err != nil {
+		// The envelope passed CRC, so the sender framed this body on purpose:
+		// a malformed request is the caller's bug, not corruption of ours. If a
+		// reqID is reachable we answer StatusInvalidArgument so the caller
+		// learns; if the body cannot even hold one we drop it silently, because
+		// there is no reqID to address a reply to, poisoning a healthy replica
+		// over remote garbage would be a denial of service, and the drop is
+		// deterministic.
+		if len(env.Payload) >= clientReqHeaderSize {
+			reqID := binary.LittleEndian.Uint64(env.Payload[1:9])
+			return n.respond(env.From, ClientResponse{ReqID: reqID, Status: StatusInvalidArgument})
+		}
+		return nil, nil
+	}
+
+	switch req.Op {
+	case ReqUpsert:
+		if len(req.Vec) != n.dim {
+			return n.respond(env.From, ClientResponse{ReqID: req.ReqID, Status: StatusInvalidArgument})
+		}
+		if verr := (vector.Vector{ID: req.ID, Data: req.Vec}).Validate(); verr != nil {
+			return n.respond(env.From, ClientResponse{ReqID: req.ReqID, Status: StatusInvalidArgument})
+		}
+		return n.proposeWrite(env.From, req.ReqID, encodeUpsert(req.ID, req.Vec))
+	case ReqDelete:
+		return n.proposeWrite(env.From, req.ReqID, encodeDelete(req.ID))
+	case ReqSearch:
+		if req.K == 0 || len(req.Vec) != n.dim {
+			return n.respond(env.From, ClientResponse{ReqID: req.ReqID, Status: StatusInvalidArgument})
+		}
+		return n.beginClientSearch(env.From, req.ReqID, req.Vec, int(req.K))
+	default:
+		// DecodeClientRequest already rejects an unknown op, so this is
+		// unreachable; it keeps the switch total.
+		return nil, fmt.Errorf("naylamp: unhandled client op %d", req.Op)
+	}
+}
+
+// proposeWrite proposes one command and parks its client until the entry
+// commits. On a non-leader it answers StatusNotLeader with a hint instead. The
+// pending write is registered BEFORE the ready is processed, because a single
+// node commits within that same call and the acknowledgement must ride out on
+// it.
+func (n *Node) proposeWrite(from cluster.NodeID, reqID uint64, cmd []byte) ([][]byte, error) {
+	idx, rd, err := n.core.Propose(cmd)
+	if err != nil {
+		if errors.Is(err, raft.ErrNotLeader) {
+			return n.respond(from, ClientResponse{ReqID: reqID, Status: StatusNotLeader, Leader: n.core.Leader()})
+		}
+		return nil, err
+	}
+	if n.pendingWrites == nil {
+		n.pendingWrites = make(map[uint64]pendingWrite)
+	}
+	n.pendingWrites[idx] = pendingWrite{reqID: reqID, from: from, term: n.core.Term()}
+	return n.processReady(rd)
+}
+
+// beginClientSearch registers a linearizable read and parks the client search
+// on its context until the round confirms. A follower answers StatusNotLeader
+// with a hint and a leader without a commit in its own term answers
+// StatusNotReady, both retryable. The pending search is registered BEFORE the
+// ready is processed, for the same single-node reason as a write.
+func (n *Node) beginClientSearch(from cluster.NodeID, reqID uint64, query []float32, k int) ([][]byte, error) {
+	ctx, rd, err := n.core.RequestRead()
+	if err != nil {
+		if errors.Is(err, raft.ErrNotLeader) {
+			return n.respond(from, ClientResponse{ReqID: reqID, Status: StatusNotLeader, Leader: n.core.Leader()})
+		}
+		if errors.Is(err, raft.ErrNotReady) {
+			return n.respond(from, ClientResponse{ReqID: reqID, Status: StatusNotReady})
+		}
+		return nil, err
+	}
+	if n.pendingSearches == nil {
+		n.pendingSearches = make(map[uint64]pendingSearch)
+	}
+	n.pendingSearches[ctx] = pendingSearch{reqID: reqID, from: from, query: query, k: k}
+	n.searchQueue = append(n.searchQueue, ctx)
+	return n.processReady(rd)
+}
+
+// respond frames one client response for the requester as this node's outbound
+// set. n.id is the sender; the requester correlates the reply by its reqID.
+func (n *Node) respond(to cluster.NodeID, resp ClientResponse) ([][]byte, error) {
+	frame, err := EncodeClientResponse(n.id, to, resp)
+	if err != nil {
+		return nil, err
+	}
+	return [][]byte{frame}, nil
 }
 
 // Tick advances the core's logical clock by one unit and returns any messages
@@ -322,6 +473,27 @@ func (n *Node) processReady(rd raft.Ready) ([][]byte, error) {
 		}
 		n.appliedIndex = e.Index
 		n.appliedTerm = e.Term
+		// Resolve any client write parked on this exact index. It runs for
+		// every committed entry, no-op included, and always clears the parked
+		// write. If the entry kept the term it was proposed in, the write
+		// survived to commit: answer StatusOK with its index, the durability
+		// promise. If the term differs, another leader superseded the entry:
+		// answer StatusNotLeader with a hint so the caller retries, which is
+		// safe because upsert and delete are idempotent.
+		pw, waiting := n.pendingWrites[e.Index]
+		if !waiting {
+			continue
+		}
+		delete(n.pendingWrites, e.Index)
+		resp := ClientResponse{ReqID: pw.reqID, Status: StatusOK, Index: e.Index}
+		if e.Term != pw.term {
+			resp = ClientResponse{ReqID: pw.reqID, Status: StatusNotLeader, Leader: n.core.Leader()}
+		}
+		frame, err := EncodeClientResponse(n.id, pw.from, resp)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, frame)
 	}
 
 	for _, rs := range rd.ReadStates {
@@ -329,6 +501,61 @@ func (n *Node) processReady(rd raft.Ready) ([][]byte, error) {
 			n.reads = make(map[uint64]uint64)
 		}
 		n.reads[rs.Ctx] = rs.Index
+	}
+
+	// Serve every parked search whose read round has confirmed and whose read
+	// index the applied state has reached. A later round can confirm before an
+	// earlier one, so the whole queue is scanned rather than stopping at the
+	// first unservable context. The walk is over searchQueue in arrival order,
+	// never a map range, so the order of emitted responses is deterministic.
+	kept := n.searchQueue[:0]
+	for _, ctx := range n.searchQueue {
+		ps, waiting := n.pendingSearches[ctx]
+		if !waiting {
+			continue
+		}
+		if !n.ReadServable(ctx) {
+			kept = append(kept, ctx)
+			continue
+		}
+		frame, err := EncodeClientResponse(n.id, ps.from, ClientResponse{
+			ReqID:     ps.reqID,
+			Status:    StatusOK,
+			Neighbors: n.index.Search(ps.query, ps.k),
+		})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, frame)
+		delete(n.pendingSearches, ctx)
+	}
+	n.searchQueue = kept
+
+	// A search whose leadership was lost before its round confirmed can never
+	// be served: its read index was captured under a leadership that no longer
+	// holds. Flush every such context with StatusNotLeader so the caller
+	// retries against the new leader. A context still confirmed in n.reads is
+	// spared: its round completed while leadership was valid, so it remains a
+	// sound linearization point and is served once applied reaches its index.
+	if n.core.Role() != raft.RoleLeader && len(n.pendingSearches) > 0 {
+		stillPending := n.searchQueue[:0]
+		for _, ctx := range n.searchQueue {
+			ps, waiting := n.pendingSearches[ctx]
+			if !waiting {
+				continue
+			}
+			if _, confirmed := n.reads[ctx]; confirmed {
+				stillPending = append(stillPending, ctx)
+				continue
+			}
+			frame, err := EncodeClientResponse(n.id, ps.from, ClientResponse{ReqID: ps.reqID, Status: StatusNotLeader, Leader: n.core.Leader()})
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, frame)
+			delete(n.pendingSearches, ctx)
+		}
+		n.searchQueue = stillPending
 	}
 
 	if err := n.maybeCompact(); err != nil {
