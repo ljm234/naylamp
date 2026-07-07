@@ -1,9 +1,13 @@
 package naylamp
 
 import (
+	"errors"
+	"math"
+	"sort"
 	"testing"
 
 	"naylamp/engine/cluster"
+	"naylamp/engine/vector"
 )
 
 // routerID is the fake coordinator identity the router speaks as: it is a
@@ -420,5 +424,304 @@ func TestRouter_TerminalAnswersAndStaleResponses(t *testing.T) {
 	}
 	if _, ok := router.Result(opLive); ok {
 		t.Fatalf("consumed result reappeared after a stale response")
+	}
+}
+
+func TestRouter_ScatterGatherMatchesBruteForceOracle(t *testing.T) {
+	cfg0 := cluster.Config{Nodes: []cluster.NodeAddr{{ID: 1}}}
+	cfg1 := cluster.Config{Nodes: []cluster.NodeAddr{{ID: 2}}}
+	sm := cluster.ShardMap{Groups: []cluster.Config{cfg0, cfg1}}
+
+	n1, err := OpenNode(t.TempDir(), 1, cfg0, 3, testRNG(1), NodeOptions{})
+	if err != nil {
+		t.Fatalf("open 1: %v", err)
+	}
+	n2, err := OpenNode(t.TempDir(), 2, cfg1, 3, testRNG(2), NodeOptions{})
+	if err != nil {
+		t.Fatalf("open 2: %v", err)
+	}
+	nodes := map[cluster.NodeID]*Node{1: n1, 2: n2}
+	defer func() {
+		for _, n := range nodes {
+			_ = n.Close()
+		}
+	}()
+	if !tickToLeader(t, n1, 40) {
+		t.Fatalf("node 1 never took office")
+	}
+	if !tickToLeader(t, n2, 40) {
+		t.Fatalf("node 2 never took office")
+	}
+
+	router, err := NewRouter(routerID, sm)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+
+	vec := func(id uint64) []float32 { return []float32{1, float32(id) * 0.15, 0.2} }
+	for id := uint64(1); id <= 10; id++ {
+		op, frames, uerr := router.Upsert(id, vec(id))
+		if uerr != nil {
+			t.Fatalf("upsert %d: %v", id, uerr)
+		}
+		pumpWithRouter(t, nodes, router, frames, 4000)
+		if res, ok := router.Result(op); !ok || res.Status != StatusOK || res.Index == 0 {
+			t.Fatalf("upsert %d not OK: %+v ok=%v", id, res, ok)
+		}
+	}
+
+	// Oracle: the exact cosine distance to every id, computed independently of
+	// the index. This is cross evidence, two calculation paths agreeing on the
+	// order, not a copy of the index's own answer.
+	query := []float32{1, 0, 0}
+	want := make(map[uint64]float32, 10)
+	for id := uint64(1); id <= 10; id++ {
+		want[id] = vector.CosineDistance(query, vec(id))
+	}
+	// Soundness self-check before asserting anything: the pairwise separation is
+	// three orders of magnitude above the value tolerance, so the oracle order is
+	// unambiguous by construction and no last-ulp divergence between formulas can
+	// flip a pair.
+	for i := uint64(1); i <= 10; i++ {
+		for j := i + 1; j <= 10; j++ {
+			if math.Abs(float64(want[i])-float64(want[j])) <= 1e-3 {
+				t.Fatalf("oracle separation too small: ids %d and %d at %v and %v", i, j, want[i], want[j])
+			}
+		}
+	}
+	// Oracle order: ascending distance, ties broken by ascending id.
+	order := make([]uint64, 0, 10)
+	for id := uint64(1); id <= 10; id++ {
+		order = append(order, id)
+	}
+	sort.Slice(order, func(a, b int) bool {
+		if want[order[a]] != want[order[b]] {
+			return want[order[a]] < want[order[b]]
+		}
+		return order[a] < order[b]
+	})
+
+	checkTopK := func(k int) {
+		op, frames, serr := router.Search(query, k)
+		if serr != nil {
+			t.Fatalf("search k=%d: %v", k, serr)
+		}
+		pumpWithRouter(t, nodes, router, frames, 4000)
+		res, ok := router.Result(op)
+		if !ok || res.Status != StatusOK || res.Exhausted || res.Index != 0 {
+			t.Fatalf("search k=%d did not complete OK: %+v ok=%v", k, res, ok)
+		}
+		bound := k
+		if bound > 10 {
+			bound = 10
+		}
+		if len(res.Neighbors) != bound {
+			t.Fatalf("search k=%d returned %d neighbors, want %d", k, len(res.Neighbors), bound)
+		}
+		for i := 0; i < bound; i++ {
+			nb := res.Neighbors[i]
+			// (a) exact ids in the oracle's order.
+			if nb.ID != order[i] {
+				t.Fatalf("k=%d neighbor %d id = %d, oracle %d", k, i, nb.ID, order[i])
+			}
+			// (b) the served distance matches the oracle within a wide tolerance:
+			// the index serves distances through a cosine fast path with norms
+			// cached in float32 whose arithmetic differs from the direct
+			// computation in the low bits (observed deviation on the order of
+			// 3e-8); the tolerance bounds that deviation with wide margin and any
+			// real distance bug breaks it, while the exact id order is the
+			// property scatter-gather promises.
+			if math.Abs(float64(nb.Distance)-float64(want[nb.ID])) > 1e-6 {
+				t.Fatalf("k=%d neighbor %d distance = %v, oracle %v", k, i, nb.Distance, want[nb.ID])
+			}
+		}
+	}
+	checkTopK(5)
+	checkTopK(50)
+}
+
+func TestRouter_SearchFollowsRedirectAndConfirms(t *testing.T) {
+	ids := []cluster.NodeID{1, 2, 3}
+	cfg := cluster.Config{Nodes: []cluster.NodeAddr{{ID: 1}, {ID: 2}, {ID: 3}}}
+	nodes := map[cluster.NodeID]*Node{}
+	for _, id := range ids {
+		n, err := OpenNode(t.TempDir(), id, cfg, 3, testRNG(uint64(id)+1400), NodeOptions{})
+		if err != nil {
+			t.Fatalf("open %d: %v", id, err)
+		}
+		nodes[id] = n
+	}
+	defer func() {
+		for _, n := range nodes {
+			_ = n.Close()
+		}
+	}()
+
+	lead := driveUntilLeader(t, nodes, ids, 300)
+	vectors := map[uint64][]float32{1: {1, 0, 0}, 2: {0, 1, 0}, 3: {0, 0, 1}}
+	for id := uint64(1); id <= 3; id++ {
+		_, out, err := nodes[lead].Upsert(id, vectors[id])
+		if err != nil {
+			t.Fatalf("upsert %d: %v", id, err)
+		}
+		pump(t, nodes, out, 4000)
+	}
+	if !driveUntilConverged(t, nodes, ids, 300) {
+		t.Fatalf("cluster did not converge")
+	}
+
+	// One shard rotated so the first target is a follower: the search leg is
+	// redirected to the leader, and its ReadIndex round confirms through pump.
+	rotated := rotateSoLeaderNotFirst(cfg.Nodes, lead)
+	if rotated[0].ID == lead {
+		t.Fatalf("rotation left the leader first")
+	}
+	sm := cluster.ShardMap{Groups: []cluster.Config{{Nodes: rotated}}}
+	router, err := NewRouter(routerID, sm)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+
+	op, frames, err := router.Search([]float32{1, 0, 0}, 1)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	pumpWithRouter(t, nodes, router, frames, 4000)
+	res, ok := router.Result(op)
+	if !ok || res.Status != StatusOK || res.Exhausted {
+		t.Fatalf("redirected search did not complete OK: %+v ok=%v", res, ok)
+	}
+	if len(res.Neighbors) != 1 || res.Neighbors[0].ID != 1 {
+		t.Fatalf("search returned the wrong nearest: %+v", res.Neighbors)
+	}
+}
+
+func TestRouter_SearchExhaustRetiresWholeOp(t *testing.T) {
+	cfg0 := cluster.Config{Nodes: []cluster.NodeAddr{{ID: 1}}}
+	cfg1 := cluster.Config{Nodes: []cluster.NodeAddr{{ID: 2}, {ID: 3}, {ID: 4}}}
+	sm := cluster.ShardMap{Groups: []cluster.Config{cfg0, cfg1}}
+
+	n1, err := OpenNode(t.TempDir(), 1, cfg0, 3, testRNG(1), NodeOptions{})
+	if err != nil {
+		t.Fatalf("open 1: %v", err)
+	}
+	nodes := map[cluster.NodeID]*Node{1: n1}
+	shard1 := []cluster.NodeID{2, 3, 4}
+	for _, id := range shard1 {
+		n, oerr := OpenNode(t.TempDir(), id, cfg1, 3, testRNG(uint64(id)+1500), NodeOptions{})
+		if oerr != nil {
+			t.Fatalf("open %d: %v", id, oerr)
+		}
+		nodes[id] = n
+	}
+	defer func() {
+		for _, n := range nodes {
+			_ = n.Close()
+		}
+	}()
+	if !tickToLeader(t, n1, 40) {
+		t.Fatalf("node 1 never took office")
+	}
+	// Shard 1 is left without an election: every node a follower, hint zero.
+
+	router, err := NewRouter(routerID, sm)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+
+	op, frames, err := router.Search([]float32{1, 0, 0}, 1)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	pumpWithRouter(t, nodes, router, frames, 4000)
+	res, ok := router.Result(op)
+	if !ok || !res.Exhausted || res.Status != StatusNotLeader {
+		t.Fatalf("shard-1 leg did not exhaust the whole op: %+v ok=%v", res, ok)
+	}
+
+	// The router is healthy after an exhaust: once shard 1 has a leader a new
+	// search completes. That shard holds no data, so an empty neighbor list is
+	// correct; the asserted property is the status.
+	_ = driveUntilLeader(t, nodes, shard1, 300)
+	op, frames, err = router.Search([]float32{1, 0, 0}, 1)
+	if err != nil {
+		t.Fatalf("second search: %v", err)
+	}
+	pumpWithRouter(t, nodes, router, frames, 4000)
+	res, ok = router.Result(op)
+	if !ok || res.Status != StatusOK || res.Exhausted {
+		t.Fatalf("router not healthy after exhaust: %+v ok=%v", res, ok)
+	}
+}
+
+func TestRouter_SearchGuardsAndRetries(t *testing.T) {
+	cfg0 := cluster.Config{Nodes: []cluster.NodeAddr{{ID: 1}, {ID: 2}, {ID: 3}}}
+	cfg1 := cluster.Config{Nodes: []cluster.NodeAddr{{ID: 4}, {ID: 5}, {ID: 6}}}
+	sm := cluster.ShardMap{Groups: []cluster.Config{cfg0, cfg1}}
+	router, err := NewRouter(routerID, sm)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+
+	// A valid search fans out exactly one frame per shard, in shard order.
+	_, frames, err := router.Search([]float32{1, 0, 0}, 3)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(frames) != len(sm.Groups) {
+		t.Fatalf("search emitted %d frames, want %d (one per shard)", len(frames), len(sm.Groups))
+	}
+	// The fan-out order is part of the determinism contract: shard 0 first,
+	// each leg aimed at its group's index zero.
+	to0, _ := decodeReq(t, frames[0])
+	to1, _ := decodeReq(t, frames[1])
+	if to0 != 1 || to1 != 4 {
+		t.Fatalf("fan-out order wrong: frames to %d and %d, want 1 then 4", to0, to1)
+	}
+
+	// (a) A NotReady on the first leg retries the SAME target under a NEW id.
+	target1, reqID1 := decodeReq(t, frames[0])
+	out, err := router.HandleMessage(mustEncodeRespFrom(t, target1, ClientResponse{ReqID: reqID1, Status: StatusNotReady}))
+	if err != nil {
+		t.Fatalf("not-ready handle: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("not-ready re-emitted %d frames, want 1", len(out))
+	}
+	target2, reqID2 := decodeReq(t, out[0])
+	if target2 != target1 {
+		t.Fatalf("not-ready retried target %d, want the same %d", target2, target1)
+	}
+	if reqID2 == reqID1 {
+		t.Fatalf("retry reused request id %d", reqID1)
+	}
+
+	// (b) A StatusOK carrying a nonzero index on a search leg is a crossed write
+	// ack: fatal.
+	if _, berr := router.HandleMessage(mustEncodeRespFrom(t, target2, ClientResponse{ReqID: reqID2, Status: StatusOK, Index: 5})); berr == nil {
+		t.Fatalf("a search-leg OK with a nonzero index was accepted")
+	}
+
+	// (c) A non-positive k is rejected locally, without registering an operation.
+	before := router.opSeq
+	opID, cframes, cerr := router.Search([]float32{1, 0, 0}, 0)
+	if !errors.Is(cerr, ErrInvalidArgument) {
+		t.Fatalf("k=0 error = %v, want ErrInvalidArgument", cerr)
+	}
+	if opID != 0 || cframes != nil {
+		t.Fatalf("k=0 registered an operation: opID=%d frames=%v", opID, cframes)
+	}
+	if router.opSeq != before {
+		t.Fatalf("k=0 advanced the op counter from %d to %d", before, router.opSeq)
+	}
+
+	// (d) A k beyond the wire's uint32 width is rejected locally too: the
+	// bound lives in the API, never in a silent narrowing on encode.
+	bigK := int(int64(math.MaxUint32) + 1)
+	if _, _, derr := router.Search([]float32{1, 0, 0}, bigK); !errors.Is(derr, ErrInvalidArgument) {
+		t.Fatalf("oversized k error = %v, want ErrInvalidArgument", derr)
+	}
+	if router.opSeq != before {
+		t.Fatalf("oversized k advanced the op counter from %d to %d", before, router.opSeq)
 	}
 }

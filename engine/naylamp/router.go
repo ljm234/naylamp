@@ -3,8 +3,10 @@ package naylamp
 import (
 	"errors"
 	"fmt"
+	"math"
 
 	"naylamp/engine/cluster"
+	"naylamp/engine/vector"
 )
 
 // Router is the sans-io write coordinator: it turns a client Upsert or Delete
@@ -26,9 +28,18 @@ type Router struct {
 	reqSeq uint64
 	opSeq  uint64
 
-	pending map[uint64]uint64      // request id of a live attempt -> op id
-	ops     map[uint64]*routeOp    // op id -> the operation in flight
-	results map[uint64]RouteResult // op id -> its terminal (or exhausted) result
+	pending   map[uint64]pendingRef  // request id of a live attempt -> the op and leg it belongs to
+	ops       map[uint64]*routeOp    // op id -> the write operation in flight
+	searchOps map[uint64]*searchOp   // op id -> the search operation in flight
+	results   map[uint64]RouteResult // op id -> its terminal (or exhausted) result
+}
+
+// pendingRef correlates a response to the attempt that provoked it. The
+// correlation is by attempt AND by leg, because a search lives as independent
+// legs and a response must find exactly its own; leg -1 marks a write.
+type pendingRef struct {
+	opID uint64
+	leg  int
 }
 
 // routeOp is one write operation in flight: which command, which shard, which
@@ -44,13 +55,36 @@ type routeOp struct {
 	lastRetryable ClientStatus
 }
 
+// searchLeg is one shard's fan-out of a search: which shard, which target in
+// its group, how many attempts remain, the last retryable status it saw, the
+// neighbors it returned, and whether it has answered.
+type searchLeg struct {
+	shard         int
+	targetIdx     int
+	attemptsLeft  int
+	lastRetryable ClientStatus
+	result        []vector.Neighbor
+	done          bool
+}
+
+// searchOp is one scatter-gather search in flight: the query, k, one leg per
+// shard, and how many legs are still outstanding.
+type searchOp struct {
+	query     []float32
+	k         int
+	legs      []searchLeg
+	remaining int
+}
+
 // RouteResult is an operation's outcome. Status is terminal, StatusOK or
 // StatusInvalidArgument, unless Exhausted is true, in which case Status carries
 // the last retryable status seen (StatusNotLeader or StatusNotReady) and the
-// caller decides whether to retry the whole operation.
+// caller decides whether to retry the whole operation. A write OK carries the
+// commit Index; a search OK carries Neighbors and leaves Index zero.
 type RouteResult struct {
 	Status    ClientStatus
 	Index     uint64
+	Neighbors []vector.Neighbor
 	Exhausted bool
 }
 
@@ -72,11 +106,12 @@ func NewRouter(id cluster.NodeID, m cluster.ShardMap) (*Router, error) {
 		}
 	}
 	return &Router{
-		id:      id,
-		shards:  m,
-		pending: make(map[uint64]uint64),
-		ops:     make(map[uint64]*routeOp),
-		results: make(map[uint64]RouteResult),
+		id:        id,
+		shards:    m,
+		pending:   make(map[uint64]pendingRef),
+		ops:       make(map[uint64]*routeOp),
+		searchOps: make(map[uint64]*searchOp),
+		results:   make(map[uint64]RouteResult),
 	}, nil
 }
 
@@ -90,6 +125,49 @@ func (r *Router) Upsert(id uint64, vec []float32) (uint64, [][]byte, error) {
 // Delete routes a removal to its shard and emits the first attempt.
 func (r *Router) Delete(id uint64) (uint64, [][]byte, error) {
 	return r.begin(ReqDelete, id, nil)
+}
+
+// Search fans one query out to every shard, one leg each, and gathers the legs
+// into a global top k once all have answered. It returns the op id to poll
+// Result with, the first attempt of every leg, and any error. k must be
+// positive, the same local API check Node.Search makes; the query's dimension
+// is deliberately not checked here, because the router does not know it, so a
+// replica answers a bad dimension with StatusInvalidArgument, which retires the
+// operation.
+func (r *Router) Search(query []float32, k int) (uint64, [][]byte, error) {
+	if k <= 0 {
+		return 0, nil, fmt.Errorf("%w: k must be positive, got %d", ErrInvalidArgument, k)
+	}
+	if uint64(k) > math.MaxUint32 {
+		// The wire carries k as a uint32. Rejecting here keeps the bound in
+		// the API, where validation policy lives, instead of letting the
+		// encode narrow a request silently.
+		return 0, nil, fmt.Errorf("%w: k %d exceeds the wire bound", ErrInvalidArgument, k)
+	}
+	r.opSeq++
+	opID := r.opSeq
+	o := &searchOp{
+		query:     query,
+		k:         k,
+		legs:      make([]searchLeg, r.shards.K()),
+		remaining: r.shards.K(),
+	}
+	for i := range o.legs {
+		o.legs[i] = searchLeg{shard: i, targetIdx: 0, attemptsLeft: 3 * len(r.shards.Groups[i].Nodes)}
+	}
+	r.searchOps[opID] = o
+	// The only function that emits more than one frame, and in a fixed order:
+	// the first attempt of every leg, shard 0 to K-1, so a seeded run replays
+	// the fan-out identically.
+	var out [][]byte
+	for i := range o.legs {
+		frames, err := r.emitLegAttempt(opID, o, i)
+		if err != nil {
+			return 0, nil, err
+		}
+		out = append(out, frames...)
+	}
+	return opID, out, nil
 }
 
 // begin registers a write operation and emits its first attempt at target index
@@ -131,12 +209,38 @@ func (r *Router) emitAttempt(opID uint64, o *routeOp) ([][]byte, error) {
 	target := group[o.targetIdx].ID
 	r.reqSeq++
 	reqID := r.reqSeq
-	r.pending[reqID] = opID
+	r.pending[reqID] = pendingRef{opID: opID, leg: -1}
 	o.attemptsLeft--
 	// A write coordinator only carries upsert and delete, so the record id
 	// always travels and k stays zero; a delete leaves Vec nil, which the codec
 	// requires of it.
 	frame, err := EncodeClientRequest(r.id, target, ClientRequest{Op: o.op, ReqID: reqID, ID: o.vecID, Vec: o.vec})
+	if err != nil {
+		return nil, err
+	}
+	return [][]byte{frame}, nil
+}
+
+// emitLegAttempt sends one leg's current attempt to its current target, or
+// retires the WHOLE operation as exhausted when that leg's budget is spent. It
+// emits at most one frame. When a leg exhausts, the sibling legs' pending
+// entries are deliberately NOT cleaned: their late replies land on the stale
+// path (op absent -> nil, nil), which is already deterministic.
+func (r *Router) emitLegAttempt(opID uint64, o *searchOp, leg int) ([][]byte, error) {
+	lg := &o.legs[leg]
+	if lg.attemptsLeft == 0 {
+		r.results[opID] = RouteResult{Status: lg.lastRetryable, Exhausted: true}
+		delete(r.searchOps, opID)
+		return nil, nil
+	}
+	group := r.shards.Groups[lg.shard].Nodes
+	target := group[lg.targetIdx].ID
+	r.reqSeq++
+	reqID := r.reqSeq
+	r.pending[reqID] = pendingRef{opID: opID, leg: leg}
+	lg.attemptsLeft--
+	k := uint32(o.k) //nolint:gosec // the API bounds k to uint32, so the conversion cannot truncate
+	frame, err := EncodeClientRequest(r.id, target, ClientRequest{Op: ReqSearch, ReqID: reqID, K: k, Vec: o.query})
 	if err != nil {
 		return nil, err
 	}
@@ -167,19 +271,29 @@ func (r *Router) HandleMessage(data []byte) ([][]byte, error) {
 		return nil, fmt.Errorf("naylamp: router got an undecodable response: %w", err)
 	}
 
-	opID, live := r.pending[resp.ReqID]
+	ref, live := r.pending[resp.ReqID]
 	if !live {
 		// A late or duplicate reply for an attempt already superseded: there is
 		// no live request under this id. Dropping it is the only deterministic
-		// choice.
+		// choice, and it is also how a sibling leg's late reply lands after its
+		// operation was retired by another leg's exhaust.
 		return nil, nil
 	}
 	delete(r.pending, resp.ReqID)
+	if ref.leg < 0 {
+		return r.handleWriteResponse(ref.opID, resp)
+	}
+	return r.handleSearchResponse(ref.opID, ref.leg, resp)
+}
+
+// handleWriteResponse advances or completes one write: OK records the commit
+// index and retires the op, InvalidArgument is terminal, and a retryable status
+// re-emits after following any usable redirect hint.
+func (r *Router) handleWriteResponse(opID uint64, resp ClientResponse) ([][]byte, error) {
 	o, ok := r.ops[opID]
 	if !ok {
 		return nil, nil
 	}
-
 	switch resp.Status {
 	case StatusOK:
 		if resp.Index == 0 {
@@ -214,6 +328,61 @@ func (r *Router) HandleMessage(data []byte) ([][]byte, error) {
 	default:
 		// DecodeClientResponse already rejects an unknown status, so this is
 		// unreachable; it keeps the switch total.
+		return nil, fmt.Errorf("naylamp: router got an unknown status %d", resp.Status)
+	}
+}
+
+// handleSearchResponse advances or completes one leg of a search. A leg's OK
+// carries its neighbors, and an empty list is legitimate because a shard may
+// hold no data for the query; the last leg to answer merges every leg's list,
+// indexed by shard for a deterministic order, into the global top k. An
+// InvalidArgument from any leg retires the whole operation, and a retryable
+// status re-emits that leg alone.
+func (r *Router) handleSearchResponse(opID uint64, leg int, resp ClientResponse) ([][]byte, error) {
+	o, ok := r.searchOps[opID]
+	if !ok {
+		return nil, nil
+	}
+	lg := &o.legs[leg]
+	switch resp.Status {
+	case StatusOK:
+		if resp.Index != 0 {
+			// A search leg answers with neighbors and a zero index. A nonzero
+			// index can only be a crossed write ack or corruption, the exact
+			// mirror of the write path's zero-index guard.
+			return nil, fmt.Errorf("naylamp: router got a StatusOK search reply with a nonzero index %d", resp.Index)
+		}
+		lg.result = resp.Neighbors
+		if !lg.done {
+			lg.done = true
+			o.remaining--
+		}
+		if o.remaining == 0 {
+			lists := make([][]vector.Neighbor, len(o.legs))
+			for i := range o.legs {
+				lists[o.legs[i].shard] = o.legs[i].result
+			}
+			r.results[opID] = RouteResult{Status: StatusOK, Neighbors: mergeTopK(lists, o.k)}
+			delete(r.searchOps, opID)
+		}
+		return nil, nil
+	case StatusInvalidArgument:
+		r.results[opID] = RouteResult{Status: StatusInvalidArgument}
+		delete(r.searchOps, opID)
+		return nil, nil
+	case StatusNotLeader:
+		lg.lastRetryable = StatusNotLeader
+		group := r.shards.Groups[lg.shard].Nodes
+		if pos, found := groupIndex(group, resp.Leader); found && resp.Leader != cluster.None {
+			lg.targetIdx = pos // the hint knows the leader; obey it
+		} else {
+			lg.targetIdx = (lg.targetIdx + 1) % len(group)
+		}
+		return r.emitLegAttempt(opID, o, leg)
+	case StatusNotReady:
+		lg.lastRetryable = StatusNotReady
+		return r.emitLegAttempt(opID, o, leg)
+	default:
 		return nil, fmt.Errorf("naylamp: router got an unknown status %d", resp.Status)
 	}
 }
