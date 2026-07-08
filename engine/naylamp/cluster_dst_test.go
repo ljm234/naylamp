@@ -31,13 +31,14 @@ func vecFor(id uint64) []float32 {
 // coverage it exercised. The sweep aggregates the counters for its gate and the
 // replay test compares the conclusion.
 type clusterSeedOutcome struct {
-	shardHash  [2][32]byte
-	oracleSize int
-	elections  int
-	partitions int
-	crashes    int
-	acked      int
-	stats      cluster.SimStats
+	shardHash    [2][32]byte
+	oracleSize   int
+	elections    int
+	partitions   int
+	crashes      int
+	acked        int
+	readsChecked int
+	stats        cluster.SimStats
 }
 
 // runClusterSeed builds a two-shard, six-replica cluster over one seeded SimNet,
@@ -49,8 +50,12 @@ type clusterSeedOutcome struct {
 // Durability here is Option A, observable: the harness never reads a node's
 // committed log. The invariant is that every operation the RouterHost acked is
 // present in the converged state with its last value, the per-shard record count
-// matches the oracle, and a shard's replicas are identical by hash. Literal
-// exactly-once at the log level is DEFER-013.
+// matches the oracle, and a shard's replicas are identical by hash. Read
+// linearizability is checked the same observable way, during the schedule under
+// active faults: right after a write or delete acks, a scatter-gather read of
+// that id must reflect the ack, read-your-writes and read-your-deletes, the
+// observable consequence of the ReadIndex barrier. Literal exactly-once at the
+// log level is DEFER-013 and literal read-index linearizability is DEFER-014.
 func runClusterSeed(t *testing.T, seed uint64) clusterSeedOutcome {
 	t.Helper()
 
@@ -149,7 +154,7 @@ func runClusterSeed(t *testing.T, seed uint64) clusterSeedOutcome {
 	}
 
 	// Schedule counters, read back for the coverage gate and the replay.
-	var elections, partitions, crashes, acked int
+	var elections, partitions, crashes, acked, readsChecked int
 	lastLeader := [2]cluster.NodeID{cluster.None, cluster.None}
 
 	trackElections := func() {
@@ -224,6 +229,12 @@ func runClusterSeed(t *testing.T, seed uint64) clusterSeedOutcome {
 
 	// The chaos generator is separate from the node and fabric streams.
 	chaos := testRNG(seed ^ 0xC0FFEE5CA1AB1E)
+	// readGen decides when to fire a read-your-writes probe. It is a fourth
+	// stream, seeded apart from the node, fabric and chaos generators so it never
+	// aliases them: turning the checker on draws from readGen alone and leaves the
+	// chaos schedule's fault decisions for a seed exactly as they were, so a seed
+	// exercises the same fault history with the probe on or off.
+	readGen := testRNG(seed ^ 0x5EAD5EAD5EAD5EAD)
 
 	// G3: first bring both shards to an initial leader, then run the bounded
 	// chaos loop. Each round advances once, then with the higher probability
@@ -245,6 +256,13 @@ func runClusterSeed(t *testing.T, seed uint64) clusterSeedOutcome {
 	const opBudget = 30
 	const searchBudget = 18
 	const opReissues = 10
+	// readCheckBudget bounds the ticks a read-your-writes probe waits for its
+	// scatter-gather to complete; readCheckProb is how often the chaos schedule
+	// fires a probe right after a write or delete ack. A probe that does not
+	// complete inside the budget asserts nothing (DEFER-011), so the budget only
+	// needs to be generous enough that a healthy cluster's read lands.
+	const readCheckBudget = 60
+	const readCheckProb = 0.5
 
 	// reissueUntilOK drives one idempotent write to a definitive OK ack, re-issuing
 	// a FRESH operation past transient loss, which is the RouterHost caller
@@ -264,6 +282,52 @@ func runClusterSeed(t *testing.T, seed uint64) clusterSeedOutcome {
 			}
 		}
 		return false
+	}
+
+	// checkReadYourWrite issues one linearizable read of id's own vector right
+	// after that id's write or delete was drained to a definitive ack, and asserts
+	// the observable consequence of the ReadIndex barrier. It is called inline from
+	// runOp, so the read is emitted before runOp returns and before any other
+	// schedule op can touch id: the ack strictly precedes the read, and no fault
+	// toggles in between because injectFault runs only after runOp returns.
+	// present=true is a read-your-writes probe: vecFor is injective and self
+	// separated, so id sits at distance zero to its own vector and must come back
+	// as the global nearest. present=false is a read-your-deletes probe: id must
+	// not appear at any rank. The read is a scatter-gather via the RouterHost,
+	// served on each shard's leader behind the applied>=readIndex barrier (see
+	// Node.ReadServable in node.go), never on a stale follower, so a completed read
+	// reflects every write committed before its read index and thus the ack that
+	// preceded it. A read that does not complete asserts nothing: with no client
+	// retransmit (DEFER-011) a dropped leg leaves the op unresolved, which is not a
+	// violation. readsChecked counts only reads that completed and were asserted,
+	// so the coverage gate can require the property was actually exercised.
+	checkReadYourWrite := func(id uint64, present bool) {
+		// Probe only when id's shard has full quorum at this instant: a scatter
+		// gather needs every shard's leg to answer, so an impaired shard just means
+		// the read will not complete, which is a non-assertion, not a violation.
+		if shardImpaired(sm.ShardFor(id)) {
+			return
+		}
+		opID, oerr := rh.Search(vecFor(id), 1)
+		if oerr != nil {
+			t.Fatalf("seed %d: read-your-writes search id %d: %v", seed, id, oerr)
+		}
+		res, done := drivePoll(opID, readCheckBudget)
+		if !done || res.Status != StatusOK || res.Exhausted {
+			return // did not complete: assert nothing, DEFER-011
+		}
+		if present {
+			if len(res.Neighbors) < 1 || res.Neighbors[0].ID != id {
+				t.Fatalf("seed %d: read-your-writes id %d: nearest = %+v, want that id at rank 0", seed, id, res.Neighbors)
+			}
+		} else {
+			for _, nb := range res.Neighbors {
+				if nb.ID == id {
+					t.Fatalf("seed %d: read-your-deletes id %d: still returned in %+v", seed, id, res.Neighbors)
+				}
+			}
+		}
+		readsChecked++
 	}
 
 	// runOp issues one client operation chosen by the schedule.
@@ -290,6 +354,9 @@ func runClusterSeed(t *testing.T, seed uint64) clusterSeedOutcome {
 			if reissueUntilOK(func() (uint64, error) { return rh.Upsert(id, vec) }) {
 				oracle[id] = vec
 				acked++
+				if readGen.Float64() < readCheckProb {
+					checkReadYourWrite(id, true)
+				}
 			}
 		case kind < 8: // delete an id (a no-op on the store if absent, still an ack)
 			id := uint64(1 + chaos.IntN(clusterIDRange)) //nolint:gosec // 1+IntN(range) is a small positive int
@@ -299,6 +366,9 @@ func runClusterSeed(t *testing.T, seed uint64) clusterSeedOutcome {
 			if reissueUntilOK(func() (uint64, error) { return rh.Delete(id) }) {
 				delete(oracle, id)
 				acked++
+				if readGen.Float64() < readCheckProb {
+					checkReadYourWrite(id, false)
+				}
 			}
 		default: // a search interleaved, to drive the read path under chaos
 			id := uint64(1 + chaos.IntN(clusterIDRange)) //nolint:gosec // 1+IntN(range) is a small positive int
@@ -511,12 +581,13 @@ func runClusterSeed(t *testing.T, seed uint64) clusterSeedOutcome {
 	}
 
 	out := clusterSeedOutcome{
-		oracleSize: len(oracle),
-		elections:  elections,
-		partitions: partitions,
-		crashes:    crashes,
-		acked:      acked,
-		stats:      net.Stats(),
+		oracleSize:   len(oracle),
+		elections:    elections,
+		partitions:   partitions,
+		crashes:      crashes,
+		acked:        acked,
+		readsChecked: readsChecked,
+		stats:        net.Stats(),
 	}
 	for sh := range shardIDs {
 		out.shardHash[sh] = hosts[shardIDs[sh][0]].StateHash()
@@ -551,7 +622,7 @@ func TestClusterDST_Seeded(t *testing.T) {
 		start, end = v, v
 	}
 
-	var elections, partitions, crashes, acked int
+	var elections, partitions, crashes, acked, readsChecked int
 	var stats cluster.SimStats
 	for s := start; s <= end; s++ {
 		oc := runClusterSeed(t, uint64(s)) //nolint:gosec // s ranges over positive seed numbers
@@ -559,6 +630,7 @@ func TestClusterDST_Seeded(t *testing.T) {
 		partitions += oc.partitions
 		crashes += oc.crashes
 		acked += oc.acked
+		readsChecked += oc.readsChecked
 		stats.Sent += oc.stats.Sent
 		stats.DroppedByFault += oc.stats.DroppedByFault
 		stats.Duplicated += oc.stats.Duplicated
@@ -568,9 +640,10 @@ func TestClusterDST_Seeded(t *testing.T) {
 	nseeds := end - start + 1
 
 	// G5: coverage gate, the shape of the raft sweep's gate. A run that never
-	// elected, never crashed, acked nothing, or whose fault schedule never
-	// dropped, duplicated or blocked a message proves nothing: the
-	// illusory-coverage trap. A sweep that did not exercise chaos does not count.
+	// elected, never crashed, acked nothing, verified no linearizable read, or
+	// whose fault schedule never dropped, duplicated or blocked a message proves
+	// nothing: the illusory-coverage trap. A sweep that did not exercise chaos
+	// does not count.
 	if elections == 0 {
 		t.Fatalf("coverage: no elections across %d seeds", nseeds)
 	}
@@ -583,11 +656,14 @@ func TestClusterDST_Seeded(t *testing.T) {
 	if acked == 0 {
 		t.Fatalf("coverage: nothing acked across %d seeds", nseeds)
 	}
+	if readsChecked == 0 {
+		t.Fatalf("coverage: no linearizable reads verified across %d seeds", nseeds)
+	}
 	if stats.DroppedByFault == 0 || stats.Duplicated == 0 || stats.DroppedByPartition == 0 {
 		t.Fatalf("coverage: fault schedule idle: %+v", stats)
 	}
-	t.Logf("cluster DST: seeds=%d elections=%d partitions=%d crashes=%d acked=%d sent=%d dropped=%d dup=%d partitionDrops=%d noReceiver=%d",
-		nseeds, elections, partitions, crashes, acked,
+	t.Logf("cluster DST: seeds=%d elections=%d partitions=%d crashes=%d acked=%d readsChecked=%d sent=%d dropped=%d dup=%d partitionDrops=%d noReceiver=%d",
+		nseeds, elections, partitions, crashes, acked, readsChecked,
 		stats.Sent, stats.DroppedByFault, stats.Duplicated, stats.DroppedByPartition, stats.DroppedNoReceiver)
 }
 
