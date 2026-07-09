@@ -936,3 +936,164 @@ func TestRouter_TickWithoutPendingIsNoop(t *testing.T) {
 		t.Fatalf("tick after a resolved op re-emitted: out=%v err=%v", out, terr)
 	}
 }
+
+// TestRouter_TwoViewsReqIDCollisionDropsStale proves DEFER-012 end to end with
+// two real rotated views, not with hand-fed frames. A client that rotates its
+// view, which the demo does to recover from a target that has gone quiet, builds
+// a fresh Router, and a fresh Router starts reqSeq at zero (router.go:32), so the
+// first operation of every view is emitted under request id 1. A late reply to
+// the old view therefore collides on that id when it reaches the new one. The
+// guard env.From != held.target (router.go:378) is what stops the stale reply
+// from resolving the new view's unrelated operation: it carries the old view's
+// target as its origin, which the rotation guarantees is a different node than
+// the new view aimed at, so it is dropped as foreign while the new view's
+// operation survives to be resolved by its own target.
+//
+// The whole test runs on real Nodes through the deterministic pump harness, with
+// no SimNet, no clock and no goroutines, so the collision is provoked exactly and
+// reproducibly.
+func TestRouter_TwoViewsReqIDCollisionDropsStale(t *testing.T) {
+	ids := []cluster.NodeID{1, 2, 3}
+	cfg := cluster.Config{Nodes: []cluster.NodeAddr{{ID: 1}, {ID: 2}, {ID: 3}}}
+	nodes := map[cluster.NodeID]*Node{}
+	for _, id := range ids {
+		n, err := OpenNode(t.TempDir(), id, cfg, 3, testRNG(uint64(id)+1600), NodeOptions{})
+		if err != nil {
+			t.Fatalf("open %d: %v", id, err)
+		}
+		nodes[id] = n
+	}
+	defer func() {
+		for _, n := range nodes {
+			_ = n.Close()
+		}
+	}()
+
+	lead := driveUntilLeader(t, nodes, ids, 300)
+	if !driveUntilConverged(t, nodes, ids, 300) {
+		t.Fatalf("cluster did not converge")
+	}
+
+	// View A puts the leader at index 0, so its first target is the leader and the
+	// response it captures is a genuine committed ok. View B is that same group
+	// rotated one position, mirroring the demo's rotateNodes(g, 1): the leader
+	// leaves index 0 and a follower takes its place, so View B's first target is a
+	// DIFFERENT node than View A's. That difference is exactly what makes the drop
+	// observable, because the stale reply carries View A's target as its origin,
+	// which is not View B's target, so the guard fires deterministically no matter
+	// which node won the election.
+	viewA := leaderAtIndex(cfg.Nodes, lead, 0)
+	if viewA[0].ID != lead {
+		t.Fatalf("view A did not put the leader first: %+v lead=%d", viewA, lead)
+	}
+	viewB := make([]cluster.NodeAddr, len(viewA))
+	for i := range viewA {
+		viewB[i] = viewA[(i+1)%len(viewA)]
+	}
+	if viewB[0].ID == lead {
+		t.Fatalf("rotation left the leader first in view B: %+v", viewB)
+	}
+
+	const id uint64 = 7
+	vec := []float32{1, 0, 0}
+
+	// View A: a fresh Router. Its first attempt is emitted under request id 1 and
+	// aimed at the leader.
+	routerA, err := NewRouter(routerID, cluster.ShardMap{Groups: []cluster.Config{{Nodes: viewA}}})
+	if err != nil {
+		t.Fatalf("new router A: %v", err)
+	}
+	_, framesA, err := routerA.Upsert(id, vec)
+	if err != nil {
+		t.Fatalf("view A upsert: %v", err)
+	}
+	if len(framesA) != 1 {
+		t.Fatalf("view A first attempt emitted %d frames, want 1", len(framesA))
+	}
+	targetA, reqIDA := decodeReq(t, framesA[0])
+	if reqIDA != 1 {
+		t.Fatalf("view A first request id = %d, want 1", reqIDA)
+	}
+	if targetA != lead {
+		t.Fatalf("view A aimed at %d, want the leader %d", targetA, lead)
+	}
+
+	// Drive View A's attempt into the real cluster but COLLECT the router-bound
+	// responses instead of delivering them, so the committed ok is held back and
+	// can be replayed at View B later. View A is then abandoned without Close,
+	// exactly as the demo abandons a rotated-away view, its pending id-1 attempt
+	// still live and forever unanswered.
+	staleFrames := pumpCollectFramesTo(t, nodes, framesA, routerID, 4000)
+	if len(staleFrames) == 0 {
+		t.Fatalf("no response from view A reached the router")
+	}
+	stale := staleFrames[0]
+	staleEnv, err := cluster.DecodeMessage(stale)
+	if err != nil {
+		t.Fatalf("decode stale response: %v", err)
+	}
+	staleResp, err := DecodeClientResponse(staleEnv)
+	if err != nil {
+		t.Fatalf("decode stale client response: %v", err)
+	}
+	// The captured reply is View A's own committed ok: it comes from the leader
+	// (View A's target) and carries the colliding request id 1.
+	if staleEnv.From != lead || staleResp.ReqID != 1 {
+		t.Fatalf("stale reply is not view A's committed reply: from=%d reqID=%d, want from=%d reqID=1", staleEnv.From, staleResp.ReqID, lead)
+	}
+	if staleResp.Status != StatusOK || staleResp.Index == 0 {
+		t.Fatalf("stale reply is not a committed ok: %+v", staleResp)
+	}
+
+	// View B: a second fresh Router over the rotated group. It too starts reqSeq at
+	// zero, so its first attempt collides on request id 1, and it is aimed at a
+	// follower, not the leader. Do NOT pump it yet: its id-1 attempt must stay live
+	// so the stale reply lands on it.
+	routerB, err := NewRouter(routerID, cluster.ShardMap{Groups: []cluster.Config{{Nodes: viewB}}})
+	if err != nil {
+		t.Fatalf("new router B: %v", err)
+	}
+	opB, framesB, err := routerB.Upsert(id, vec)
+	if err != nil {
+		t.Fatalf("view B upsert: %v", err)
+	}
+	if len(framesB) != 1 {
+		t.Fatalf("view B first attempt emitted %d frames, want 1", len(framesB))
+	}
+	targetB, reqIDB := decodeReq(t, framesB[0])
+	if reqIDB != 1 {
+		t.Fatalf("view B first request id = %d, want 1", reqIDB)
+	}
+	if reqIDB != reqIDA {
+		t.Fatalf("the two views did not collide: view A id %d, view B id %d", reqIDA, reqIDB)
+	}
+	// The rotation kept the targets apart, so the stale reply's origin is foreign
+	// to View B's live attempt: this is the precondition that makes the guard fire.
+	if targetB == targetA {
+		t.Fatalf("both views aimed at the same node %d, so the drop is not observable", targetB)
+	}
+
+	// The stale reply from View A, origin the leader and request id 1, arrives at
+	// View B, whose live id-1 attempt is aimed at a follower. env.From != held.target,
+	// so the guard drops it: no re-emit, and View B's operation is NOT resolved by
+	// the foreign reply. This is DEFER-012 proved with two real rotated views.
+	out, err := routerB.HandleMessage(stale)
+	if err != nil {
+		t.Fatalf("view B handling the stale reply errored: %v", err)
+	}
+	if out != nil {
+		t.Fatalf("the stale reply re-emitted %d frames", len(out))
+	}
+	if res, ok := routerB.Result(opB); ok {
+		t.Fatalf("the stale cross-view reply resolved view B's op: %+v", res)
+	}
+
+	// The guard is additive: View B's operation still resolves through its own
+	// legitimate path. Pump it into the cluster; the follower redirects to the
+	// leader, which commits and acks, and the op completes OK.
+	pumpWithRouter(t, nodes, routerB, framesB, 4000)
+	res, ok := routerB.Result(opB)
+	if !ok || res.Status != StatusOK || res.Index == 0 || res.Exhausted {
+		t.Fatalf("view B's op did not resolve OK through its own target: %+v ok=%v", res, ok)
+	}
+}
