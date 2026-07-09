@@ -685,3 +685,204 @@ func TestClusterDST_DeterministicReplay(t *testing.T) {
 		t.Fatalf("oracle size diverged across replays: %d vs %d", a.oracleSize, b.oracleSize)
 	}
 }
+
+// TestClusterDST_SilentTargetRecoversByProtocol proves the DEFER-011 retransmit
+// that 4.1a added actually recovers a lost frame under a real fault, on the same
+// logical clock the cluster runs on, and WITHOUT the caller re-issuing the
+// operation.
+//
+// It is deliberately separate from TestClusterDST_Seeded and its runClusterSeed.
+// That sweep never ticks the RouterHost, so a Router there never times an attempt
+// out, and wiring a tick into its advance would change the sealed sweep's message
+// history, its coverage counters and its per-shard hashes. This test brings its
+// own small deterministic harness whose advance DOES tick the RouterHost, so the
+// retransmit path gets real coverage while the 500-seed sweep stays untouched.
+//
+// The fault is a silent target. One replica keeps receiving requests and keeps
+// committing them with its peers, but every response it sends the router is
+// dropped: it does its job and answers into a void. The router hears nothing, so
+// only its own retransmit, fired by Tick on the fabric clock, keeps the operation
+// alive until the channel heals and one ack finally lands. Because the caller
+// issues exactly one Upsert and never retries, a terminal OK can only be the
+// protocol recovering, never a fresh caller operation.
+func TestClusterDST_SilentTargetRecoversByProtocol(t *testing.T) {
+	// seed is a runtime var, not a const, so the per-node mix below wraps mod 2^64
+	// exactly as runClusterSeed's does with its seed parameter; a const seed would
+	// make that multiply a compile-time overflow.
+	var seed uint64 = 0x5A1E7
+
+	// A clean fabric except for the mute: latency jitters so deliveries reorder,
+	// but nothing is dropped or duplicated at random. That makes the muted leader's
+	// ack the only lost frame in the whole run, which isolates the property under
+	// test: the op stays open exactly while the mute holds and resolves exactly
+	// when a retransmit's ack crosses the healed channel.
+	net := cluster.NewSimNet(seed, cluster.SimConfig{MinLatency: 1, MaxLatency: 4})
+
+	cfg := cluster.Config{Nodes: []cluster.NodeAddr{{ID: 1}, {ID: 2}, {ID: 3}}}
+	sm := cluster.ShardMap{Groups: []cluster.Config{cfg}}
+	shard := []cluster.NodeID{1, 2, 3}
+	groupCfg := map[cluster.NodeID]cluster.Config{1: cfg, 2: cfg, 3: cfg}
+
+	dirs := map[cluster.NodeID]string{}
+	for _, id := range shard {
+		dirs[id] = t.TempDir()
+	}
+	hosts := map[cluster.NodeID]*Host{}
+	var rh *RouterHost
+
+	defer func() {
+		if rh != nil {
+			_ = rh.Close()
+		}
+		for _, id := range shard {
+			if h := hosts[id]; h != nil {
+				_ = h.Close()
+			}
+		}
+		net.Close()
+	}()
+
+	// One election generator per node, seeded apart from the fabric so the two
+	// streams never alias, the same discipline runClusterSeed uses.
+	nodeSeed := func(id cluster.NodeID) uint64 {
+		return seed*0x9E3779B97F4A7C15 + uint64(id)*0x100000001B3
+	}
+	for _, id := range shard {
+		node, err := OpenNode(dirs[id], id, groupCfg[id], 3, testRNG(nodeSeed(id)), NodeOptions{})
+		if err != nil {
+			t.Fatalf("open %d: %v", id, err)
+		}
+		host, err := NewHost(node, func(h cluster.Handler) cluster.Transport {
+			tr, terr := net.Endpoint(id, h)
+			if terr != nil {
+				t.Fatalf("endpoint %d: %v", id, terr)
+			}
+			return tr
+		})
+		if err != nil {
+			t.Fatalf("host %d: %v", id, err)
+		}
+		hosts[id] = host
+	}
+
+	router, err := NewRouter(routerID, sm)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+	rh, err = NewRouterHost(router, func(h cluster.Handler) cluster.Transport {
+		tr, terr := net.Endpoint(routerID, h)
+		if terr != nil {
+			t.Fatalf("router endpoint: %v", terr)
+		}
+		return tr
+	})
+	if err != nil {
+		t.Fatalf("router host: %v", err)
+	}
+
+	// advance is this test's round and, unlike the sealed sweep's advance, it also
+	// ticks the RouterHost. net.Clock().Now() is the right clock to feed: the
+	// ManualClock advances by one on every net.Tick, so it is monotone and moves
+	// exactly one tick per round, the same cadence the nodes tick their own clocks
+	// at. Feeding it to rh.Tick lets the Router time an unanswered attempt out on
+	// the very clock the cluster runs on, which is what 4.1a made possible and what
+	// runClusterSeed deliberately does not do.
+	advance := func() {
+		tickHosts(t, hosts, shard)
+		net.Tick()
+		if terr := rh.Tick(net.Clock().Now()); terr != nil {
+			t.Fatalf("router host tick: %v", terr)
+		}
+	}
+	// drivePoll spends a bounded round budget waiting for one op to resolve, and
+	// because advance ticks rh, the wait itself drives the retransmit.
+	drivePoll := func(opID uint64, budget int) (RouteResult, bool) {
+		for i := 0; i < budget; i++ {
+			advance()
+			if res, ok := rh.Result(opID); ok {
+				return res, true
+			}
+		}
+		return RouteResult{}, false
+	}
+
+	// Bring the single shard to an elected leader.
+	const electBudget = 600
+	leader := cluster.None
+	for i := 0; i < electBudget; i++ {
+		advance()
+		if leader = hostLeaderOf(hosts, shard); leader != cluster.None {
+			break
+		}
+	}
+	if leader == cluster.None {
+		t.Fatalf("shard did not elect a leader within %d rounds", electBudget)
+	}
+
+	// Mute the leader toward the router: block only leader -> routerID. The leader
+	// still receives client requests (routerID -> leader stays open) and still
+	// replicates with its peers (no leader-to-peer edge is touched), so it keeps
+	// quorum, commits the write, and holds office; only its ack to the router is
+	// lost. Leadership cannot churn out from under the test, because the mute never
+	// blocks a heartbeat.
+	net.Partition(leader, routerID)
+
+	// Issue EXACTLY ONE operation. No reissueUntilOK and no second Upsert: the
+	// caller emits once and then only polls. The router's first attempt lands on
+	// the leader, directly or after a follower's NotLeader redirect whose reply is
+	// not muted, the leader commits and answers OK, and that OK is swallowed by the
+	// mute.
+	const writeID uint64 = 7
+	vec := vecFor(writeID)
+	opID, err := rh.Upsert(writeID, vec)
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	// Drive past retransmitTimeout so at least one retransmit fires, but stay well
+	// under the op's budget of 3*len(group) = 9 attempts so it cannot exhaust. Each
+	// retransmit re-aims at the SAME muted leader: emitAttempt only moves targetIdx
+	// on a NotLeader reply, and a muted leader never gets one back to the router. So
+	// while the mute holds, every attempt answers into the void and the op cannot
+	// resolve. This window both runs the retransmit machinery and sets up the
+	// sub-check below.
+	const muteWindow = int(retransmitTimeout)*2 + 20
+	for i := 0; i < muteWindow; i++ {
+		advance()
+	}
+
+	// Sub-check, robust rather than fragile: with the mute still up and no random
+	// drops in this fabric, the leader's ack is the only lost frame, so the op
+	// provably cannot have resolved yet. If it had, the heal below would not be what
+	// recovered it and the test would be a false green.
+	if res, ok := rh.Result(opID); ok {
+		t.Fatalf("op resolved while the leader was muted (%+v); the heal is not what recovered it", res)
+	}
+
+	// Heal the leader -> router channel. The write is already committed on the
+	// leader, so the next retransmit's reply crosses immediately and carries the
+	// commit index.
+	net.Heal(leader, routerID)
+
+	// The caller still does nothing but poll. A retransmit emitted after the heal
+	// reaches the leader and its ack now lands, flipping the op to a definitive OK.
+	// That OK is the protocol recovering a lost frame on its own clock, not the
+	// caller re-issuing.
+	const recoverBudget = 400
+	res, done := drivePoll(opID, recoverBudget)
+	if !done {
+		t.Fatalf("op did not recover within %d rounds after healing the muted leader", recoverBudget)
+	}
+	if res.Status != StatusOK || res.Exhausted || res.Index == 0 {
+		t.Fatalf("recovered op is not a clean write ack: %+v", res)
+	}
+
+	if herr := rh.Err(); herr != nil {
+		t.Fatalf("router host poisoned: %v", herr)
+	}
+	for _, id := range shard {
+		if herr := hosts[id].Err(); herr != nil {
+			t.Fatalf("host %d poisoned: %v", id, herr)
+		}
+	}
+}
