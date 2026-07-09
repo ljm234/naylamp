@@ -94,6 +94,26 @@ func (rh *RouterHost) sendAll(frames [][]byte) {
 	}
 }
 
+// Tick advances the Router's logical clock to now and dispatches whatever
+// retransmissions fall out. It mirrors Host.Tick: a poisoned host does nothing,
+// and a fatal error out of the router poisons the host. The caller feeds the
+// fabric's clock here, the same tick that drives the nodes, so a Router that is
+// never ticked never times an attempt out.
+func (rh *RouterHost) Tick(now cluster.Tick) error {
+	rh.mu.Lock()
+	defer rh.mu.Unlock()
+	if rh.err != nil {
+		return rh.err
+	}
+	out, err := rh.router.Tick(now)
+	if err != nil {
+		rh.err = err
+		return err
+	}
+	rh.sendAll(out)
+	return rh.err
+}
+
 // Upsert routes a write through the router and dispatches its first attempt,
 // returning the op id to poll Result with. ErrInvalidArgument propagates
 // unchanged; any other router error poisons the host.

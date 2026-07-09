@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 
 	"naylamp/engine/cluster"
 	"naylamp/engine/vector"
@@ -12,21 +13,29 @@ import (
 // Router is the sans-io write coordinator: it turns a client Upsert or Delete
 // into consensus traffic aimed at the right shard's leader, follows redirect
 // hints, retries a bounded number of times across an election, and holds each
-// operation's outcome for a one-shot Result. It owns no goroutines, no timers
-// and no clock; the caller moves every frame. Timeouts arrive in a later piece
-// with the fabric's clock, so today every operation terminates by a response or
-// by exhausting its retry budget, never by time.
+// operation's outcome for a one-shot Result. It owns no goroutines and no
+// timers, and reads no wall clock: the caller moves every frame and advances a
+// logical clock through Tick, so an operation terminates by a response, by
+// exhausting its retry budget, or by timing out an unanswered attempt, never by
+// wall time. A Router the caller never ticks behaves as it did before timeouts.
 //
 // Determinism rule: no path that emits a frame ranges a map. A target is chosen
-// by slice index and a redirect hint by linear scan, and each HandleMessage
-// processes exactly one response and emits at most one frame, so a seeded
-// simulation replays a router's traffic identically.
+// by slice index and a redirect hint by linear scan; each HandleMessage
+// processes exactly one response and emits at most one frame; and Tick collects
+// the due attempts out of its pending map but sorts them by request id before
+// emitting a single frame, so a seeded simulation replays a router's traffic
+// identically.
 type Router struct {
 	id     cluster.NodeID
 	shards cluster.ShardMap
 
 	reqSeq uint64
 	opSeq  uint64
+
+	// now is the Router's logical clock, advanced only by Tick and read only to
+	// stamp and time out attempts. It stays 0 until the caller first ticks, so a
+	// Router nobody ticks stamps every attempt at 0 and never times one out.
+	now cluster.Tick
 
 	pending   map[uint64]pendingRef  // request id of a live attempt -> the op and leg it belongs to
 	ops       map[uint64]*routeOp    // op id -> the write operation in flight
@@ -37,9 +46,15 @@ type Router struct {
 // pendingRef correlates a response to the attempt that provoked it. The
 // correlation is by attempt AND by leg, because a search lives as independent
 // legs and a response must find exactly its own; leg -1 marks a write.
+// emittedAt records the tick the attempt went out on, so Tick can time out and
+// retransmit a frame that was lost (DEFER-011). target records the node the
+// attempt was aimed at, so a reply bearing this reqID from any other node is
+// dropped as stale and never resolves the operation (DEFER-012).
 type pendingRef struct {
-	opID uint64
-	leg  int
+	opID      uint64
+	leg       int
+	emittedAt cluster.Tick
+	target    cluster.NodeID
 }
 
 // routeOp is one write operation in flight: which command, which shard, which
@@ -209,7 +224,9 @@ func (r *Router) emitAttempt(opID uint64, o *routeOp) ([][]byte, error) {
 	target := group[o.targetIdx].ID
 	r.reqSeq++
 	reqID := r.reqSeq
-	r.pending[reqID] = pendingRef{opID: opID, leg: -1}
+	// emittedAt stamps this attempt for the DEFER-011 retransmit timeout, and
+	// target records where it was aimed for the DEFER-012 stale-origin drop.
+	r.pending[reqID] = pendingRef{opID: opID, leg: -1, emittedAt: r.now, target: target}
 	o.attemptsLeft--
 	// A write coordinator only carries upsert and delete, so the record id
 	// always travels and k stays zero; a delete leaves Vec nil, which the codec
@@ -237,7 +254,9 @@ func (r *Router) emitLegAttempt(opID uint64, o *searchOp, leg int) ([][]byte, er
 	target := group[lg.targetIdx].ID
 	r.reqSeq++
 	reqID := r.reqSeq
-	r.pending[reqID] = pendingRef{opID: opID, leg: leg}
+	// emittedAt stamps this attempt for the DEFER-011 retransmit timeout, and
+	// target records where it was aimed for the DEFER-012 stale-origin drop.
+	r.pending[reqID] = pendingRef{opID: opID, leg: leg, emittedAt: r.now, target: target}
 	lg.attemptsLeft--
 	k := uint32(o.k) //nolint:gosec // the API bounds k to uint32, so the conversion cannot truncate
 	frame, err := EncodeClientRequest(r.id, target, ClientRequest{Op: ReqSearch, ReqID: reqID, K: k, Vec: o.query})
@@ -245,6 +264,84 @@ func (r *Router) emitLegAttempt(opID uint64, o *searchOp, leg int) ([][]byte, er
 		return nil, err
 	}
 	return [][]byte{frame}, nil
+}
+
+// retransmitTimeout is how many ticks an attempt may go unanswered before Tick
+// resends it. It sits above a full randomized election window (raft resets its
+// election in [ElectionTicks, 2*ElectionTicks), 10 to 20 ticks by default), so
+// a retransmit does not fire while a leader is merely being elected, yet it is
+// short enough to recover a dropped frame within a couple of election cycles.
+const retransmitTimeout cluster.Tick = 50
+
+// Tick advances the Router's logical clock to now and retransmits every live
+// attempt that has gone unanswered for at least retransmitTimeout ticks
+// (DEFER-011). now is monotonic: it is the fabric's clock, which only advances.
+// A retransmit walks the SAME re-emission path a retryable response takes,
+// emitAttempt for a write and emitLegAttempt for a search leg, so it spends one
+// attempt from the op's budget and retires the op as exhausted on the last try,
+// exactly as a live response would; retransmitting is idempotent at the router
+// because the superseded attempt's request id is consumed, so at most one reply
+// ever resolves the op.
+//
+// The clock is the argument, never time.Now, so a seeded simulation feeds the
+// same ticks and replays the same retransmissions. To hold the determinism rule
+// that no emitting path ranges a map, the due attempts are gathered from
+// r.pending and sorted by request id, and only then does the loop emit, in the
+// attempts' own emission order.
+func (r *Router) Tick(now cluster.Tick) ([][]byte, error) {
+	r.now = now
+	// Gather first, emit second: ranging r.pending only collects the due request
+	// ids into a slice; the sorted slice below is what the emitting loop walks.
+	var due []uint64
+	for reqID, ref := range r.pending {
+		if now-ref.emittedAt >= retransmitTimeout {
+			due = append(due, reqID)
+		}
+	}
+	if len(due) == 0 {
+		return nil, nil
+	}
+	sort.Slice(due, func(i, j int) bool { return due[i] < due[j] })
+
+	var out [][]byte
+	for _, reqID := range due {
+		ref, ok := r.pending[reqID]
+		if !ok {
+			// A retransmit earlier in this same tick already retired the op and
+			// swept this leg's entry: nothing is left to resend.
+			continue
+		}
+		// Consume the timed-out attempt before re-emitting, exactly as the
+		// response path deletes the old request id before emitAttempt hands out a
+		// fresh one. A late reply for this id now lands on the stale path.
+		delete(r.pending, reqID)
+		frames, err := r.retransmit(ref)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, frames...)
+	}
+	return out, nil
+}
+
+// retransmit re-emits one timed-out attempt down the same path a retryable
+// response would: emitAttempt for a write, emitLegAttempt for a search leg. If
+// the operation was already retired, by a terminal reply or by a sibling leg's
+// exhaust, there is nothing to resend and the orphaned entry, already deleted by
+// the caller, simply stays gone.
+func (r *Router) retransmit(ref pendingRef) ([][]byte, error) {
+	if ref.leg < 0 {
+		o, ok := r.ops[ref.opID]
+		if !ok {
+			return nil, nil
+		}
+		return r.emitAttempt(ref.opID, o)
+	}
+	o, ok := r.searchOps[ref.opID]
+	if !ok {
+		return nil, nil
+	}
+	return r.emitLegAttempt(ref.opID, o, ref.leg)
 }
 
 // HandleMessage processes one response frame and re-emits or retires the
@@ -269,6 +366,17 @@ func (r *Router) HandleMessage(data []byte) ([][]byte, error) {
 		// cluster and stays fatal. The asymmetry with the Node's silent drop of
 		// a malformed request is deliberate: the direction of trust differs.
 		return nil, fmt.Errorf("naylamp: router got an undecodable response: %w", err)
+	}
+
+	// DEFER-012: a response resolves an operation only when it comes from the
+	// exact node the live attempt was aimed at. A frame carrying our reqID but a
+	// From other than that target is a superseded replica answering late, after
+	// the op advanced to a new target; correlating it would let a stale node
+	// resolve the operation. Drop it and leave the attempt live for the real
+	// target's reply. A reply from the right target is untouched, so the check is
+	// purely additive.
+	if held, ok := r.pending[resp.ReqID]; ok && env.From != held.target {
+		return nil, nil
 	}
 
 	ref, live := r.pending[resp.ReqID]

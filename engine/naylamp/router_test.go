@@ -725,3 +725,214 @@ func TestRouter_SearchGuardsAndRetries(t *testing.T) {
 		t.Fatalf("oversized k advanced the op counter from %d to %d", before, router.opSeq)
 	}
 }
+
+func TestRouter_RetransmitOnTimeout(t *testing.T) {
+	cfg := cluster.Config{Nodes: []cluster.NodeAddr{{ID: 1}, {ID: 2}, {ID: 3}}}
+	sm := cluster.ShardMap{Groups: []cluster.Config{cfg}}
+	router, err := NewRouter(routerID, sm)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+
+	op, frames, err := router.Upsert(7, []float32{1, 0, 0})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if len(frames) != 1 {
+		t.Fatalf("first attempt emitted %d frames, want 1", len(frames))
+	}
+	target1, reqID1 := decodeReq(t, frames[0])
+	// The first attempt spent one of nine tries (three passes over three nodes).
+	if got := router.ops[op].attemptsLeft; got != 8 {
+		t.Fatalf("after the first attempt attemptsLeft = %d, want 8", got)
+	}
+
+	// A tick short of the budget does not retransmit: the attempt was stamped at
+	// tick 0 and is not yet old enough.
+	if out, terr := router.Tick(retransmitTimeout - 1); terr != nil || len(out) != 0 {
+		t.Fatalf("early tick retransmitted: out=%d err=%v", len(out), terr)
+	}
+	if got := router.ops[op].attemptsLeft; got != 8 {
+		t.Fatalf("early tick spent an attempt: attemptsLeft = %d, want 8", got)
+	}
+
+	// A tick at the budget retransmits once: a fresh request id to the same
+	// target, and one more attempt spent.
+	out, terr := router.Tick(retransmitTimeout)
+	if terr != nil {
+		t.Fatalf("tick: %v", terr)
+	}
+	if len(out) != 1 {
+		t.Fatalf("timeout retransmitted %d frames, want 1", len(out))
+	}
+	target2, reqID2 := decodeReq(t, out[0])
+	if target2 != target1 {
+		t.Fatalf("retransmit aimed at %d, want the same target %d", target2, target1)
+	}
+	if reqID2 == reqID1 {
+		t.Fatalf("retransmit reused request id %d", reqID1)
+	}
+	if got := router.ops[op].attemptsLeft; got != 7 {
+		t.Fatalf("retransmit did not spend an attempt: attemptsLeft = %d, want 7", got)
+	}
+
+	// The live attempt (reqID2) is acknowledged: the op resolves OK.
+	if o, herr := router.HandleMessage(mustEncodeRespFrom(t, target2, ClientResponse{ReqID: reqID2, Status: StatusOK, Index: 5})); herr != nil || o != nil {
+		t.Fatalf("ok handle: out=%v err=%v", o, herr)
+	}
+	res, ok := router.Result(op)
+	if !ok || res.Status != StatusOK || res.Index != 5 || res.Exhausted {
+		t.Fatalf("retransmitted op did not resolve OK: %+v ok=%v", res, ok)
+	}
+
+	// The superseded attempt (reqID1) was consumed by the retransmit, so a late
+	// reply for it is a stale duplicate: dropped, and the op cannot resolve a
+	// second time. This is the router-level single resolution of DEFER-011; the
+	// node's own log dedup is DEFER-013 and is not claimed here.
+	if o, herr := router.HandleMessage(mustEncodeRespFrom(t, target1, ClientResponse{ReqID: reqID1, Status: StatusOK, Index: 5})); herr != nil || o != nil {
+		t.Fatalf("stale reply for the superseded attempt: out=%v err=%v", o, herr)
+	}
+	if _, ok := router.Result(op); ok {
+		t.Fatalf("op resolved a second time after a stale reply")
+	}
+}
+
+func TestRouter_TimeoutRespectsExhaustion(t *testing.T) {
+	cfg := cluster.Config{Nodes: []cluster.NodeAddr{{ID: 1}, {ID: 2}, {ID: 3}}}
+	sm := cluster.ShardMap{Groups: []cluster.Config{cfg}}
+	router, err := NewRouter(routerID, sm)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+
+	op, frames, err := router.Upsert(7, []float32{1, 0, 0})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if len(frames) != 1 {
+		t.Fatalf("first attempt emitted %d frames, want 1", len(frames))
+	}
+
+	// Nothing ever answers. Each tick past the budget burns exactly one attempt.
+	// The budget is three passes over three nodes, nine attempts: one spent on
+	// the first emit, eight retransmits burn the rest, and the next tick finds
+	// nothing left and retires the op as exhausted.
+	now := cluster.Tick(0)
+	var lastOut [][]byte
+	for step := 0; step < 20; step++ {
+		now += retransmitTimeout
+		out, terr := router.Tick(now)
+		if terr != nil {
+			t.Fatalf("tick %d: %v", step, terr)
+		}
+		lastOut = out
+		if _, done := router.results[op]; done {
+			break
+		}
+	}
+
+	res, ok := router.Result(op)
+	if !ok || !res.Exhausted {
+		t.Fatalf("timeouts did not retire the op as exhausted: %+v ok=%v", res, ok)
+	}
+	// The exhausting tick emits no frame, and the budget holds: the first emit
+	// plus eight retransmits is exactly nine attempts, never an unbounded stream.
+	if len(lastOut) != 0 {
+		t.Fatalf("the exhausting tick still emitted %d frames", len(lastOut))
+	}
+	if router.reqSeq != 9 {
+		t.Fatalf("exhaust used %d attempts, want exactly 9", router.reqSeq)
+	}
+
+	// A further tick is a no-op: the op is gone, nothing re-emits, no panic.
+	now += retransmitTimeout
+	if out, terr := router.Tick(now); terr != nil || len(out) != 0 {
+		t.Fatalf("tick after exhaust re-emitted: out=%d err=%v", len(out), terr)
+	}
+}
+
+func TestRouter_DropsForeignOrigin(t *testing.T) {
+	cfg := cluster.Config{Nodes: []cluster.NodeAddr{{ID: 1}, {ID: 2}, {ID: 3}}}
+	sm := cluster.ShardMap{Groups: []cluster.Config{cfg}}
+	router, err := NewRouter(routerID, sm)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+
+	op, frames, err := router.Upsert(7, []float32{1, 0, 0})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if len(frames) != 1 {
+		t.Fatalf("first attempt emitted %d frames, want 1", len(frames))
+	}
+	target1, reqID1 := decodeReq(t, frames[0])
+
+	// A different group member answers under the right request id. It is not the
+	// node this attempt was aimed at, so DEFER-012 drops it as stale: no re-emit,
+	// no resolution, and the attempt stays live for its real target.
+	foreign := cluster.NodeID(2)
+	if target1 == foreign {
+		foreign = 3
+	}
+	out, herr := router.HandleMessage(mustEncodeRespFrom(t, foreign, ClientResponse{ReqID: reqID1, Status: StatusOK, Index: 5}))
+	if herr != nil {
+		t.Fatalf("foreign-origin handle errored: %v", herr)
+	}
+	if out != nil {
+		t.Fatalf("foreign-origin reply re-emitted %d frames", len(out))
+	}
+	if _, ok := router.Result(op); ok {
+		t.Fatalf("a reply from the wrong origin resolved the op")
+	}
+
+	// The same reply from the correct target does resolve it: a right-origin
+	// reply passes exactly as before, so the check is additive.
+	out, herr = router.HandleMessage(mustEncodeRespFrom(t, target1, ClientResponse{ReqID: reqID1, Status: StatusOK, Index: 5}))
+	if herr != nil {
+		t.Fatalf("correct-origin handle errored: %v", herr)
+	}
+	if out != nil {
+		t.Fatalf("terminal ok re-emitted %d frames", len(out))
+	}
+	res, ok := router.Result(op)
+	if !ok || res.Status != StatusOK || res.Index != 5 || res.Exhausted {
+		t.Fatalf("correct-origin reply did not resolve OK: %+v ok=%v", res, ok)
+	}
+}
+
+func TestRouter_TickWithoutPendingIsNoop(t *testing.T) {
+	cfg := cluster.Config{Nodes: []cluster.NodeAddr{{ID: 1}, {ID: 2}, {ID: 3}}}
+	sm := cluster.ShardMap{Groups: []cluster.Config{cfg}}
+	router, err := NewRouter(routerID, sm)
+	if err != nil {
+		t.Fatalf("new router: %v", err)
+	}
+
+	// No operation is in flight: a tick, even a large one, emits nothing and does
+	// not panic.
+	out, terr := router.Tick(1000)
+	if terr != nil {
+		t.Fatalf("tick on an idle router: %v", terr)
+	}
+	if out != nil {
+		t.Fatalf("idle tick emitted %d frames", len(out))
+	}
+
+	// It stays a no-op after an op has fully resolved and left no pending attempt
+	// behind.
+	op, frames, err := router.Upsert(7, []float32{1, 0, 0})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	target, reqID := decodeReq(t, frames[0])
+	if _, herr := router.HandleMessage(mustEncodeRespFrom(t, target, ClientResponse{ReqID: reqID, Status: StatusOK, Index: 5})); herr != nil {
+		t.Fatalf("ok handle: %v", herr)
+	}
+	if res, ok := router.Result(op); !ok || res.Status != StatusOK {
+		t.Fatalf("op did not resolve OK: %+v ok=%v", res, ok)
+	}
+	if out, terr := router.Tick(2000); terr != nil || out != nil {
+		t.Fatalf("tick after a resolved op re-emitted: out=%v err=%v", out, terr)
+	}
+}
