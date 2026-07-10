@@ -1,6 +1,3 @@
-// Package naylamp is the public API of the Naylamp vector database engine.
-// It ties together the vector store and the HNSW index into collections:
-// named, self-contained groups of vectors you can insert into and query.
 package naylamp
 
 import (
