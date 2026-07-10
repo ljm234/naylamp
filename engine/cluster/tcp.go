@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"naylamp/engine/persist"
 )
@@ -30,6 +31,14 @@ type TCPTransport struct {
 	inbound map[net.Conn]bool
 	closed  bool
 	wg      sync.WaitGroup
+
+	// timeout bounds every socket read and write, guarded by mu: a read waits at
+	// most this long for the next frame, a write at most this long to drain. Set
+	// well above any heartbeat interval so a healthy link never trips it, yet a
+	// hung peer is dropped within it instead of blocking forever. A read that
+	// expires mid-frame ends the whole connection, so the CRC framing is never
+	// left half-consumed.
+	timeout time.Duration
 }
 
 // peerLink is one live outbound connection. Its mutex serializes writes so
@@ -40,6 +49,15 @@ type peerLink struct {
 }
 
 var errTCPClosed = errors.New("cluster: tcp transport is closed")
+
+// defaultSocketTimeout bounds a blocked socket read or write. It is generous on
+// purpose: a healthy consensus link carries heartbeats far more often, so a read
+// never waits this long for the next frame on a live peer, while a peer that has
+// gone silent or whose buffer never drains is dropped within it rather than
+// hanging the reader or the sender indefinitely. A timeout is a legitimate
+// at-most-once drop, not a transport error: the link is closed and the protocol
+// above redials.
+const defaultSocketTimeout = 30 * time.Second
 
 // NewTCPTransport listens on listenAddr and starts accepting. Use ":0" for an
 // ephemeral port and Addr() to discover it. Peers are registered afterwards
@@ -62,6 +80,7 @@ func NewTCPTransport(self NodeID, listenAddr string, h Handler) (*TCPTransport, 
 		peers:   make(map[NodeID]string),
 		links:   make(map[NodeID]*peerLink),
 		inbound: make(map[net.Conn]bool),
+		timeout: defaultSocketTimeout,
 	}
 	t.wg.Add(1)
 	go t.acceptLoop()
@@ -78,6 +97,15 @@ func (t *TCPTransport) AddPeer(id NodeID, addr string) {
 	t.peers[id] = addr
 }
 
+// socketTimeout returns the current read and write deadline duration, read
+// under the lock so a caller that does not already hold mu stays race free
+// against an adjustment (the tests shorten it).
+func (t *TCPTransport) socketTimeout() time.Duration {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.timeout
+}
+
 // Send frames data and writes it to the peer, dialing on demand. A write
 // failure drops the link and surfaces the error; the message is lost, which
 // is exactly the at-most-once contract.
@@ -88,6 +116,7 @@ func (t *TCPTransport) Send(to NodeID, data []byte) error {
 	}
 	link.mu.Lock()
 	defer link.mu.Unlock()
+	_ = link.conn.SetWriteDeadline(time.Now().Add(t.socketTimeout()))
 	if _, werr := persist.WriteBlock(link.conn, persist.BlockClusterMessage, data); werr != nil {
 		t.dropLink(to, link)
 		return fmt.Errorf("cluster: tcp send to %d: %w", to, werr)
@@ -118,6 +147,9 @@ func (t *TCPTransport) link(to NodeID) (*peerLink, error) {
 	}
 	hello := make([]byte, 8)
 	binary.LittleEndian.PutUint64(hello, uint64(t.self))
+	// mu is held here, so read t.timeout directly rather than through
+	// socketTimeout, which would relock it.
+	_ = conn.SetWriteDeadline(time.Now().Add(t.timeout))
 	if _, werr := persist.WriteBlock(conn, persist.BlockClusterMessage, hello); werr != nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("cluster: tcp hello to node %d: %w", to, werr)
@@ -170,6 +202,7 @@ func (t *TCPTransport) readLoop(conn net.Conn) {
 		_ = conn.Close()
 	}()
 
+	_ = conn.SetReadDeadline(time.Now().Add(t.socketTimeout()))
 	typ, payload, err := persist.ReadBlock(conn)
 	if err != nil || typ != persist.BlockClusterMessage || len(payload) != 8 {
 		return
@@ -180,6 +213,7 @@ func (t *TCPTransport) readLoop(conn net.Conn) {
 	}
 
 	for {
+		_ = conn.SetReadDeadline(time.Now().Add(t.socketTimeout()))
 		typ, payload, err := persist.ReadBlock(conn)
 		if err != nil || typ != persist.BlockClusterMessage {
 			return
