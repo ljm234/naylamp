@@ -399,6 +399,21 @@ func (n *Node) ReadServable(ctx uint64) bool {
 	return true
 }
 
+// ReadIndex returns the read index captured for a confirmed linearizable read
+// under ctx, or false when no confirmed read is registered there. Unlike
+// ReadServable it is READ-ONLY and does NOT consume the ctx: it only reads
+// n.reads, leaving ReadServable as the one path that resolves and forgets the
+// read. It exists to make a read's linearizability literal for the audit
+// (DEFER-014): a caller can observe the read index R and assert R is at least
+// the commit index of a write that landed before the read, while ReadServable
+// still reports when the served state has applied >= R. It touches neither the
+// wire nor consensus: it proposes nothing, applies nothing, emits no frame and
+// mutates no state, and it leaves the search-without-index wire guard untouched.
+func (n *Node) ReadIndex(ctx uint64) (uint64, bool) {
+	idx, ok := n.reads[ctx]
+	return idx, ok
+}
+
 // Leader returns the node this replica believes leads the current term.
 func (n *Node) Leader() cluster.NodeID { return n.core.Leader() }
 

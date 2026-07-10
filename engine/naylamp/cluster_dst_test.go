@@ -1176,3 +1176,110 @@ func sameVec32(a, b []float32) bool {
 	}
 	return true
 }
+
+// TestClusterDST_ReadIndexLinearizableLiteral makes the ReadIndex barrier
+// literal (DEFER-014). It is a REINFORCEMENT of what 3.5 already proves
+// observably (read-your-writes under chaos), not a new property: it exposes the
+// read index R through the read-only accessor Node.ReadIndex and asserts, with
+// explicit indices, that R >= W (W is the commit index of a write that landed
+// before the read) and that the served state has applied >= R, which is exactly
+// ReadServable's predicate, while a Search still returns the written id. So the
+// index relationship 3.5 only observed by its effect is now stated by number.
+//
+// It runs its own small cluster of real nodes over the deterministic pump, never
+// the sealed sweep. The accessor is read-only and touches neither the wire nor
+// consensus, so the search-without-index wire guard stays intact and untouched:
+// the codec side is exercised by TestClientWire_MalformedFailsLoudly (its "ok
+// both write and search" case) and the router side by
+// TestRouter_SearchGuardsAndRetries, so this piece references that coverage
+// rather than duplicating it.
+func TestClusterDST_ReadIndexLinearizableLiteral(t *testing.T) {
+	seeds := 8
+	if testing.Short() {
+		seeds = 3
+	}
+	for s := 1; s <= seeds; s++ {
+		checkReadIndexLiteral(t, uint64(s)) //nolint:gosec // s ranges over positive seed numbers
+	}
+}
+
+// checkReadIndexLiteral runs one seed of the literal read-index audit.
+func checkReadIndexLiteral(t *testing.T, seed uint64) {
+	t.Helper()
+
+	ids := []cluster.NodeID{1, 2, 3}
+	cfg := cluster.Config{Nodes: []cluster.NodeAddr{{ID: 1}, {ID: 2}, {ID: 3}}}
+	nodes := map[cluster.NodeID]*Node{}
+	for _, id := range ids {
+		n, err := OpenNode(t.TempDir(), id, cfg, 3, testRNG(seed*0x100000001B3+uint64(id)), NodeOptions{})
+		if err != nil {
+			t.Fatalf("seed %d: open %d: %v", seed, id, err)
+		}
+		nodes[id] = n
+	}
+	defer func() {
+		for _, n := range nodes {
+			_ = n.Close()
+		}
+	}()
+
+	lead := driveUntilLeader(t, nodes, ids, 400)
+	leader := nodes[lead]
+
+	// A write lands and commits at index W before the read is registered.
+	const wid uint64 = 7
+	vec := vecFor(wid)
+	w, out, err := leader.Upsert(wid, vec)
+	if err != nil {
+		t.Fatalf("seed %d: upsert on leader %d: %v", seed, lead, err)
+	}
+	pump(t, nodes, out, 4000)
+
+	// Register a linearizable read on the leader and drive its confirmation round
+	// so the read index is recorded in n.reads.
+	ctx, rout, err := leader.BeginRead()
+	if err != nil {
+		t.Fatalf("seed %d: begin read on leader %d: %v", seed, lead, err)
+	}
+	pump(t, nodes, rout, 4000)
+
+	// R is the read index the barrier captured. Read it WITHOUT consuming the ctx,
+	// so ReadServable below still resolves the read normally.
+	r, ok := leader.ReadIndex(ctx)
+	if !ok {
+		t.Fatalf("seed %d: read index not recorded for ctx %d", seed, ctx)
+	}
+	// Literal linearizability, half one: the read index is at least the commit
+	// index of the write that preceded the read.
+	if r < w {
+		t.Fatalf("seed %d: read index %d is below the prior write's commit index %d", seed, r, w)
+	}
+
+	// Literal linearizability, half two: the read becomes servable only once the
+	// applied state has reached R, which is exactly ReadServable's predicate
+	// (applied >= R). It should already hold on the leader, which applies as it
+	// commits, so ReadServable resolves on the first check; the bounded loop is a
+	// guard, not an expectation.
+	servable := false
+	for i := 0; i < 400; i++ {
+		if leader.ReadServable(ctx) {
+			servable = true
+			break
+		}
+		pump(t, nodes, tickAll(t, nodes, ids), 4000)
+	}
+	if !servable {
+		t.Fatalf("seed %d: read ctx %d never became servable (applied never reached R=%d)", seed, ctx, r)
+	}
+
+	// The observable consequence of the barrier: the served state reflects the
+	// write, so a Search returns the written id. This is read-your-writes, now
+	// with the index relationship R >= W made literal above.
+	got, err := leader.Search(vec, 1)
+	if err != nil {
+		t.Fatalf("seed %d: served search: %v", seed, err)
+	}
+	if len(got) != 1 || got[0].ID != wid {
+		t.Fatalf("seed %d: served read does not reflect the write: got %+v, want id %d", seed, got, wid)
+	}
+}
