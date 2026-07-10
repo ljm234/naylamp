@@ -914,12 +914,34 @@ func TestClusterDST_SilentTargetRecoversByProtocol(t *testing.T) {
 // as a violation. The accessor is read-only by construction: the audit only
 // reads committed entries and decodes them, it never proposes, applies or emits.
 func TestClusterDST_CommittedLogIsFaithful(t *testing.T) {
-	seeds := 30
+	// Seed budget follows TestClusterDST_Seeded's pattern but with its OWN env,
+	// NAYLAMP_FAITHFUL_SEEDS, so scaling this audit does not also scale the sealed
+	// sweep and vice versa: each is a multi-minute cost under race, and one knob
+	// governing both would couple them. The default stays modest, 40, and short
+	// drops to 6, so a local go test is quick; the DONE of >=500 seeds is met by
+	// NAYLAMP_FAITHFUL_SEEDS=500 in CI. NAYLAMP_FAITHFUL_SEED (singular) pins one
+	// seed for a replay.
+	seeds := 40
 	if testing.Short() {
 		seeds = 6
 	}
-	for s := 1; s <= seeds; s++ {
-		checkFaithfulSeed(t, uint64(s)) //nolint:gosec // s ranges over small positive seed numbers
+	if env := os.Getenv("NAYLAMP_FAITHFUL_SEEDS"); env != "" {
+		v, err := strconv.Atoi(env)
+		if err != nil || v < 1 {
+			t.Fatalf("NAYLAMP_FAITHFUL_SEEDS=%q invalid", env)
+		}
+		seeds = v
+	}
+	start, end := 1, seeds
+	if env := os.Getenv("NAYLAMP_FAITHFUL_SEED"); env != "" {
+		v, err := strconv.Atoi(env)
+		if err != nil || v < 1 {
+			t.Fatalf("NAYLAMP_FAITHFUL_SEED=%q invalid", env)
+		}
+		start, end = v, v
+	}
+	for s := start; s <= end; s++ {
+		checkFaithfulSeed(t, uint64(s)) //nolint:gosec // s ranges over positive seed numbers
 	}
 }
 
@@ -1059,6 +1081,14 @@ func checkFaithfulSeed(t *testing.T, seed uint64) {
 	// replays to the same live set, so the fidelity claim is about the replayed
 	// STATE, not raw log equality. Checking every replica against the oracle proves
 	// (2) no gaps and (4) the replicas agree, and it stays robust to that lag.
+	//
+	// It also folds task 4.2.6 (FaithfulMatchesObservable) in here rather than a
+	// separate test: on every converged replica the same replay must match what the
+	// node's index actually SERVES. The observable is served from the applied state
+	// and the replay comes from the committed log; on a converged replica applied
+	// equals commit, which driveUntilConverged guarantees above, so the two
+	// coincide. That closes the triangulation oracle == replay == observable.
+	enumQuery := []float32{1, 0, 0}
 	for sh := range shardIDs {
 		want := map[uint64][]float32{}
 		for id, v := range oracle {
@@ -1103,6 +1133,30 @@ func checkFaithfulSeed(t *testing.T, seed uint64) {
 				}
 				if !sameVec32(rv, v) {
 					t.Fatalf("seed %d: shard %d node %d id %d replay vec %v, oracle %v", seed, sh, id, wid, rv, v)
+				}
+			}
+
+			// FaithfulMatchesObservable (task 4.2.6): the replay must equal what this
+			// replica's index actually serves. Checked on EVERY replica, not just one:
+			// a Search on this tiny index is cheap and it proves each replica's served
+			// state agrees with its own committed log, from the same applied-equals-
+			// commit point, so a lagging follower is compared against its own served
+			// state and stays consistent. An enumerate with k above the live size
+			// returns exactly the served set.
+			got, gerr := nodes[id].Search(enumQuery, clusterIDRange)
+			if gerr != nil {
+				t.Fatalf("seed %d: shard %d node %d observable enumerate: %v", seed, sh, id, gerr)
+			}
+			if len(got) != len(replay) {
+				t.Fatalf("seed %d: shard %d node %d observable serves %d ids, log replays %d", seed, sh, id, len(got), len(replay))
+			}
+			for rid := range replay {
+				near, serr := nodes[id].Search(vecFor(rid), 1)
+				if serr != nil {
+					t.Fatalf("seed %d: shard %d node %d observable search id %d: %v", seed, sh, id, rid, serr)
+				}
+				if len(near) != 1 || near[0].ID != rid {
+					t.Fatalf("seed %d: shard %d node %d observable nearest to id %d = %+v, want that id", seed, sh, id, rid, near)
 				}
 			}
 		}
