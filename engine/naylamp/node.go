@@ -422,6 +422,40 @@ func (n *Node) StateHash() [32]byte {
 	return sha256.Sum256(storeImage(n.index.Export()))
 }
 
+// CommittedCommand is one decoded committed command, exposed read-only for the
+// log-fidelity audit (DEFER-013). Op is the raw command opcode, ID the record
+// id, and Vec the vector of an upsert (nil on a delete).
+type CommittedCommand struct {
+	Op  byte
+	ID  uint64
+	Vec []float32
+}
+
+// CommittedCommands decodes this replica's committed log into the client
+// commands it carries, in index order, skipping the consensus no-ops exactly as
+// apply does. It is a read-only audit accessor (DEFER-013): it reads the core's
+// committed entries through Raft.CommittedEntries and decodes each with the same
+// decoder apply uses, without proposing, applying, emitting a frame or mutating
+// any state, and it is wired into no consensus or client path. Duplicate entries
+// for one id, which a re-issue or a retransmission produces legitimately, are
+// returned as they appear: the caller replays them in order and idempotency
+// absorbs the repeats, so a duplicate is expected, never a fault.
+func (n *Node) CommittedCommands() ([]CommittedCommand, error) {
+	entries := n.core.CommittedEntries()
+	out := make([]CommittedCommand, 0, len(entries))
+	for _, e := range entries {
+		if len(e.Data) == 0 {
+			continue // a consensus no-op carries no command, exactly as apply skips it
+		}
+		cmd, err := decodeCommand(e.Data)
+		if err != nil {
+			return nil, fmt.Errorf("naylamp: audit decode of committed entry %d: %w", e.Index, err)
+		}
+		out = append(out, CommittedCommand(cmd))
+	}
+	return out, nil
+}
+
 // Close releases the durable storage.
 func (n *Node) Close() error { return n.storage.Close() }
 

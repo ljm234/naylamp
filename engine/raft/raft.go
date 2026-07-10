@@ -261,6 +261,24 @@ func (r *Raft) Leader() cluster.NodeID { return r.leader }
 // LastIndex exposes the log tail for tests and the harness oracle.
 func (r *Raft) LastIndex() uint64 { return r.log.LastIndex() }
 
+// CommittedEntries returns a copy of the committed log entries this node still
+// holds, those at or below the commit index and above the compaction base, in
+// index order. It is a read-only audit accessor (DEFER-013): it only reads
+// r.log and r.hs.Commit, never proposes, applies, emits a message or mutates
+// any state, and it appears on no consensus or client path. The returned slice
+// is a fresh copy (Log.Slice already copies the entry array), so a caller cannot
+// use it to reach the log's live backing array. Entries already folded into a
+// snapshot sit below the base and are not returned; an auditor that needs the
+// whole committed history runs with compaction disabled.
+func (r *Raft) CommittedEntries() []Entry {
+	all := r.log.Slice(1)
+	n := 0
+	for n < len(all) && all[n].Index <= r.hs.Commit {
+		n++
+	}
+	return all[:n]
+}
+
 // Tick advances logical time by one unit. Followers and candidates count
 // toward an election timeout; leaders count toward the heartbeat cadence,
 // which doubles as the retransmission timer for in-flight snapshot chunks.

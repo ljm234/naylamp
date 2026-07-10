@@ -886,3 +886,239 @@ func TestClusterDST_SilentTargetRecoversByProtocol(t *testing.T) {
 		}
 	}
 }
+
+// TestClusterDST_CommittedLogIsFaithful audits the committed log of every shard
+// through the read-only accessor of 4.2 (Node.CommittedCommands, backed by
+// Raft.CommittedEntries) and asserts it is a FAITHFUL and COMPLETE record of the
+// converged state (DEFER-013). It runs a small two-shard cluster of real nodes
+// under crash chaos to convergence, then for each shard reads a replica's
+// committed commands, replays them in index order, and asserts: no phantoms
+// (every committed id is one the schedule wrote), correct sharding (every id
+// maps to the shard whose log holds it), and a faithful replay (every replica's
+// committed log replays to exactly the oracle's live set for that shard, so the
+// replicas agree on the resulting state).
+//
+// It is a dedicated test with its own small harness: it never touches
+// runClusterSeed or the sealed sweep, so the 500-seed sweep's numbers stay
+// exactly as they were. The harness is the deterministic pump of the router
+// integration tests over raw nodes, not SimNet, so the audit reads
+// Node.CommittedCommands directly without reaching through a Host and without a
+// clock or goroutine of its own.
+//
+// The claim is deliberately log-fidelity, NOT physical exactly-once. A client
+// reqID never travels in a log entry (command.go), and a re-issue or a
+// retransmission commits duplicate idempotent entries the node does not
+// deduplicate. The schedule repeats ids on purpose, so duplicate committed
+// upserts of one id are the common case; the replay overwrites and the final
+// state is correct, and the checker counts those duplicates as expected, never
+// as a violation. The accessor is read-only by construction: the audit only
+// reads committed entries and decodes them, it never proposes, applies or emits.
+func TestClusterDST_CommittedLogIsFaithful(t *testing.T) {
+	seeds := 30
+	if testing.Short() {
+		seeds = 6
+	}
+	for s := 1; s <= seeds; s++ {
+		checkFaithfulSeed(t, uint64(s)) //nolint:gosec // s ranges over small positive seed numbers
+	}
+}
+
+// checkFaithfulSeed runs one seed of the log-fidelity audit end to end.
+func checkFaithfulSeed(t *testing.T, seed uint64) {
+	t.Helper()
+
+	cfg0 := cluster.Config{Nodes: []cluster.NodeAddr{{ID: 1}, {ID: 2}, {ID: 3}}}
+	cfg1 := cluster.Config{Nodes: []cluster.NodeAddr{{ID: 4}, {ID: 5}, {ID: 6}}}
+	sm := cluster.ShardMap{Groups: []cluster.Config{cfg0, cfg1}}
+	shardIDs := [][]cluster.NodeID{{1, 2, 3}, {4, 5, 6}}
+	allIDs := []cluster.NodeID{1, 2, 3, 4, 5, 6}
+	groupCfg := map[cluster.NodeID]cluster.Config{1: cfg0, 2: cfg0, 3: cfg0, 4: cfg1, 5: cfg1, 6: cfg1}
+
+	dirs := map[cluster.NodeID]string{}
+	for _, id := range allIDs {
+		dirs[id] = t.TempDir() // saved per id so a restart recovers from the same store
+	}
+	restarts := map[cluster.NodeID]uint64{}
+	nodes := map[cluster.NodeID]*Node{}
+
+	nodeSeed := func(id cluster.NodeID, gen uint64) uint64 {
+		return seed*0x9E3779B97F4A7C15 + uint64(id)*0x100000001B3 + gen
+	}
+	open := func(id cluster.NodeID) {
+		n, err := OpenNode(dirs[id], id, groupCfg[id], 3, testRNG(nodeSeed(id, restarts[id])), NodeOptions{})
+		if err != nil {
+			t.Fatalf("seed %d: open %d: %v", seed, id, err)
+		}
+		nodes[id] = n
+	}
+	for _, id := range allIDs {
+		open(id)
+	}
+	defer func() {
+		for _, n := range nodes {
+			_ = n.Close()
+		}
+	}()
+
+	router, err := NewRouter(routerID, sm)
+	if err != nil {
+		t.Fatalf("seed %d: new router: %v", seed, err)
+	}
+
+	// commit routes one write to its shard's leader and drives it to a definitive
+	// OK ack, re-electing and re-issuing past a transient leaderless window. The
+	// pump moves messages but never ticks, so leadership cannot change mid-write;
+	// driveUntilLeader before each attempt is what recovers after a crash.
+	commit := func(sh int, mk func() (uint64, [][]byte, error)) {
+		for attempt := 0; attempt < 6; attempt++ {
+			_ = driveUntilLeader(t, nodes, shardIDs[sh], 400)
+			opID, frames, oerr := mk()
+			if oerr != nil {
+				t.Fatalf("seed %d: router op: %v", seed, oerr)
+			}
+			pumpWithRouter(t, nodes, router, frames, 8000)
+			if res, ok := router.Result(opID); ok && res.Status == StatusOK && !res.Exhausted && res.Index != 0 {
+				return
+			}
+		}
+		t.Fatalf("seed %d: a write to shard %d never committed", seed, sh)
+	}
+
+	shardOf := func(v cluster.NodeID) int {
+		for sh := range shardIDs {
+			for _, id := range shardIDs[sh] {
+				if id == v {
+					return sh
+				}
+			}
+		}
+		return 0
+	}
+
+	oracle := map[uint64][]float32{}
+	seen := map[uint64]bool{}
+	chaos := testRNG(seed ^ 0xF117DE10F1DE1174)
+	downNode := cluster.None
+
+	const rounds = 24
+	for step := 0; step < rounds; step++ {
+		// One client op. Ids repeat across rounds by design, so the same id commits
+		// several upsert entries: exactly the idempotent duplicate the checker must
+		// tolerate. Writes go only to a shard with every node present: a raw router
+		// is never ticked, so a request aimed at a crashed node is dropped with no
+		// retransmit and the op would never resolve. Skipping an impaired shard,
+		// like the sweep does, keeps the oracle an exact model of what committed.
+		id := uint64(1 + chaos.IntN(clusterIDRange)) //nolint:gosec // 1+IntN(range) is a small positive int
+		sh := sm.ShardFor(id)
+		if downNode == cluster.None || shardOf(downNode) != sh {
+			seen[id] = true
+			if chaos.IntN(10) < 7 {
+				vec := vecFor(id)
+				commit(sh, func() (uint64, [][]byte, error) { return router.Upsert(id, vec) })
+				oracle[id] = vec
+			} else {
+				commit(sh, func() (uint64, [][]byte, error) { return router.Delete(id) })
+				delete(oracle, id)
+			}
+		}
+
+		// Single-slot crash chaos: at most one node down at a time, so every shard
+		// keeps quorum and the committed log keeps growing under fault.
+		if chaos.IntN(10) < 3 {
+			if downNode == cluster.None {
+				v := allIDs[chaos.IntN(len(allIDs))]
+				_ = nodes[v].Close()
+				delete(nodes, v)
+				downNode = v
+			} else {
+				restarts[downNode]++
+				open(downNode) // recovery is real: OpenNode replays the committed log from disk
+				downNode = cluster.None
+			}
+		}
+	}
+
+	// Quiesce: restart any crashed node and drive each shard to convergence, so
+	// every present replica has applied the same committed prefix.
+	if downNode != cluster.None {
+		restarts[downNode]++
+		open(downNode)
+	}
+	for sh := range shardIDs {
+		_ = driveUntilLeader(t, nodes, shardIDs[sh], 400)
+		if !driveUntilConverged(t, nodes, shardIDs[sh], 3000) {
+			t.Fatalf("seed %d: shard %d did not converge", seed, sh)
+		}
+	}
+
+	// Audit each shard's committed log through the read-only accessor, per replica.
+	// Converged replicas can hold committed logs that differ by a trailing
+	// state-neutral entry: a follower's commit index lags the leader by a re-upsert
+	// of an already-present value or a delete of an absent id, neither of which
+	// moves StateHash, so convergence does not wait on it. Every replica still
+	// replays to the same live set, so the fidelity claim is about the replayed
+	// STATE, not raw log equality. Checking every replica against the oracle proves
+	// (2) no gaps and (4) the replicas agree, and it stays robust to that lag.
+	for sh := range shardIDs {
+		want := map[uint64][]float32{}
+		for id, v := range oracle {
+			if sm.ShardFor(id) == sh {
+				want[id] = v
+			}
+		}
+		for _, id := range shardIDs[sh] {
+			cmds, cerr := nodes[id].CommittedCommands()
+			if cerr != nil {
+				t.Fatalf("seed %d: shard %d node %d committed commands: %v", seed, sh, id, cerr)
+			}
+			replay := map[uint64][]float32{}
+			for _, c := range cmds {
+				// (3) Correct sharding: the log of shard sh holds only ids that map there.
+				if sm.ShardFor(c.ID) != sh {
+					t.Fatalf("seed %d: shard %d node %d committed id %d that maps to shard %d", seed, sh, id, c.ID, sm.ShardFor(c.ID))
+				}
+				// (1) No phantoms: every committed id is one the schedule wrote.
+				if !seen[c.ID] {
+					t.Fatalf("seed %d: shard %d node %d committed a phantom id %d the schedule never wrote", seed, sh, id, c.ID)
+				}
+				switch c.Op {
+				case opUpsert:
+					replay[c.ID] = c.Vec
+				case opDelete:
+					delete(replay, c.ID)
+				default:
+					t.Fatalf("seed %d: shard %d node %d committed an unknown op %d", seed, sh, id, c.Op)
+				}
+			}
+			// (2) and (4): the replay reproduces exactly the oracle's live set for
+			// this shard, on every replica. Duplicate upserts collapsed to one live
+			// value along the way, which is the idempotency the checker relies on.
+			if len(replay) != len(want) {
+				t.Fatalf("seed %d: shard %d node %d replay holds %d live ids, oracle maps %d there", seed, sh, id, len(replay), len(want))
+			}
+			for wid, v := range want {
+				rv, ok := replay[wid]
+				if !ok {
+					t.Fatalf("seed %d: shard %d node %d replay is missing acked id %d", seed, sh, id, wid)
+				}
+				if !sameVec32(rv, v) {
+					t.Fatalf("seed %d: shard %d node %d id %d replay vec %v, oracle %v", seed, sh, id, wid, rv, v)
+				}
+			}
+		}
+	}
+}
+
+// sameVec32 reports whether two float32 vectors are bit-for-bit equal, which the
+// exact round trip through encodeUpsert and decodeCommand preserves.
+func sameVec32(a, b []float32) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
