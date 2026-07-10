@@ -77,17 +77,22 @@ func runClient(args []string) {
 	fs := flag.NewFlagSet("client", flag.ExitOnError)
 	var listen string
 	var groups groupFlag
+	var tlsCert, tlsKey, tlsCA string
 	var dim int
 	var deadline, poll time.Duration
 	fs.StringVar(&listen, "listen", "", "listen address host:port (required)")
 	fs.Var(&groups, "group", "one shard as id=addr,id=addr (repeatable)")
+	fs.StringVar(&tlsCert, "tls-cert", "", "this client's certificate PEM file (required)")
+	fs.StringVar(&tlsKey, "tls-key", "", "this client's private key PEM file (required)")
+	fs.StringVar(&tlsCA, "tls-ca", "", "CA certificate PEM file to trust (required)")
 	fs.IntVar(&dim, "dim", 3, "vector dimension")
 	fs.DurationVar(&deadline, "deadline", 3*time.Second, "per-view result deadline")
 	fs.DurationVar(&poll, "poll", 20*time.Millisecond, "result poll interval")
 	_ = fs.Parse(args)
 
-	if listen == "" || len(groups) == 0 {
-		fmt.Fprintln(os.Stderr, "client: -listen and at least one -group are required")
+	if listen == "" || len(groups) == 0 || tlsCert == "" || tlsKey == "" || tlsCA == "" {
+		fmt.Fprintln(os.Stderr, "client: -listen, at least one -group, -tls-cert, -tls-key, and -tls-ca are required")
+		fmt.Fprintln(os.Stderr, "generate demo material first with: naylamp gencerts -dir DIR -ids ...")
 		fs.Usage()
 		os.Exit(2)
 	}
@@ -104,11 +109,16 @@ func runClient(args []string) {
 		parsed = append(parsed, nodes)
 	}
 
+	mat, err := cluster.LoadTLSMaterial(tlsCert, tlsKey, tlsCA)
+	if err != nil {
+		log.Fatalf("load tls material: %v", err)
+	}
+
 	// (i) The client transport is created ONCE with the trampoline as its
 	// handler, so the listener and the outbound links the nodes cache toward it
 	// outlive every view rotation.
 	swap := &handlerSwap{}
-	tr, err := cluster.NewTCPTransport(clientID, listen, swap.deliver)
+	tr, err := cluster.NewTCPTransport(clientID, listen, swap.deliver, mat)
 	if err != nil {
 		log.Fatalf("tcp listen %s: %v", listen, err)
 	}

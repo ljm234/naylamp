@@ -6,8 +6,29 @@ import (
 	"time"
 
 	"naylamp/engine/cluster"
+	"naylamp/engine/cluster/tlstest"
 	"naylamp/engine/raft"
 )
+
+// clusterTLS mints one certificate authority for a real-TCP test and returns a
+// helper that issues each identity's transport material from it. Every node and
+// the router in the test therefore trust one authority and present a
+// certificate whose common name is their own node id, which is exactly what the
+// transport verifies on both sides of every handshake.
+func clusterTLS(t *testing.T) func(id cluster.NodeID) cluster.TLSMaterial {
+	t.Helper()
+	ca, err := tlstest.NewCA()
+	if err != nil {
+		t.Fatalf("tls ca: %v", err)
+	}
+	return func(id cluster.NodeID) cluster.TLSMaterial {
+		cert, cerr := ca.NodeCert(uint64(id))
+		if cerr != nil {
+			t.Fatalf("tls material %d: %v", id, cerr)
+		}
+		return cluster.TLSMaterial{Cert: cert, CA: ca.Pool()}
+	}
+}
 
 // TestRouterHost_ClusterOverRealTCP is the first evidence in the repo over real
 // sockets: three replicated nodes and a routing client, each on a loopback TCP
@@ -18,6 +39,9 @@ import (
 func TestRouterHost_ClusterOverRealTCP(t *testing.T) {
 	ids := []cluster.NodeID{1, 2, 3}
 	cfg := cluster.Config{Nodes: []cluster.NodeAddr{{ID: 1}, {ID: 2}, {ID: 3}}}
+	// One shared CA for the whole cluster: the three nodes and the router each
+	// get material for their own id, so mutual TLS admits every peer.
+	tlsMat := clusterTLS(t)
 
 	// (a) Three nodes, each a Host over a real loopback TCP transport captured
 	// in a map so the test can wire peers by address afterwards.
@@ -30,7 +54,7 @@ func TestRouterHost_ClusterOverRealTCP(t *testing.T) {
 		}
 		hid := id
 		host, err := NewHost(node, func(h cluster.Handler) cluster.Transport {
-			tr, terr := cluster.NewTCPTransport(hid, "127.0.0.1:0", h)
+			tr, terr := cluster.NewTCPTransport(hid, "127.0.0.1:0", h, tlsMat(hid))
 			if terr != nil {
 				t.Fatalf("tcp %d: %v", hid, terr)
 			}
@@ -151,7 +175,7 @@ func TestRouterHost_ClusterOverRealTCP(t *testing.T) {
 	}
 	var routerTransport *cluster.TCPTransport
 	rh, err = NewRouterHost(router, func(h cluster.Handler) cluster.Transport {
-		tr, terr := cluster.NewTCPTransport(routerID, "127.0.0.1:0", h)
+		tr, terr := cluster.NewTCPTransport(routerID, "127.0.0.1:0", h, tlsMat(routerID))
 		if terr != nil {
 			t.Fatalf("tcp router: %v", terr)
 		}

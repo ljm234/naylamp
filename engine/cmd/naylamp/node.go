@@ -22,6 +22,7 @@ func runNode(args []string) {
 	fs := flag.NewFlagSet("node", flag.ExitOnError)
 	var id uint
 	var listen, peers, clientSpec, dir string
+	var tlsCert, tlsKey, tlsCA string
 	var dim int
 	var tick time.Duration
 	fs.UintVar(&id, "id", 0, "this node's id (required)")
@@ -29,12 +30,16 @@ func runNode(args []string) {
 	fs.StringVar(&peers, "peers", "", "other group members as id=addr,id=addr")
 	fs.StringVar(&clientSpec, "client", "", "client as id=addr (empty for none)")
 	fs.StringVar(&dir, "dir", "", "data dir (default /tmp/naylamp/node<id>)")
+	fs.StringVar(&tlsCert, "tls-cert", "", "this node's certificate PEM file (required)")
+	fs.StringVar(&tlsKey, "tls-key", "", "this node's private key PEM file (required)")
+	fs.StringVar(&tlsCA, "tls-ca", "", "CA certificate PEM file to trust (required)")
 	fs.IntVar(&dim, "dim", 3, "vector dimension")
 	fs.DurationVar(&tick, "tick", 10*time.Millisecond, "logical tick period")
 	_ = fs.Parse(args)
 
-	if id == 0 || listen == "" {
-		fmt.Fprintln(os.Stderr, "node: -id and -listen are required")
+	if id == 0 || listen == "" || tlsCert == "" || tlsKey == "" || tlsCA == "" {
+		fmt.Fprintln(os.Stderr, "node: -id, -listen, -tls-cert, -tls-key, and -tls-ca are required")
+		fmt.Fprintln(os.Stderr, "generate demo material first with: naylamp gencerts -dir DIR -ids ...")
 		fs.Usage()
 		os.Exit(2)
 	}
@@ -78,9 +83,14 @@ func runNode(args []string) {
 		logger.Fatalf("open node: %v", err)
 	}
 
+	mat, err := cluster.LoadTLSMaterial(tlsCert, tlsKey, tlsCA)
+	if err != nil {
+		logger.Fatalf("load tls material: %v", err)
+	}
+
 	var transport *cluster.TCPTransport
 	host, err := naylamp.NewHost(node, func(h cluster.Handler) cluster.Transport {
-		tr, terr := cluster.NewTCPTransport(nid, listen, h)
+		tr, terr := cluster.NewTCPTransport(nid, listen, h, mat)
 		if terr != nil {
 			logger.Fatalf("tcp listen %s: %v", listen, terr)
 		}

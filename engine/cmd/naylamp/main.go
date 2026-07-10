@@ -23,6 +23,8 @@ func main() {
 		runNode(os.Args[2:])
 	case "client":
 		runClient(os.Args[2:])
+	case "gencerts":
+		runGencerts(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -32,9 +34,11 @@ func main() {
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: naylamp <command> [flags]")
 	fmt.Fprintln(os.Stderr, "commands:")
-	fmt.Fprintln(os.Stderr, "  node    run one replica of a shard group")
-	fmt.Fprintln(os.Stderr, "  client  run the routing client REPL")
-	fmt.Fprintln(os.Stderr, "run 'naylamp node -h' or 'naylamp client -h' for flags")
+	fmt.Fprintln(os.Stderr, "  gencerts  write a demo CA and per-node certificates to a directory")
+	fmt.Fprintln(os.Stderr, "  node      run one replica of a shard group")
+	fmt.Fprintln(os.Stderr, "  client    run the routing client REPL")
+	fmt.Fprintln(os.Stderr, "run 'naylamp <command> -h' for a command's flags")
+	fmt.Fprintln(os.Stderr, "every node and client dials over mutual TLS, so run gencerts first")
 }
 
 // nodeAddr binds a node id to the address it is dialed at, as parsed from the

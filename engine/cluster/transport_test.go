@@ -279,14 +279,18 @@ func TestTransport_Contract(t *testing.T) {
 	})
 
 	t.Run("TCP", func(t *testing.T) {
+		// One CA issues both nodes' certificates; identity now comes from the
+		// certificate common name, not a self-declared hello, so the contract's
+		// attribution assertions exercise the mTLS identity path.
+		ca := mustCA(t)
 		ch1 := make(chan recvMsg, 32)
 		ch2 := make(chan recvMsg, 32)
-		t1, err := NewTCPTransport(1, "127.0.0.1:0", func(f NodeID, d []byte) { ch1 <- recvMsg{f, append([]byte(nil), d...)} })
+		t1, err := NewTCPTransport(1, "127.0.0.1:0", func(f NodeID, d []byte) { ch1 <- recvMsg{f, append([]byte(nil), d...)} }, mustMaterial(t, ca, 1))
 		if err != nil {
 			t.Fatalf("tcp 1: %v", err)
 		}
 		defer func() { _ = t1.Close() }()
-		t2, err := NewTCPTransport(2, "127.0.0.1:0", func(f NodeID, d []byte) { ch2 <- recvMsg{f, append([]byte(nil), d...)} })
+		t2, err := NewTCPTransport(2, "127.0.0.1:0", func(f NodeID, d []byte) { ch2 <- recvMsg{f, append([]byte(nil), d...)} }, mustMaterial(t, ca, 2))
 		if err != nil {
 			t.Fatalf("tcp 2: %v", err)
 		}
