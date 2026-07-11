@@ -29,3 +29,7 @@ engine/hnsw/scale_sweep_result.txt
 
 # Cluster benchmark artifact
 engine/naylamp/cluster_bench.txt
+
+# Phase 4 gate artifacts (the scripts and README are committed; run output is not)
+gate/out/
+NAYLAMP_PHASE4_GATE.txt
