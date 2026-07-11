@@ -24,6 +24,13 @@ jobs:
         run: go vet ./...
       - name: Test
         run: go test -short -race ./...
+      # govulncheck fails the build on any known vulnerability in the standard
+      # library or the toolchain the code compiles against. It is pinned to
+      # @latest on purpose: the vulnerability database is a moving target, so the
+      # scanner should always be the newest one. The module has no external
+      # dependencies, so the standard library and toolchain are the whole surface.
+      - name: Vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
       - name: Lint
         uses: golangci/golangci-lint-action@v9
         with:
