@@ -234,3 +234,81 @@ func TestTCP_TrafficIsEncrypted(t *testing.T) {
 		t.Fatalf("the plaintext payload appeared on the wire; traffic is not encrypted")
 	}
 }
+
+// TestTCP_SimultaneousDialConverges reproduces the mutual-dial deadlock and
+// proves it is fixed. Two transports dial each other at the same instant: were
+// the dial held under the transport lock, each side would hold its own lock
+// waiting for the peer's TLS ServerHello while the peer's acceptLoop is blocked
+// on that same lock, so neither handshake would begin and both dials would hang
+// until the socket timeout fired. Dialing outside the lock lets both handshakes
+// proceed and both frames arrive almost immediately.
+//
+// The socket timeout is deliberately left at its generous default: that default
+// is what makes the bound discriminating. With the fix the frames converge in
+// milliseconds; with the deadlock both dials block for the full socket timeout,
+// far past the bound below, so this test fails fast rather than hanging.
+func TestTCP_SimultaneousDialConverges(t *testing.T) {
+	ca := mustCA(t)
+	got1 := make(chan NodeID, 1)
+	got2 := make(chan NodeID, 1)
+	t1, err := NewTCPTransport(1, "127.0.0.1:0", func(from NodeID, _ []byte) { got1 <- from }, mustMaterial(t, ca, 1))
+	if err != nil {
+		t.Fatalf("transport 1: %v", err)
+	}
+	defer func() { _ = t1.Close() }()
+	t2, err := NewTCPTransport(2, "127.0.0.1:0", func(from NodeID, _ []byte) { got2 <- from }, mustMaterial(t, ca, 2))
+	if err != nil {
+		t.Fatalf("transport 2: %v", err)
+	}
+	defer func() { _ = t2.Close() }()
+	t1.AddPeer(2, t2.Addr())
+	t2.AddPeer(1, t1.Addr())
+
+	// Release both Sends at the same instant so the two dials race head-on, the
+	// condition that deadlocks a lock-held dial. A send error is reported so a
+	// non-deadlock failure (a refused dial) is diagnosed rather than masked.
+	var ready sync.WaitGroup
+	ready.Add(2)
+	start := make(chan struct{})
+	errc := make(chan error, 2)
+	go func() {
+		ready.Done()
+		<-start
+		if e := t1.Send(2, []byte("from 1")); e != nil {
+			errc <- e
+		}
+	}()
+	go func() {
+		ready.Done()
+		<-start
+		if e := t2.Send(1, []byte("from 2")); e != nil {
+			errc <- e
+		}
+	}()
+	ready.Wait()
+	close(start)
+
+	// Both frames must arrive well within the bound. With the deadlock each dial
+	// would block for the full default socket timeout, so this 5s bound fails
+	// fast. On success the frames arrive in milliseconds.
+	deadline := time.After(5 * time.Second)
+	for i := 0; i < 2; i++ {
+		select {
+		case from := <-got1:
+			if from != 2 {
+				t.Fatalf("transport 1 received a frame attributed to node %d, want 2", from)
+			}
+		case from := <-got2:
+			if from != 1 {
+				t.Fatalf("transport 2 received a frame attributed to node %d, want 1", from)
+			}
+		case <-deadline:
+			select {
+			case e := <-errc:
+				t.Fatalf("frames did not converge within 5s (a send failed: %v); the mutual dial may have deadlocked", e)
+			default:
+				t.Fatalf("frames did not converge within 5s: the mutual dial deadlocked")
+			}
+		}
+	}
+}

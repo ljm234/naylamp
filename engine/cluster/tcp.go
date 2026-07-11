@@ -158,28 +158,61 @@ func (t *TCPTransport) Send(to NodeID, data []byte) error {
 }
 
 // link returns the live outbound connection to a peer, dialing over TLS if none
-// exists. The transport lock is held across the dial and handshake: at cluster
-// sizes this serialization is a simplicity win over per-peer dial races and
-// guarantees exactly one connection per peer. The client config verifies the
-// server chains to our CA AND that its certificate identity is the exact peer we
-// dialed, so a valid but different node cannot impersonate to.
+// exists. The dial happens OUTSIDE the transport lock, and that is essential.
+// Holding the lock across the dial deadlocks two nodes that dial each other at
+// the same instant: each side holds its own lock waiting for the peer's TLS
+// ServerHello, but that peer's acceptLoop needs the same lock to register the
+// inbound connection and start the read loop that would answer the handshake, so
+// neither handshake ever begins and both dials hang until the socket timeout
+// fires. The lock is therefore taken only to read the peer address and to
+// publish the result, and released across the dial itself.
+//
+// Dialing without the lock lets two concurrent Sends to the same cold peer both
+// dial, so the race is resolved when the lock is retaken: the caller that finds a
+// link already published, or the transport already closed, closes its own
+// connection and yields; otherwise it publishes its own. Exactly one of
+// publishing or closing happens to each dialed connection, so t.links still holds
+// exactly one connection per peer and no connection leaks. clientConfig is built
+// without the lock because t.cert and t.ca are immutable after construction; it
+// verifies the server chains to our CA AND that its certificate identity is the
+// exact peer we dialed, so a valid but different node cannot impersonate to.
 func (t *TCPTransport) link(to NodeID) (*peerLink, error) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if t.closed {
+		t.mu.Unlock()
 		return nil, errTCPClosed
 	}
 	if l, ok := t.links[to]; ok {
+		t.mu.Unlock()
 		return l, nil
 	}
 	addr, ok := t.peers[to]
 	if !ok {
+		t.mu.Unlock()
 		return nil, fmt.Errorf("cluster: tcp has no address for node %d", to)
 	}
-	dialer := &net.Dialer{Timeout: t.timeout}
+	timeout := t.timeout
+	t.mu.Unlock()
+
+	dialer := &net.Dialer{Timeout: timeout}
 	conn, err := tls.DialWithDialer(dialer, "tcp", addr, t.clientConfig(to))
 	if err != nil {
 		return nil, fmt.Errorf("cluster: tcp dial node %d: %w", to, err)
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closed {
+		// A Close ran during the dial. It did not sweep this connection because
+		// it was not yet in t.links, so close it here rather than leak it.
+		_ = conn.Close()
+		return nil, errTCPClosed
+	}
+	if l, ok := t.links[to]; ok {
+		// A concurrent Send to the same peer won the dial race; drop ours and use
+		// the winner's, so there is still exactly one connection per peer.
+		_ = conn.Close()
+		return l, nil
 	}
 	l := &peerLink{conn: conn}
 	t.links[to] = l
