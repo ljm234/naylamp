@@ -16,8 +16,12 @@ jobs:
       - uses: actions/checkout@v6
       - name: Set up Go
         uses: actions/setup-go@v6
+        # go-version-file reads the module's minimum, including the toolchain
+        # line, so the runner always uses at least the toolchain go.mod declares,
+        # with one place to update per security patch. The runner toolcache can
+        # lag a security release, which is exactly what the gate's first run caught.
         with:
-          go-version: "1.26"
+          go-version-file: engine/go.mod
       - name: Build
         run: go build ./...
       - name: Vet
