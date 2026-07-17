@@ -2,7 +2,6 @@ package naylamp
 
 import (
 	"errors"
-	"fmt"
 	"sync"
 
 	"naylamp/engine/cluster"
@@ -66,32 +65,33 @@ func NewRouterHost(router *Router, bind func(cluster.Handler) cluster.Transport)
 // the frame untouched.
 func (rh *RouterHost) deliver(_ cluster.NodeID, data []byte) {
 	rh.mu.Lock()
-	defer rh.mu.Unlock()
 	if rh.err != nil {
+		rh.mu.Unlock()
 		return
 	}
 	out, err := rh.router.HandleMessage(data)
 	if err != nil {
 		rh.err = err
+		rh.mu.Unlock()
 		return
 	}
-	rh.sendAll(out)
+	routed := rh.routeLocked(out)
+	rh.mu.Unlock()
+	sendRouted(rh.tr, routed)
 }
 
-// sendAll routes and sends every frame the Router produced, taking the
-// destination from the frame's own envelope. A Send error is ignored: losing a
-// frame is normal and the caller's deadline is the recovery. A frame the Router
-// produced that does not decode is our own bug, so it poisons the host. The
-// caller must hold the mutex.
-func (rh *RouterHost) sendAll(frames [][]byte) {
-	for _, frame := range frames {
-		env, err := cluster.DecodeMessage(frame)
-		if err != nil {
-			rh.err = fmt.Errorf("naylamp: router host produced an undecodable frame: %w", err)
-			return
-		}
-		_ = rh.tr.Send(env.To, frame)
+// routeLocked routes the frames the Router produced, poisoning the host on an
+// undecodable one, which is our own bug. The caller must hold the mutex and
+// send the returned frames with sendRouted AFTER releasing it: exactly as on
+// Host, network sends never run inside the critical section, or one dead peer
+// wedges the whole gateway behind its socket. A Send error is ignored: losing
+// a frame is normal and the caller's deadline is the recovery.
+func (rh *RouterHost) routeLocked(frames [][]byte) []outFrame {
+	routed, err := routeFrames(frames, "router host")
+	if err != nil {
+		rh.err = err
 	}
+	return routed
 }
 
 // Tick advances the Router's logical clock to now and dispatches whatever
@@ -101,17 +101,21 @@ func (rh *RouterHost) sendAll(frames [][]byte) {
 // never ticked never times an attempt out.
 func (rh *RouterHost) Tick(now cluster.Tick) error {
 	rh.mu.Lock()
-	defer rh.mu.Unlock()
 	if rh.err != nil {
+		rh.mu.Unlock()
 		return rh.err
 	}
 	out, err := rh.router.Tick(now)
 	if err != nil {
 		rh.err = err
+		rh.mu.Unlock()
 		return err
 	}
-	rh.sendAll(out)
-	return rh.err
+	routed := rh.routeLocked(out)
+	err = rh.err // the poison routing may have set, read before the unlock
+	rh.mu.Unlock()
+	sendRouted(rh.tr, routed)
+	return err
 }
 
 // Upsert routes a write through the router and dispatches its first attempt,
@@ -119,21 +123,24 @@ func (rh *RouterHost) Tick(now cluster.Tick) error {
 // unchanged; any other router error poisons the host.
 func (rh *RouterHost) Upsert(id uint64, vec []float32) (uint64, error) {
 	rh.mu.Lock()
-	defer rh.mu.Unlock()
 	if rh.err != nil {
+		rh.mu.Unlock()
 		return 0, rh.err
 	}
 	opID, out, err := rh.router.Upsert(id, vec)
 	if err != nil {
-		if errors.Is(err, ErrInvalidArgument) {
-			return 0, err
+		if !errors.Is(err, ErrInvalidArgument) {
+			rh.err = err
 		}
-		rh.err = err
+		rh.mu.Unlock()
 		return 0, err
 	}
-	rh.sendAll(out)
-	if rh.err != nil {
-		return 0, rh.err
+	routed := rh.routeLocked(out)
+	perr := rh.err
+	rh.mu.Unlock()
+	sendRouted(rh.tr, routed)
+	if perr != nil {
+		return 0, perr
 	}
 	return opID, nil
 }
@@ -141,21 +148,24 @@ func (rh *RouterHost) Upsert(id uint64, vec []float32) (uint64, error) {
 // Delete routes a removal through the router and dispatches its first attempt.
 func (rh *RouterHost) Delete(id uint64) (uint64, error) {
 	rh.mu.Lock()
-	defer rh.mu.Unlock()
 	if rh.err != nil {
+		rh.mu.Unlock()
 		return 0, rh.err
 	}
 	opID, out, err := rh.router.Delete(id)
 	if err != nil {
-		if errors.Is(err, ErrInvalidArgument) {
-			return 0, err
+		if !errors.Is(err, ErrInvalidArgument) {
+			rh.err = err
 		}
-		rh.err = err
+		rh.mu.Unlock()
 		return 0, err
 	}
-	rh.sendAll(out)
-	if rh.err != nil {
-		return 0, rh.err
+	routed := rh.routeLocked(out)
+	perr := rh.err
+	rh.mu.Unlock()
+	sendRouted(rh.tr, routed)
+	if perr != nil {
+		return 0, perr
 	}
 	return opID, nil
 }
@@ -165,21 +175,24 @@ func (rh *RouterHost) Delete(id uint64) (uint64, error) {
 // clean; any other router error poisons the host.
 func (rh *RouterHost) Search(query []float32, k int) (uint64, error) {
 	rh.mu.Lock()
-	defer rh.mu.Unlock()
 	if rh.err != nil {
+		rh.mu.Unlock()
 		return 0, rh.err
 	}
 	opID, out, err := rh.router.Search(query, k)
 	if err != nil {
-		if errors.Is(err, ErrInvalidArgument) {
-			return 0, err
+		if !errors.Is(err, ErrInvalidArgument) {
+			rh.err = err
 		}
-		rh.err = err
+		rh.mu.Unlock()
 		return 0, err
 	}
-	rh.sendAll(out)
-	if rh.err != nil {
-		return 0, rh.err
+	routed := rh.routeLocked(out)
+	perr := rh.err
+	rh.mu.Unlock()
+	sendRouted(rh.tr, routed)
+	if perr != nil {
+		return 0, perr
 	}
 	return opID, nil
 }

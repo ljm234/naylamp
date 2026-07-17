@@ -22,6 +22,13 @@ import (
 // untouched; it is there so the same Host is correct under the TCP transport's
 // reader goroutines without a rewrite.
 //
+// Network sends happen strictly OUTSIDE the mutex. The lock is held to step
+// the Node and to route the frames it produced; it is released before any
+// byte touches the transport. Under TCP a Send toward a partitioned peer can
+// block for the full socket timeout, and this mutex gates every delivery,
+// tick and client call, so a send inside the critical section would let one
+// dead peer wedge the whole node.
+//
 // The failure policy is what a consensus protocol expects of a network.
 // Network loss is NORMAL: Raft tolerates dropped messages by design and
 // retransmission is the protocol's business, so errors from tr.Send are
@@ -77,69 +84,112 @@ func NewHost(node *Node, bind func(cluster.Handler) cluster.Transport) (*Host, e
 // the frame untouched.
 func (h *Host) deliver(_ cluster.NodeID, data []byte) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	if h.err != nil {
+		h.mu.Unlock()
 		return
 	}
 	out, err := h.node.HandleMessage(data)
 	if err != nil {
 		h.err = err
+		h.mu.Unlock()
 		return
 	}
-	h.sendAll(out)
+	routed := h.routeLocked(out)
+	h.mu.Unlock()
+	sendRouted(h.tr, routed)
 }
 
-// sendAll routes and sends every frame the Node produced, taking the
-// destination from the frame's own envelope. A Send error is ignored: losing a
-// message is normal and the protocol retransmits. A frame the Node produced
-// that does not decode is our own bug, so it poisons the Host. The caller must
-// hold the mutex.
-func (h *Host) sendAll(frames [][]byte) {
+// outFrame is one routed outbound frame: the destination read from the
+// frame's own envelope while the lock was held, so the send itself can happen
+// after the lock is released.
+type outFrame struct {
+	to    cluster.NodeID
+	frame []byte
+}
+
+// routeFrames decodes every produced frame into a routed send, taking the
+// destination from the frame's own envelope. A frame that does not decode is
+// our own bug: routing stops there and the error is returned for the caller
+// to poison with, while the frames routed before it still go out, exactly the
+// prefix the old under-lock path would have sent.
+func routeFrames(frames [][]byte, who string) ([]outFrame, error) {
+	routed := make([]outFrame, 0, len(frames))
 	for _, frame := range frames {
 		env, err := cluster.DecodeMessage(frame)
 		if err != nil {
-			h.err = fmt.Errorf("naylamp: host produced an undecodable frame: %w", err)
-			return
+			return routed, fmt.Errorf("naylamp: %s produced an undecodable frame: %w", who, err)
 		}
-		_ = h.tr.Send(env.To, frame)
+		routed = append(routed, outFrame{to: env.To, frame: frame})
 	}
+	return routed, nil
+}
+
+// sendRouted hands routed frames to the transport, in order. It must run
+// OUTSIDE the owner's mutex: under TCP a Send toward a dead or partitioned
+// peer can block for the full socket timeout, and a node whose mutex gates
+// every delivery, tick and client call must never be wedged behind one peer's
+// socket. A Send error is ignored: losing a message is normal and
+// retransmission is the protocol's business. The transport handle is set once
+// at construction and never mutated, so reading it without the lock is safe.
+func sendRouted(tr cluster.Transport, routed []outFrame) {
+	for _, f := range routed {
+		_ = tr.Send(f.to, f.frame)
+	}
+}
+
+// routeLocked routes the frames the Node produced, poisoning the Host on an
+// undecodable one. The caller must hold the mutex and send the returned
+// frames with sendRouted AFTER releasing it.
+func (h *Host) routeLocked(frames [][]byte) []outFrame {
+	routed, err := routeFrames(frames, "host")
+	if err != nil {
+		h.err = err
+	}
+	return routed
 }
 
 // Tick advances the Node's logical clock and dispatches whatever falls out.
 func (h *Host) Tick() error {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	if h.err != nil {
+		h.mu.Unlock()
 		return h.err
 	}
 	out, err := h.node.Tick()
 	if err != nil {
 		h.err = err
+		h.mu.Unlock()
 		return err
 	}
-	h.sendAll(out)
-	return h.err
+	routed := h.routeLocked(out)
+	err = h.err // the poison routing may have set, read before the unlock
+	h.mu.Unlock()
+	sendRouted(h.tr, routed)
+	return err
 }
 
 // Upsert proposes a write on the leader and dispatches the replication round.
 // raft.ErrNotLeader propagates unchanged so the caller can redirect.
 func (h *Host) Upsert(id uint64, vec []float32) (uint64, error) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	if h.err != nil {
+		h.mu.Unlock()
 		return 0, h.err
 	}
 	idx, out, err := h.node.Upsert(id, vec)
 	if err != nil {
-		if isControl(err) {
-			return 0, err
+		if !isControl(err) {
+			h.err = err
 		}
-		h.err = err
+		h.mu.Unlock()
 		return 0, err
 	}
-	h.sendAll(out)
-	if h.err != nil {
-		return 0, h.err
+	routed := h.routeLocked(out)
+	perr := h.err
+	h.mu.Unlock()
+	sendRouted(h.tr, routed)
+	if perr != nil {
+		return 0, perr
 	}
 	return idx, nil
 }
@@ -147,21 +197,24 @@ func (h *Host) Upsert(id uint64, vec []float32) (uint64, error) {
 // Delete proposes a delete on the leader and dispatches the replication round.
 func (h *Host) Delete(id uint64) (uint64, error) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	if h.err != nil {
+		h.mu.Unlock()
 		return 0, h.err
 	}
 	idx, out, err := h.node.Delete(id)
 	if err != nil {
-		if isControl(err) {
-			return 0, err
+		if !isControl(err) {
+			h.err = err
 		}
-		h.err = err
+		h.mu.Unlock()
 		return 0, err
 	}
-	h.sendAll(out)
-	if h.err != nil {
-		return 0, h.err
+	routed := h.routeLocked(out)
+	perr := h.err
+	h.mu.Unlock()
+	sendRouted(h.tr, routed)
+	if perr != nil {
+		return 0, perr
 	}
 	return idx, nil
 }
@@ -191,21 +244,24 @@ func (h *Host) Search(query []float32, k int) ([]vector.Neighbor, error) {
 // unchanged; both are retryable answers, not damage.
 func (h *Host) BeginRead() (uint64, error) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	if h.err != nil {
+		h.mu.Unlock()
 		return 0, h.err
 	}
 	ctx, out, err := h.node.BeginRead()
 	if err != nil {
-		if isControl(err) {
-			return 0, err
+		if !isControl(err) {
+			h.err = err
 		}
-		h.err = err
+		h.mu.Unlock()
 		return 0, err
 	}
-	h.sendAll(out)
-	if h.err != nil {
-		return 0, h.err
+	routed := h.routeLocked(out)
+	perr := h.err
+	h.mu.Unlock()
+	sendRouted(h.tr, routed)
+	if perr != nil {
+		return 0, perr
 	}
 	return ctx, nil
 }
