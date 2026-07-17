@@ -134,6 +134,111 @@ func TestSimNet_PartitionAndHeal(t *testing.T) {
 	}
 }
 
+// TestSimNet_FrozenNodeDefersInOrder pins the freeze mechanics on the bare
+// fabric, independent of any host: a frozen receiver gets nothing while the
+// window holds, every deferred frame survives and lands in original send
+// order the moment the window ends, an early Unfreeze releases immediately,
+// and the counters record the churn. Latency is pinned to 1 so every arrival
+// tick is exact.
+func TestSimNet_FrozenNodeDefersInOrder(t *testing.T) {
+	fab := NewSimNet(7, SimConfig{MinLatency: 1, MaxLatency: 1})
+	defer fab.Close()
+
+	var got []string
+	if _, err := fab.Endpoint(2, func(_ NodeID, data []byte) { got = append(got, string(data)) }); err != nil {
+		t.Fatalf("endpoint 2: %v", err)
+	}
+	ep1, err := fab.Endpoint(1, func(NodeID, []byte) {})
+	if err != nil {
+		t.Fatalf("endpoint 1: %v", err)
+	}
+
+	// Three frames toward node 2, all due at tick 1, then freeze node 2 for
+	// five ticks starting at tick zero.
+	for _, m := range []string{"m1", "m2", "m3"} {
+		if serr := ep1.Send(2, []byte(m)); serr != nil {
+			t.Fatalf("send %s: %v", m, serr)
+		}
+	}
+	fab.Freeze(2, 5)
+
+	// Ticks 1 through 4: the window holds, nothing lands.
+	fab.RunTicks(4)
+	if len(got) != 0 {
+		t.Fatalf("frozen node received %v", got)
+	}
+	if !fab.Frozen(2) {
+		t.Fatalf("node 2 should still be frozen at tick 4")
+	}
+
+	// Tick 5: the window ends, all three frames land in original send order.
+	fab.Tick()
+	if len(got) != 3 || got[0] != "m1" || got[1] != "m2" || got[2] != "m3" {
+		t.Fatalf("deferred frames wrong or out of order: %v", got)
+	}
+	if fab.Frozen(2) {
+		t.Fatalf("node 2 still frozen after its window")
+	}
+
+	// Each of the three frames was deferred once on each of ticks 1 to 4.
+	s := fab.Stats()
+	if s.DeferredToFrozen != 12 {
+		t.Fatalf("DeferredToFrozen = %d, want 12", s.DeferredToFrozen)
+	}
+	if s.Freezes != 1 {
+		t.Fatalf("Freezes = %d, want 1", s.Freezes)
+	}
+	if s.Delivered != 3 {
+		t.Fatalf("Delivered = %d, want 3", s.Delivered)
+	}
+
+	// An early Unfreeze releases on the next tick, not at window end.
+	got = got[:0]
+	if serr := ep1.Send(2, []byte("m4")); serr != nil {
+		t.Fatalf("send m4: %v", serr)
+	}
+	fab.Freeze(2, 100)
+	fab.Tick()
+	if len(got) != 0 {
+		t.Fatalf("frozen node received %v during the second window", got)
+	}
+	fab.Unfreeze(2)
+	fab.Tick()
+	if len(got) != 1 || got[0] != "m4" {
+		t.Fatalf("early release did not deliver m4: %v", got)
+	}
+}
+
+// TestSimNet_FreezeOffIsInert pins the off mode: a run that never freezes
+// anything delivers normally and reports zero freeze activity, so the
+// mechanics cannot leak into existing schedules (the exact-history gate lives
+// in TestSimNet_DeterministicSchedule).
+func TestSimNet_FreezeOffIsInert(t *testing.T) {
+	fab := NewSimNet(11, DefaultSimConfig())
+	defer fab.Close()
+
+	got := 0
+	if _, err := fab.Endpoint(2, func(NodeID, []byte) { got++ }); err != nil {
+		t.Fatalf("endpoint 2: %v", err)
+	}
+	ep1, err := fab.Endpoint(1, func(NodeID, []byte) {})
+	if err != nil {
+		t.Fatalf("endpoint 1: %v", err)
+	}
+	for i := 0; i < 5; i++ {
+		if serr := ep1.Send(2, []byte{byte(i)}); serr != nil {
+			t.Fatalf("send %d: %v", i, serr)
+		}
+	}
+	fab.RunTicks(10)
+	if got != 5 {
+		t.Fatalf("delivered %d of 5", got)
+	}
+	if s := fab.Stats(); s.Freezes != 0 || s.DeferredToFrozen != 0 {
+		t.Fatalf("freeze counters moved without any Freeze: %+v", s)
+	}
+}
+
 // TestMessage_CodecRoundTrip covers the envelope codec: exact round-trip,
 // empty payloads, corruption detected by the CRC framing, trailing bytes
 // rejected, reserved ids rejected, and the payload bound enforced.

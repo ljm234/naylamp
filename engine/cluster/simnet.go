@@ -13,20 +13,23 @@ import (
 // comes from a single seeded generator, so one seed reproduces one exact
 // delivery history. Faults are configuration, not code paths: reordering
 // emerges from variable latency, partitions are directed edge blocks checked
-// at delivery time, and a detached endpoint models a crashed node. Determinism
-// is guaranteed when a single goroutine drives the simulation (the DST
-// harness); the mutex only protects invariants if misused concurrently.
+// at delivery time, a detached endpoint models a crashed node, and a frozen
+// node models a stalled process whose inbound frames wait instead of being
+// lost. Determinism is guaranteed when a single goroutine drives the
+// simulation (the DST harness); the mutex only protects invariants if misused
+// concurrently.
 type SimNet struct {
-	mu       sync.Mutex
-	cfg      SimConfig
-	rng      *rand.Rand
-	clock    *ManualClock
-	queue    eventHeap
-	seq      uint64
-	handlers map[NodeID]Handler
-	blocked  map[[2]NodeID]bool
-	stats    SimStats
-	closed   bool
+	mu          sync.Mutex
+	cfg         SimConfig
+	rng         *rand.Rand
+	clock       *ManualClock
+	queue       eventHeap
+	seq         uint64
+	handlers    map[NodeID]Handler
+	blocked     map[[2]NodeID]bool
+	frozenUntil map[NodeID]Tick
+	stats       SimStats
+	closed      bool
 }
 
 // SimConfig controls the fabric. Latencies are in ticks; probabilities are
@@ -56,6 +59,13 @@ type SimStats struct {
 	DroppedByPartition uint64
 	DroppedNoReceiver  uint64
 	Duplicated         uint64
+
+	// Freezes counts Freeze calls and DeferredToFrozen counts deliveries
+	// pushed back one tick because their receiver was frozen. Both stay zero
+	// unless a harness injects the blocked-sender fault, so existing schedules
+	// never see them move.
+	Freezes          uint64
+	DeferredToFrozen uint64
 }
 
 type simEvent struct {
@@ -101,11 +111,12 @@ func NewSimNet(seed uint64, cfg SimConfig) *SimNet {
 		cfg.MaxLatency = cfg.MinLatency
 	}
 	return &SimNet{
-		cfg:      cfg,
-		rng:      rand.New(rand.NewPCG(seed, 0)), //nolint:gosec // deterministic simulation requires a seeded generator, not crypto randomness
-		clock:    &ManualClock{},
-		handlers: make(map[NodeID]Handler),
-		blocked:  make(map[[2]NodeID]bool),
+		cfg:         cfg,
+		rng:         rand.New(rand.NewPCG(seed, 0)), //nolint:gosec // deterministic simulation requires a seeded generator, not crypto randomness
+		clock:       &ManualClock{},
+		handlers:    make(map[NodeID]Handler),
+		blocked:     make(map[[2]NodeID]bool),
+		frozenUntil: make(map[NodeID]Tick),
 	}
 }
 
@@ -165,6 +176,37 @@ func (s *SimNet) HealAll() {
 	s.blocked = make(map[[2]NodeID]bool)
 }
 
+// Freeze stalls a node for d ticks of virtual time: while the window holds,
+// every delivery addressed to it is deferred, never dropped, exactly as
+// frames wait in kernel buffers while a process is stuck in a blocking call.
+// Overlapping freezes extend the window and never shorten it. The freeze acts
+// purely at delivery time; send is untouched, so the seeded draw order cannot
+// shift. Ticking a frozen node is the half of the stall the fabric cannot
+// enforce: drivers consult Frozen for that.
+func (s *SimNet) Freeze(id NodeID, d Tick) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if u := s.clock.Now() + d; u > s.frozenUntil[id] {
+		s.frozenUntil[id] = u
+	}
+	s.stats.Freezes++
+}
+
+// Unfreeze releases a node before its window expires, the analog of a blocked
+// write completing early because the fault lifted.
+func (s *SimNet) Unfreeze(id NodeID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.frozenUntil, id)
+}
+
+// Frozen reports whether a node's freeze window is still open.
+func (s *SimNet) Frozen(id NodeID) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.frozenUntil[id] > s.clock.Now()
+}
+
 // Stats returns a copy of the fabric counters.
 func (s *SimNet) Stats() SimStats {
 	s.mu.Lock()
@@ -184,7 +226,8 @@ func (s *SimNet) Close() {
 // Tick advances the clock by one and delivers everything due. Deliveries are
 // popped in (tick, seq) order under the lock, then handlers run outside the
 // lock so a handler may Send without deadlocking; anything it sends lands at
-// least one tick in the future by the MinLatency clamp.
+// least one tick in the future by the MinLatency clamp. A delivery whose
+// receiver is frozen is deferred to the next tick instead of running.
 func (s *SimNet) Tick() {
 	s.mu.Lock()
 	s.clock.Advance()
@@ -204,6 +247,17 @@ func (s *SimNet) Tick() {
 	for _, ev := range due {
 		if s.blocked[[2]NodeID{ev.from, ev.to}] {
 			s.stats.DroppedByPartition++
+			continue
+		}
+		if s.frozenUntil[ev.to] > now {
+			// The receiver is frozen: defer, never drop. Re-arming one tick
+			// at a time with the ORIGINAL seq keeps deferred frames in (tick,
+			// seq) order among themselves and lets an early Unfreeze release
+			// them on the very next tick. The partition check stays first, so
+			// an in-flight frame on a cut link still dies at delivery time.
+			ev.deliverAt = now + 1
+			heap.Push(&s.queue, ev)
+			s.stats.DeferredToFrozen++
 			continue
 		}
 		h, ok := s.handlers[ev.to]

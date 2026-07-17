@@ -38,3 +38,5 @@ NAYLAMP_PHASE4_GATE.txt
 *.fvecs
 *.ivecs
 engine/hnsw/sift_result.txt
+
+.claude/
