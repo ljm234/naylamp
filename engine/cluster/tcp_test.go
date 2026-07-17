@@ -312,3 +312,151 @@ func TestTCP_SimultaneousDialConverges(t *testing.T) {
 		}
 	}
 }
+
+// TestTCPSendBoundedByDialTimeout proves a Send toward an unreachable peer
+// never parks the caller. The peer address is 192.0.2.1:9, in the TEST-NET-1
+// block RFC 5737 reserves for documentation and which no host routes: a
+// connect there is dropped silently on the way out or answered with an
+// unreachable, and never completes. Before the dial and socket timeouts were
+// split, this Send blocked for the whole socket timeout; after the split it
+// still rode the dial for up to dialTimeout; under the per-peer outbox it
+// does not ride anything: Send copies the frame onto the outbox and returns
+// nil, the accepted-for-sending half of the Transport contract, while the
+// dial happens on the peer's writer goroutine, where dialTimeout still bounds
+// every connection attempt and a failed dial costs exactly the frame that
+// provoked it, which at-most-once permits.
+//
+// The assertion is a BOUND on the caller's latency, never a delivery promise:
+// what it proves is that Send no longer hangs for any dial's duration, let
+// alone the socket timeout, which is the regression this pin closes.
+func TestTCPSendBoundedByDialTimeout(t *testing.T) {
+	ca := mustCA(t)
+	tr, err := NewTCPTransport(1, "127.0.0.1:0", func(NodeID, []byte) {}, mustMaterial(t, ca, 1))
+	if err != nil {
+		t.Fatalf("new transport: %v", err)
+	}
+	defer func() { _ = tr.Close() }()
+
+	// Shorten the dial timeout so the test does not wait the generous default. The
+	// field is guarded by the transport mutex, the same pattern the socket-timeout
+	// test uses.
+	const dialTimeout = 100 * time.Millisecond
+	tr.mu.Lock()
+	tr.dialTimeout = dialTimeout
+	tr.mu.Unlock()
+
+	// A black hole: TEST-NET-1, reserved and unrouted, so the connect never
+	// completes. Port 9 (discard) is conventional for a destination that answers
+	// nothing.
+	tr.AddPeer(2, "192.0.2.1:9")
+
+	start := time.Now()
+	serr := tr.Send(2, []byte("frame"))
+	elapsed := time.Since(start)
+
+	// The outbox contract: a Send toward a peer with a registered address is
+	// accepted for sending, and the dial failure that follows on the writer is
+	// a silent at-most-once loss, never the caller's error.
+	if serr != nil {
+		t.Fatalf("Send to a registered peer must be accepted for sending under the outbox contract, got %v", serr)
+	}
+	// The bound: comfortably under the 30s socket timeout the dial used to
+	// inherit and under the dial timeout the caller used to ride; an enqueue is
+	// microseconds, so 2s only guards against a regression to any blocking path
+	// without flaking on a loaded CI host.
+	if elapsed >= 2*time.Second {
+		t.Fatalf("Send took %v, want under 2s: the caller is riding a socket wait again", elapsed)
+	}
+	t.Logf("Send to a black hole returned in %v", elapsed)
+}
+
+// TestTCPSendBoundedWhenPeerStopsDraining pins the caller-latency contract of
+// Send: it must return to the caller promptly even when a CONNECTED peer stops
+// draining, the remaining hole after the dial and socket timeouts were split.
+// Send holds the peer link across the whole write with only the socket
+// deadline as a bound, so once the kernel buffers between the two ends fill,
+// one Send parks the calling goroutine until that deadline; on a node the
+// caller is the consensus ticker or an inbound read loop, and the
+// real-infrastructure gate showed a silently partitioned peer wedging exactly
+// those while every other Send toward the same peer queued behind the link
+// mutex. The per-peer outbox makes Send enqueue-or-drop; this test is the pin
+// that flips green with it and red on any regression to a blocking send path.
+//
+// The physics: the receiver completes the mutual TLS handshake and its read
+// loop reads exactly one frame, then parks inside the handler, so no further
+// frame is ever drained and every byte after the first accumulates in the
+// kernel buffers until they fill. The sender pushes up to 64 frames of 512
+// KiB, 32 MiB in total, which exceeds what any loopback pair can buffer (a
+// few megabytes at most on macOS and Linux), so a Send is guaranteed to hit
+// full buffers within the first few dozen iterations. The 500ms bound is
+// orders of magnitude above a legitimate loopback write, which is
+// microseconds, and above the first Send's dial plus handshake, which is
+// milliseconds, so a loaded CI host cannot trip it; yet it sits far below the
+// 2s socket timeout a blocking write rides to, so the two outcomes cannot be
+// confused. The observed red is in fact WORSE than the socket timeout alone:
+// after the write deadline expires, dropLink closes the TLS connection, and
+// crypto/tls Close overrides the expired deadline with a hardcoded 5 second
+// budget to write its close_notify alert into the same full pipe, so one
+// blocked Send can park the caller for up to socket timeout plus 5s when the
+// alert does not fit either (with the 30s production default, up to 35s per
+// expired write).
+//
+// The assertion is about latency alone, never about the Send result: a write
+// that rides to the deadline returns an error and drops the link, while an
+// outbox Send returns nil even when it must drop the frame, and both are
+// legitimate under the at-most-once contract. What is not legitimate is
+// parking the caller.
+func TestTCPSendBoundedWhenPeerStopsDraining(t *testing.T) {
+	ca := mustCA(t)
+
+	// The receiver stops draining after one frame: the handler parks on block,
+	// and the read loop, which calls it synchronously, parks with it.
+	block := make(chan struct{})
+	recv, err := NewTCPTransport(2, "127.0.0.1:0", func(NodeID, []byte) { <-block }, mustMaterial(t, ca, 2))
+	if err != nil {
+		t.Fatalf("recv transport: %v", err)
+	}
+	defer func() { _ = recv.Close() }()
+
+	sender, err := NewTCPTransport(1, "127.0.0.1:0", func(NodeID, []byte) {}, mustMaterial(t, ca, 1))
+	if err != nil {
+		t.Fatalf("sender transport: %v", err)
+	}
+	defer func() { _ = sender.Close() }()
+
+	// Declared after the Close defers so it runs FIRST on unwind (defers are
+	// LIFO): it releases the parked handler before the Close calls join their
+	// read loops, otherwise Close would wait on a read loop that is still
+	// stuck inside the handler.
+	defer close(block)
+
+	// Shorten the sender's socket timeout so the expected red does not park
+	// the test for the generous 30s default. The field is guarded by the
+	// transport mutex, the same pattern the read-deadline test uses.
+	const socketTimeout = 2 * time.Second
+	sender.mu.Lock()
+	sender.timeout = socketTimeout
+	sender.mu.Unlock()
+
+	sender.AddPeer(2, recv.Addr())
+
+	// One reused payload keeps allocation out of the timing. A legitimate
+	// Send either fits the buffers (microseconds) or blocks until the write
+	// deadline (the full socket timeout), so the bound discriminates cleanly.
+	payload := make([]byte, 512<<10)
+	const bound = 500 * time.Millisecond
+	var worst time.Duration
+	for i := 0; i < 64; i++ {
+		start := time.Now()
+		_ = sender.Send(2, payload) // result ignored on purpose: the contract is the caller's latency, not delivery
+		elapsed := time.Since(start)
+		if elapsed > worst {
+			worst = elapsed
+		}
+		if elapsed >= bound {
+			t.Fatalf("Send %d blocked the caller for %v toward a connected peer that stopped draining; the transport must never block the caller (bound %v, socket timeout %v)",
+				i+1, elapsed, bound, socketTimeout)
+		}
+	}
+	t.Logf("64 sends of 512 KiB returned promptly (worst %v): the caller-latency contract holds", worst)
+}

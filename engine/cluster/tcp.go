@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -20,9 +21,14 @@ import (
 // block framing doubles as the message delimiter over the stream. Every
 // connection is mutual TLS: a peer's identity is the common name of its verified
 // certificate, never a self-declared value, so a node cannot claim an identity
-// it does not hold a signed certificate for. There is no plaintext mode. A
-// failed write drops the connection and returns an error; retries belong to the
-// protocol above, never to the transport.
+// it does not hold a signed certificate for. There is no plaintext mode.
+//
+// Send never touches a socket. It copies the frame onto a bounded per-peer
+// outbox drained by one writer goroutine that owns every socket operation for
+// that peer, dial, write and close, so the documented Transport contract,
+// "Send queues data for delivery", holds literally here. A failed dial or
+// write costs exactly the frame that provoked it and the next frame redials;
+// retries belong to the protocol above, never to the transport.
 type TCPTransport struct {
 	self NodeID
 	h    Handler
@@ -34,27 +40,107 @@ type TCPTransport struct {
 	cert tls.Certificate
 	ca   *x509.CertPool
 
-	mu      sync.Mutex
-	peers   map[NodeID]string
-	links   map[NodeID]*peerLink
-	inbound map[net.Conn]bool
-	closed  bool
-	wg      sync.WaitGroup
+	mu       sync.Mutex
+	peers    map[NodeID]string
+	outboxes map[NodeID]*peerOutbox
+	inbound  map[net.Conn]bool
+	closed   bool
+	wg       sync.WaitGroup
 
-	// timeout bounds every socket operation, guarded by mu: the TLS handshake, a
-	// read waiting for the next frame, and a write draining a frame. Set well
-	// above any heartbeat interval so a healthy link never trips it, yet a hung
-	// peer is dropped within it instead of blocking forever. A read that expires
-	// mid-frame ends the whole connection, so the CRC framing is never left
-	// half-consumed.
-	timeout time.Duration
+	// timeout bounds the I/O of an already connected socket, guarded by mu: a read
+	// waiting for the next frame, a write draining a frame, and the handshake of
+	// an inbound connection the accept loop is admitting. Set well above any
+	// heartbeat interval so a healthy link never trips it, yet a hung peer is
+	// dropped within it instead of blocking forever. A read that expires mid-frame
+	// ends the whole connection, so the CRC framing is never left half-consumed.
+	//
+	// dialTimeout bounds only the connect plus handshake of a NEW outbound link,
+	// guarded by the same mu. It is a separate, much shorter budget than timeout
+	// because a dial is where a dead or partitioned peer is discovered, and that
+	// discovery must not monopolize the peer's writer for the whole socket
+	// timeout per attempt: see defaultDialTimeout.
+	timeout     time.Duration
+	dialTimeout time.Duration
 }
 
-// peerLink is one live outbound connection. Its mutex serializes writes so
-// concurrent Sends to the same peer never interleave frames.
-type peerLink struct {
+// peerOutbox is one peer's outbound lane: a bounded frame queue drained by a
+// single writer goroutine that owns every socket operation toward that peer.
+// Send only enqueues, so no caller ever waits on another node's socket, and
+// the single writer preserves the per-peer FIFO the old link mutex used to
+// provide. ctx is the writer's stop signal: Close cancels it, which aborts an
+// in-flight dial immediately and tells the drain loop to exit. conn is the
+// live connection, published under its own mutex so Close can sever it from
+// outside and unblock a writer parked inside a kernel write.
+type peerOutbox struct {
+	ch     chan []byte
+	ctx    context.Context
+	cancel context.CancelFunc
+
 	mu   sync.Mutex
-	conn net.Conn
+	conn *tls.Conn
+}
+
+// outboxCapacity bounds one peer's outbox, in frames. The queue exists to
+// absorb short hiccups, a redial or a briefly slow peer, without unbounded
+// memory; a peer stalled for longer legitimately loses frames, because the
+// transport is at-most-once and everything above it already retransmits: raft
+// re-offers entries every heartbeat interval and the router re-emits
+// unanswered client attempts. Sizing: consensus traffic toward one peer is one
+// or two small frames per 10ms production tick (heartbeats every 20ms), so 32
+// slots absorb several hundred milliseconds of full-rate traffic, well past a
+// healthy redial, while a black-holed peer overflows it quickly with frames
+// that are stale by construction. Worst-case memory is capacity times the
+// largest frame: the envelope layer admits 16MiB (maxMessagePayload), which
+// bounds one outbox at 512MiB, and that ceiling is reachable, not
+// hypothetical. Snapshot transfers chunk at 64KiB, but buildAppend in the
+// raft core does not cap a batch, so one MsgApp toward a follower that fell
+// far behind legally carries the follower's entire gap, right up to the
+// envelope limit. In practice frames stay small, heartbeats and short append
+// batches, so the steady-state cost is kilobytes per peer; the bound to plan
+// against is still the theoretical one. The remediation is a batch cap in
+// the raft core, recorded as deferred work, not a different queue length
+// here.
+const outboxCapacity = 32
+
+// newPeerOutbox builds an idle outbox; the caller starts its writer.
+func newPeerOutbox() *peerOutbox {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &peerOutbox{ch: make(chan []byte, outboxCapacity), ctx: ctx, cancel: cancel}
+}
+
+// publish records the live connection so Close can sever it from outside.
+func (ob *peerOutbox) publish(c *tls.Conn) {
+	ob.mu.Lock()
+	ob.conn = c
+	ob.mu.Unlock()
+}
+
+// current returns the live connection, or nil when the writer must redial.
+func (ob *peerOutbox) current() *tls.Conn {
+	ob.mu.Lock()
+	defer ob.mu.Unlock()
+	return ob.conn
+}
+
+// closeConn severs the current connection, if any, at the RAW socket layer,
+// deliberately skipping the TLS close_notify alert: crypto/tls Close writes
+// that alert under a hardcoded 5 second budget, so against the full pipe of a
+// peer that stopped draining it parks the closer for those 5 seconds on top of
+// the already expired write deadline. Every close on this path is the abort of
+// a failed or dying link, never the graceful end of a stream, and the CRC
+// block framing already makes a truncated frame fail loudly on the reader,
+// which drops the connection and lets the peer redial: nothing close_notify
+// protects survives this transport anyway. Closing the raw socket also
+// unblocks a writer parked inside a kernel write immediately, which is what
+// keeps Close prompt.
+func (ob *peerOutbox) closeConn() {
+	ob.mu.Lock()
+	c := ob.conn
+	ob.conn = nil
+	ob.mu.Unlock()
+	if c != nil {
+		_ = c.NetConn().Close()
+	}
 }
 
 // TLSMaterial is the certificate material a transport authenticates with. Cert
@@ -76,6 +162,25 @@ var errTCPClosed = errors.New("cluster: tcp transport is closed")
 // legitimate at-most-once drop, not a transport error: the link is closed and
 // the protocol above redials.
 const defaultSocketTimeout = 30 * time.Second
+
+// defaultDialTimeout bounds establishing a NEW outbound link, the connect plus
+// the TLS handshake as a whole. It is deliberately far shorter than
+// defaultSocketTimeout because the two guard different things: the socket
+// timeout keeps a live but stalled link from parking its writer indefinitely,
+// while the dial timeout bounds each connection attempt that writer makes.
+// The asymmetry that motivates the split: a crashed process answers a connect
+// with a RST, so the dial fails within a round trip and the next frame redials
+// at once; a partitioned peer behind a silent DROP answers nothing, so the
+// connect blocks for the whole budget. Under the per-peer outbox no caller
+// ever rides a dial, but this budget stays load-bearing: it is what keeps a
+// black hole from monopolizing its writer's redial cycle for the whole socket
+// timeout per attempt, so the queue keeps draining, stale frames keep aging
+// out, and a healed route is retried within seconds. A transport Close does
+// not wait even this long: it cancels the outbox context, which aborts an
+// in-flight dial immediately. Two seconds sits orders of magnitude above a
+// datacenter connect and handshake, which complete in milliseconds on a
+// healthy peer.
+const defaultDialTimeout = 2 * time.Second
 
 // NewTCPTransport listens on listenAddr over mutual TLS and starts accepting.
 // Use ":0" for an ephemeral port and Addr() to discover it. The material is
@@ -103,15 +208,16 @@ func NewTCPTransport(self NodeID, listenAddr string, h Handler, mat TLSMaterial)
 		return nil, fmt.Errorf("cluster: tcp listen: %w", err)
 	}
 	t := &TCPTransport{
-		self:    self,
-		h:       h,
-		ln:      tls.NewListener(rawLn, serverCfg),
-		cert:    mat.Cert,
-		ca:      mat.CA,
-		peers:   make(map[NodeID]string),
-		links:   make(map[NodeID]*peerLink),
-		inbound: make(map[net.Conn]bool),
-		timeout: defaultSocketTimeout,
+		self:        self,
+		h:           h,
+		ln:          tls.NewListener(rawLn, serverCfg),
+		cert:        mat.Cert,
+		ca:          mat.CA,
+		peers:       make(map[NodeID]string),
+		outboxes:    make(map[NodeID]*peerOutbox),
+		inbound:     make(map[net.Conn]bool),
+		timeout:     defaultSocketTimeout,
+		dialTimeout: defaultDialTimeout,
 	}
 	t.wg.Add(1)
 	go t.acceptLoop()
@@ -137,86 +243,138 @@ func (t *TCPTransport) socketTimeout() time.Duration {
 	return t.timeout
 }
 
-// Send frames data and writes it to the peer, dialing on demand. A write failure
-// drops the link and surfaces the error; the message is lost, which is exactly
-// the at-most-once contract.
+// Send copies data onto the peer's outbox and returns, so the caller never
+// touches a socket and never waits on one: this is the Transport contract
+// taken literally, a nil error means the frame was accepted for sending, not
+// that it arrived. A full outbox drops the NEW frame silently, the same
+// legitimate at-most-once loss a fault-injecting fabric produces, and the
+// protocol above recovers it by retransmission; dropping the newcomer rather
+// than evicting keeps every already accepted frame and its order intact, and
+// the queue only fills when the peer has already been stalled for longer than
+// anything in it stays useful. The only errors are a closed transport and a
+// peer with no registered address, both immediate. The outbox and its writer
+// are created lazily on the first Send toward a peer, mirroring the old
+// dial-on-demand, so AddPeer stays a pure address registration.
 func (t *TCPTransport) Send(to NodeID, data []byte) error {
-	link, err := t.link(to)
-	if err != nil {
-		return err
+	t.mu.Lock()
+	if t.closed {
+		t.mu.Unlock()
+		return errTCPClosed
 	}
-	link.mu.Lock()
-	defer link.mu.Unlock()
-	// SetDeadline, not SetWriteDeadline: over TLS a logical write may also read
-	// control records, so both directions are bounded.
-	_ = link.conn.SetDeadline(time.Now().Add(t.socketTimeout()))
-	if _, werr := persist.WriteBlock(link.conn, persist.BlockClusterMessage, data); werr != nil {
-		t.dropLink(to, link)
-		return fmt.Errorf("cluster: tcp send to %d: %w", to, werr)
+	ob, ok := t.outboxes[to]
+	if !ok {
+		if _, known := t.peers[to]; !known {
+			t.mu.Unlock()
+			return fmt.Errorf("cluster: tcp has no address for node %d", to)
+		}
+		ob = newPeerOutbox()
+		t.outboxes[to] = ob
+		t.wg.Add(1)
+		go t.runWriter(to, ob)
+	}
+	t.mu.Unlock()
+
+	// The copy honors the contract that the caller may reuse its buffer the
+	// moment Send returns: the old synchronous write consumed data before
+	// returning, a queue must own its own bytes.
+	frame := make([]byte, len(data))
+	copy(frame, data)
+	select {
+	case ob.ch <- frame:
+	default:
+		// Queue full: the newest frame is the drop. Blocking here instead
+		// would resurrect the exact caller stall this outbox exists to remove.
 	}
 	return nil
 }
 
-// link returns the live outbound connection to a peer, dialing over TLS if none
-// exists. The dial happens OUTSIDE the transport lock, and that is essential.
-// Holding the lock across the dial deadlocks two nodes that dial each other at
-// the same instant: each side holds its own lock waiting for the peer's TLS
-// ServerHello, but that peer's acceptLoop needs the same lock to register the
-// inbound connection and start the read loop that would answer the handshake, so
-// neither handshake ever begins and both dials hang until the socket timeout
-// fires. The lock is therefore taken only to read the peer address and to
-// publish the result, and released across the dial itself.
-//
-// Dialing without the lock lets two concurrent Sends to the same cold peer both
-// dial, so the race is resolved when the lock is retaken: the caller that finds a
-// link already published, or the transport already closed, closes its own
-// connection and yields; otherwise it publishes its own. Exactly one of
-// publishing or closing happens to each dialed connection, so t.links still holds
-// exactly one connection per peer and no connection leaks. clientConfig is built
-// without the lock because t.cert and t.ca are immutable after construction; it
-// verifies the server chains to our CA AND that its certificate identity is the
-// exact peer we dialed, so a valid but different node cannot impersonate to.
-func (t *TCPTransport) link(to NodeID) (*peerLink, error) {
+// runWriter is one peer's writer goroutine, the only place this transport
+// touches that peer's socket: it drains the outbox in FIFO order, dialing on
+// demand, so frames toward one peer never interleave and never ride a
+// caller's goroutine. It exits when Close cancels the outbox context; the
+// deferred closeConn releases whatever connection is live at that moment.
+func (t *TCPTransport) runWriter(to NodeID, ob *peerOutbox) {
+	defer t.wg.Done()
+	defer ob.closeConn()
+	for {
+		select {
+		case <-ob.ctx.Done():
+			return
+		case frame := <-ob.ch:
+			t.writeFrame(to, ob, frame)
+		}
+	}
+}
+
+// writeFrame delivers one frame, establishing the link first when none is
+// live. Every failure loses exactly the current frame and leaves the next one
+// to redial, which is the at-most-once contract: the protocol above
+// retransmits, the transport never does. A write that rides to its deadline
+// still costs that wait, but it now costs ONLY this writer; the callers that
+// used to park behind the link mutex keep ticking.
+func (t *TCPTransport) writeFrame(to NodeID, ob *peerOutbox, frame []byte) {
+	conn := ob.current()
+	if conn == nil {
+		c, err := t.dialPeer(ob.ctx, to)
+		if err != nil {
+			return // the frame is lost; the next frame redials
+		}
+		ob.publish(c)
+		select {
+		case <-ob.ctx.Done():
+			// Close ran during the dial, and its sweep may have run before the
+			// publish above: close the connection here rather than leak it.
+			ob.closeConn()
+			return
+		default:
+		}
+		conn = c
+	}
+	// SetDeadline, not SetWriteDeadline: over TLS a logical write may also read
+	// control records, so both directions are bounded.
+	_ = conn.SetDeadline(time.Now().Add(t.socketTimeout()))
+	if _, err := persist.WriteBlock(conn, persist.BlockClusterMessage, frame); err != nil {
+		// The frame is lost and the link is dead: sever it so the next frame
+		// dials fresh.
+		ob.closeConn()
+	}
+}
+
+// dialPeer establishes one outbound mutual TLS link on the writer's
+// goroutine. The dial happens outside the transport lock, as it always must:
+// holding the lock across it deadlocks two nodes that dial each other at the
+// same instant, because each side's acceptLoop needs that lock to admit the
+// inbound half of the peer's handshake. ctx is the outbox context, so a
+// transport Close aborts an in-flight dial immediately instead of waiting it
+// out; the dial timeout bounds the connect plus the TLS handshake as a whole,
+// the same budget defaultDialTimeout documents, now enforced where all
+// dialing lives. The address is read fresh under the lock so a later AddPeer
+// takes effect on the next dial. clientConfig verifies the server chains to
+// our CA AND that its certificate identity is the exact peer we dialed, so a
+// valid but different node cannot impersonate it.
+func (t *TCPTransport) dialPeer(ctx context.Context, to NodeID) (*tls.Conn, error) {
 	t.mu.Lock()
-	if t.closed {
-		t.mu.Unlock()
-		return nil, errTCPClosed
-	}
-	if l, ok := t.links[to]; ok {
-		t.mu.Unlock()
-		return l, nil
-	}
 	addr, ok := t.peers[to]
+	dt := t.dialTimeout
+	t.mu.Unlock()
 	if !ok {
-		t.mu.Unlock()
 		return nil, fmt.Errorf("cluster: tcp has no address for node %d", to)
 	}
-	timeout := t.timeout
-	t.mu.Unlock()
-
-	dialer := &net.Dialer{Timeout: timeout}
-	conn, err := tls.DialWithDialer(dialer, "tcp", addr, t.clientConfig(to))
+	dctx, cancel := context.WithTimeout(ctx, dt)
+	defer cancel()
+	d := &tls.Dialer{NetDialer: &net.Dialer{}, Config: t.clientConfig(to)}
+	nc, err := d.DialContext(dctx, "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("cluster: tcp dial node %d: %w", to, err)
 	}
-
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.closed {
-		// A Close ran during the dial. It did not sweep this connection because
-		// it was not yet in t.links, so close it here rather than leak it.
-		_ = conn.Close()
-		return nil, errTCPClosed
+	tc, isTLS := nc.(*tls.Conn)
+	if !isTLS {
+		// tls.Dialer documents the returned connection is always *tls.Conn;
+		// this guard only keeps a violated assumption loud instead of silent.
+		_ = nc.Close()
+		return nil, errors.New("cluster: tls dialer returned a non-TLS connection")
 	}
-	if l, ok := t.links[to]; ok {
-		// A concurrent Send to the same peer won the dial race; drop ours and use
-		// the winner's, so there is still exactly one connection per peer.
-		_ = conn.Close()
-		return l, nil
-	}
-	l := &peerLink{conn: conn}
-	t.links[to] = l
-	return l, nil
+	return tc, nil
 }
 
 // clientConfig builds the TLS config for dialing a specific peer. The default
@@ -273,16 +431,6 @@ func nodeIDFromCN(cn string) (NodeID, error) {
 		return None, errors.New("cluster: certificate common name is the reserved node id 0")
 	}
 	return id, nil
-}
-
-// dropLink closes and forgets an outbound connection if it is still current.
-func (t *TCPTransport) dropLink(to NodeID, l *peerLink) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if cur, ok := t.links[to]; ok && cur == l {
-		delete(t.links, to)
-	}
-	_ = l.conn.Close()
 }
 
 // acceptLoop admits inbound connections until the listener closes.
@@ -356,7 +504,12 @@ func (t *TCPTransport) readLoop(conn net.Conn) {
 	}
 }
 
-// Close stops the listener, closes every connection and waits for the loops.
+// Close stops the listener, tells every writer to stop, severs every
+// connection and waits for all the loops to exit. The order inside the sweep
+// matters: the cancel aborts a writer parked in a dial at once, and the raw
+// connection close unblocks a writer parked in a kernel write, so the final
+// join cannot hang behind a stalled peer, a black-hole dial, or the 5 second
+// close_notify budget the closeConn comment explains.
 func (t *TCPTransport) Close() error {
 	t.mu.Lock()
 	if t.closed {
@@ -365,10 +518,11 @@ func (t *TCPTransport) Close() error {
 	}
 	t.closed = true
 	_ = t.ln.Close()
-	for _, l := range t.links {
-		_ = l.conn.Close()
+	for _, ob := range t.outboxes {
+		ob.cancel()
+		ob.closeConn()
 	}
-	t.links = make(map[NodeID]*peerLink)
+	t.outboxes = make(map[NodeID]*peerOutbox)
 	for c := range t.inbound {
 		_ = c.Close()
 	}
