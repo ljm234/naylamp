@@ -423,7 +423,7 @@ func (r *Raft) preCampaign() []Message {
 // only predicted.
 func (r *Raft) handlePreVote(m Message) Message {
 	leaderFresh := r.role == RoleLeader ||
-		(r.leader != cluster.None && r.electionElapsed < r.opts.ElectionTicks)
+		(r.leader != cluster.None && r.electionElapsed < r.opts.ElectionTicks && r.prevotes == nil)
 	grant := !leaderFresh &&
 		m.Term > r.hs.Term &&
 		r.log.IsUpToDate(m.LogIndex, m.LogTerm)
