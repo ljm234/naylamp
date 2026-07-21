@@ -96,7 +96,10 @@ func TestRaft_LeaderPartitionNoDoubleCommit(t *testing.T) {
 
 	h.quiesce(800)
 	if old.Role() == RoleLeader {
-		t.Fatalf("stale leader did not step down after heal")
+		// With CheckQuorum on (the harness default) the isolated old leader
+		// demotes itself during the partition; without it, it learns the higher
+		// term only at heal. Either way it must not still believe it leads.
+		t.Fatalf("old leader never relinquished office")
 	}
 	for i := uint64(1); i <= old.LastIndex(); i++ {
 		if e, ok := old.log.Entry(i); ok && string(e.Data) == "lost" {
@@ -267,9 +270,11 @@ func TestRaft_PreVoteNoTermInflation(t *testing.T) {
 // electionElapsed just reset to zero while it still believes the old leader) and
 // hands it a peer's pre-vote for the next term carrying an up-to-date log. A
 // survivor that has itself lost the leader must be willing to pre-vote for a
-// peer, so the grant must be true. It is false today because the belief in the
-// dead leader survives preCampaign; that is the bug, and this subtest is meant
-// to fail until preCampaign clears r.leader.
+// peer, so the grant must be true. What makes it true is the prevotes==nil
+// clause in leaderFresh: once a node opens its own pre-vote round it stops
+// vouching for the leader it just timed out on, so it no longer refuses a
+// peer's pre-vote. The belief in the old leader is left intact on purpose;
+// preCampaign does not clear it.
 //
 // The second subtest is the non-vacuity control: a follower that is still
 // hearing the current leader (a genuinely fresh lease) must refuse the same

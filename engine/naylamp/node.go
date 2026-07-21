@@ -154,7 +154,9 @@ func OpenNode(dir string, id cluster.NodeID, cfg cluster.Config, dim int, rng *r
 		n.lastSnapIndex = snap.Index
 	}
 
-	core, err := raft.New(id, cfg, rng, raft.DefaultOptions())
+	raftOpts := raft.DefaultOptions()
+	raftOpts.CheckQuorum = true // an isolated leader demotes itself rather than hold a mute term forever
+	core, err := raft.New(id, cfg, rng, raftOpts)
 	if err != nil {
 		_ = storage.Close()
 		return nil, err

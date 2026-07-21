@@ -3,6 +3,7 @@ package raft
 import (
 	"bytes"
 	"math/rand/v2"
+	"os"
 	"testing"
 
 	"naylamp/engine/cluster"
@@ -32,6 +33,20 @@ type harness struct {
 }
 
 func newHarness(t *testing.T, n int, seed uint64, simCfg cluster.SimConfig) *harness {
+	return newHarnessOpts(t, n, seed, simCfg, harnessOptions())
+}
+
+// harnessOptions is DefaultOptions with CheckQuorum on, the configuration the
+// harness exercises by default now that a leader self-demotes on quorum loss.
+// Set NAYLAMP_RAFT_CHECKQUORUM=off to run the same suite with the guard
+// disabled, which is how the seeded sweep is checked both ways.
+func harnessOptions() Options {
+	opts := DefaultOptions()
+	opts.CheckQuorum = os.Getenv("NAYLAMP_RAFT_CHECKQUORUM") != "off"
+	return opts
+}
+
+func newHarnessOpts(t *testing.T, n int, seed uint64, simCfg cluster.SimConfig, opts Options) *harness {
 	t.Helper()
 	cfg := cluster.Config{}
 	for i := 1; i <= n; i++ {
@@ -47,7 +62,7 @@ func newHarness(t *testing.T, n int, seed uint64, simCfg cluster.SimConfig) *har
 	}
 	for _, na := range cfg.Nodes {
 		id := na.ID
-		node, err := New(id, cfg, rand.New(rand.NewPCG(seed, uint64(id))), DefaultOptions()) //nolint:gosec // deterministic seeded RNG for reproducible tests, not security
+		node, err := New(id, cfg, rand.New(rand.NewPCG(seed, uint64(id))), opts) //nolint:gosec // deterministic seeded RNG for reproducible tests, not security
 		if err != nil {
 			t.Fatalf("new raft %d: %v", id, err)
 		}

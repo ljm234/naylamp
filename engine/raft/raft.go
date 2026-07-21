@@ -46,10 +46,24 @@ func (r Role) String() string {
 type Options struct {
 	ElectionTicks  int
 	HeartbeatTicks int
+	// CheckQuorum makes a leader step down once it has gone a full election
+	// timeout without hearing from a majority, so an isolated leader releases
+	// the term instead of holding it mute forever. Its zero value is off, which
+	// is exactly the behavior before this option existed.
+	CheckQuorum bool
 }
 
-// DefaultOptions keeps heartbeats well below the election timeout.
+// DefaultOptions keeps heartbeats well below the election timeout. CheckQuorum
+// is left off so the zero-value default matches the historical behavior; a
+// runtime that wants the liveness guard opts in explicitly.
 func DefaultOptions() Options { return Options{ElectionTicks: 10, HeartbeatTicks: 2} }
+
+// defaultCheckQuorumWindows is how many consecutive missed windows a leader
+// tolerates before stepping down. Two windows of hysteresis absorb a single
+// transient stall (a latency spike that starves one window of acks), which a
+// one-window check would misread as a lost quorum, while still catching a
+// genuine isolation within a bounded number of windows.
+const defaultCheckQuorumWindows = 2
 
 // snapChunkSize bounds one snapshot chunk on the wire, well below the
 // envelope payload cap so framing overhead never pushes a chunk over it.
@@ -140,6 +154,17 @@ type Raft struct {
 	heartbeatElapsed  int
 	randomizedTimeout int
 
+	// CheckQuorum state, all leader-only. recentActive is the set of peers that
+	// answered within the current window (the leader is always implicitly
+	// active); checkElapsed counts ticks toward the next evaluation; and
+	// failedWindows counts consecutive missed windows toward the hysteresis
+	// threshold checkQuorumWindows. All are seeded in becomeLeader and cleared
+	// in becomeFollower, so none survives a leadership change.
+	recentActive       map[cluster.NodeID]bool
+	checkElapsed       int
+	failedWindows      int
+	checkQuorumWindows int
+
 	votes map[cluster.NodeID]bool
 	// prevotes counts would-grants of the pending pre-vote round; nil when
 	// no round is pending.
@@ -176,7 +201,10 @@ func New(id cluster.NodeID, cfg cluster.Config, rng *rand.Rand, opts Options) (*
 	if opts.HeartbeatTicks >= opts.ElectionTicks {
 		return nil, errors.New("raft: heartbeat interval must be below the election timeout")
 	}
-	r := &Raft{id: id, cfg: cfg, opts: opts, rng: rng, log: NewLog()}
+	if opts.CheckQuorum && opts.HeartbeatTicks*2 > opts.ElectionTicks {
+		return nil, errors.New("raft: CheckQuorum needs at least two heartbeat intervals per election timeout")
+	}
+	r := &Raft{id: id, cfg: cfg, opts: opts, rng: rng, log: NewLog(), checkQuorumWindows: defaultCheckQuorumWindows}
 	r.becomeFollower(0, cluster.None)
 	return r, nil
 }
@@ -285,6 +313,31 @@ func (r *Raft) CommittedEntries() []Entry {
 func (r *Raft) Tick() Ready {
 	var msgs []Message
 	if r.role == RoleLeader {
+		if r.opts.CheckQuorum {
+			r.checkElapsed++
+			if r.checkElapsed >= r.opts.ElectionTicks {
+				r.checkElapsed = 0
+				// Evaluate the window before sweeping it: reading then clearing
+				// keeps the first tick of the next window from seeing an empty
+				// set and misreading a healthy leader as quorumless.
+				active := r.quorumActive()
+				r.sweepActive()
+				if active {
+					r.failedWindows = 0
+				} else {
+					r.failedWindows++
+					if r.failedWindows >= r.checkQuorumWindows {
+						// A majority has gone silent for checkQuorumWindows
+						// windows straight: step down at the SAME term with no
+						// known leader, and emit nothing this tick so no late
+						// heartbeat re-pins a follower's lease and blocks the
+						// election that must now happen.
+						r.becomeFollower(r.hs.Term, cluster.None)
+						return r.ready(nil)
+					}
+				}
+			}
+		}
 		r.heartbeatElapsed++
 		if r.heartbeatElapsed >= r.opts.HeartbeatTicks {
 			r.heartbeatElapsed = 0
@@ -297,6 +350,39 @@ func (r *Raft) Tick() Ready {
 		}
 	}
 	return r.ready(msgs)
+}
+
+// quorumActive reports whether a majority, the leader included, has answered
+// within the current CheckQuorum window. The leader always counts itself, the
+// same self-inclusion maybeCommit uses when it seeds the match set with its own
+// last index; comparing only peers against Quorum would demand every follower
+// be live and defeat the point of a majority.
+func (r *Raft) quorumActive() bool {
+	active := 1
+	for _, peer := range r.cfg.Peers(r.id) {
+		if r.recentActive[peer] {
+			active++
+		}
+	}
+	return active >= r.cfg.Quorum()
+}
+
+// markActive records that a peer answered this leader at the current term. The
+// response handlers call it on every answer, granted or not: the answer itself
+// proves the peer still reaches this leadership, exactly the reasoning
+// confirmRead already applies to a read round. It is a no-op off the leader or
+// when CheckQuorum is disabled, where recentActive is nil.
+func (r *Raft) markActive(from cluster.NodeID) {
+	if r.recentActive != nil {
+		r.recentActive[from] = true
+	}
+}
+
+// sweepActive clears the activity set so each window measures only itself and
+// never the accumulated history: an answer three windows ago must not keep a
+// since-isolated leader in office today.
+func (r *Raft) sweepActive() {
+	r.recentActive = make(map[cluster.NodeID]bool, len(r.cfg.Nodes)-1)
 }
 
 // Propose appends data to the leader's log and starts replicating it,
@@ -389,6 +475,9 @@ func (r *Raft) becomeFollower(term uint64, leader cluster.NodeID) {
 	r.prevotes = nil
 	r.pendingReads = nil
 	r.snapXfer = nil
+	r.recentActive = nil
+	r.checkElapsed = 0
+	r.failedWindows = 0
 	r.resetElectionTimer()
 }
 
@@ -488,6 +577,21 @@ func (r *Raft) becomeLeader() []Message {
 	r.leader = r.id
 	r.heartbeatElapsed = 0
 	r.prevotes = nil
+	// CheckQuorum starts a fresh window seeded from the majority that just
+	// elected this leader: those peers answered a heartbeat's-breadth ago, so
+	// the first window can never demote a leader whose real heartbeat round has
+	// not yet come back. The counters restart with the new term.
+	r.checkElapsed = 0
+	r.failedWindows = 0
+	r.recentActive = nil
+	if r.opts.CheckQuorum {
+		r.recentActive = make(map[cluster.NodeID]bool, len(r.cfg.Nodes)-1)
+		for voter := range r.votes {
+			if voter != r.id {
+				r.recentActive[voter] = true
+			}
+		}
+	}
 	r.nextIndex = make(map[cluster.NodeID]uint64, len(r.cfg.Nodes))
 	r.matchIndex = make(map[cluster.NodeID]uint64, len(r.cfg.Nodes))
 	r.snapXfer = make(map[cluster.NodeID]uint64)
@@ -652,6 +756,7 @@ func (r *Raft) handleSnapResp(m Message) []Message {
 	if r.role != RoleLeader {
 		return nil
 	}
+	r.markActive(m.From)
 	if _, inXfer := r.snapXfer[m.From]; !inXfer || r.snap == nil {
 		return nil // stale response from a finished or abandoned transfer
 	}
@@ -686,6 +791,7 @@ func (r *Raft) handleAppResp(m Message) []Message {
 	if r.role != RoleLeader {
 		return nil
 	}
+	r.markActive(m.From)
 	if m.ReadCtx != 0 {
 		// Any answer at this term counts toward the read round, granted or
 		// not: a log mismatch is repair business, while the answer itself
