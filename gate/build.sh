@@ -19,6 +19,14 @@ echo "gate: building the native demo (only for gencerts)"
 echo "gate: cross compiling naylampd for linux/arm64 (static, CGO_ENABLED=0)"
 ( cd "${REPO_DIR}" && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o "${OUT_DIR}/naylampd" ./engine/cmd/naylampd )
 
+# The log-fidelity gate (faithlog.sh) runs the faultlog injector on the hosts, and
+# faultlog lives in the demo naylamp, never in naylampd. So naylamp is also cross
+# compiled for the hosts here, in addition to the native build above that mints
+# certificates. Deploying it is harmless: it is a support tool the gate invokes by
+# hand against copies, and it never runs as the production daemon.
+echo "gate: cross compiling naylamp for linux/arm64 (the faultlog injector for the log-fidelity gate)"
+( cd "${REPO_DIR}" && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o "${OUT_DIR}/naylamp-linux" ./engine/cmd/naylamp )
+
 mint_certs() {
 	echo "gate: minting certificates for ids 1,2,3,90 into ${CERT_DIR}"
 	"${OUT_DIR}/naylamp" gencerts -dir "${CERT_DIR}" -ids 1,2,3,90
@@ -53,3 +61,5 @@ fi
 
 echo "gate: naylampd binary is"
 file "${OUT_DIR}/naylampd"
+echo "gate: naylamp (linux, faultlog) binary is"
+file "${OUT_DIR}/naylamp-linux"

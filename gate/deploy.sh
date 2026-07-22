@@ -9,8 +9,8 @@ GATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 source "${GATE_DIR}/common.sh"
 
-if [ ! -f "${OUT_DIR}/naylampd" ] || [ ! -f "${CERT_DIR}/ca.pem" ]; then
-	echo "gate: run build.sh first (missing ${OUT_DIR}/naylampd or ${CERT_DIR}/ca.pem)" >&2
+if [ ! -f "${OUT_DIR}/naylampd" ] || [ ! -f "${OUT_DIR}/naylamp-linux" ] || [ ! -f "${CERT_DIR}/ca.pem" ]; then
+	echo "gate: run build.sh first (missing ${OUT_DIR}/naylampd, ${OUT_DIR}/naylamp-linux, or ${CERT_DIR}/ca.pem)" >&2
 	exit 2
 fi
 
@@ -19,6 +19,10 @@ for n in "${NODE_IDS[@]}"; do
 	run_on "$n" 'mkdir -p naylamp/bin naylamp/certs naylamp/data naylamp/logs'
 	copy_to "$n" "${OUT_DIR}/naylampd" 'naylamp/bin/naylampd'
 	run_on "$n" 'chmod +x naylamp/bin/naylampd'
+	# The faultlog injector for the log-fidelity gate, in the demo binary, not the
+	# production daemon. Present on every host so the gate can run the red on any one.
+	copy_to "$n" "${OUT_DIR}/naylamp-linux" 'naylamp/bin/naylamp'
+	run_on "$n" 'chmod +x naylamp/bin/naylamp'
 	copy_to "$n" "${CERT_DIR}/ca.pem" 'naylamp/certs/ca.pem'
 	copy_to "$n" "${CERT_DIR}/node-${n}.pem" "naylamp/certs/node-${n}.pem"
 	copy_to "$n" "${CERT_DIR}/node-${n}-key.pem" "naylamp/certs/node-${n}-key.pem"

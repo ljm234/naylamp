@@ -29,10 +29,21 @@ deviation and its reason are recorded here and in the subphase closure.
 
 - `common.sh` - environment validation and the ssh and scp helpers, sourced by
   the others.
-- `build.sh` - build naylampd for linux and mint certificates, all local.
-- `deploy.sh` - push the binary and each host's certificate material.
+- `build.sh` - build naylampd for linux, cross compile the demo naylamp for linux
+  (the faultlog injector the log-fidelity gate needs on the hosts), and mint
+  certificates, all local.
+- `deploy.sh` - push both binaries and each host's certificate material.
 - `cluster.sh` - start, stop, status, start-node, stop-node.
 - `partition.sh` - apply, heal, status of a real iptables partition.
+- `readindex.sh` - the read-index gate (Subphase 4.3): a linearizable read is
+  served only after a confirmed majority round, and withheld under isolation.
+- `tls.sh` - the mutual TLS gate (Subphase 4.4): a forged identity is rejected and
+  the raft traffic carries no framing magic in the clear.
+- `faithlog.sh` - the log-fidelity gate (Subphase 4.2): each replica's committed
+  log verifies as a faithful record of a known workload, and four injected defects
+  (phantom, missing, corrupt, and an idempotent duplicate as the negative control)
+  prove the checker reds for the right reason. Build and gate run under one tee into
+  `NAYLAMP_FAITHLOG_GATE_<date>.txt`; the runbook is in the script header.
 
 ## Environment (all four, fail loud if missing)
 
