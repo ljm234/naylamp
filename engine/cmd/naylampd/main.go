@@ -26,6 +26,8 @@ func main() {
 		runNode(os.Args[2:])
 	case "client":
 		runClient(os.Args[2:])
+	case "verify-log":
+		runVerifyLog(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -35,8 +37,9 @@ func main() {
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: naylampd <command> [flags]")
 	fmt.Fprintln(os.Stderr, "commands:")
-	fmt.Fprintln(os.Stderr, "  node    run one replica of a shard group until a signal stops it")
-	fmt.Fprintln(os.Stderr, "  client  run one routing operation and exit")
+	fmt.Fprintln(os.Stderr, "  node        run one replica of a shard group until a signal stops it")
+	fmt.Fprintln(os.Stderr, "  client      run one routing operation and exit")
+	fmt.Fprintln(os.Stderr, "  verify-log  audit a cold copy of a replica's committed log against a workload manifest")
 	fmt.Fprintln(os.Stderr, "the mutual TLS material is read from the environment, never from flags:")
 	fmt.Fprintln(os.Stderr, "  NAYLAMP_TLS_CERT  this process's certificate PEM file")
 	fmt.Fprintln(os.Stderr, "  NAYLAMP_TLS_KEY   this process's private key PEM file")

@@ -25,6 +25,8 @@ func main() {
 		runClient(os.Args[2:])
 	case "gencerts":
 		runGencerts(os.Args[2:])
+	case "faultlog":
+		runFaultlog(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -37,6 +39,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  gencerts  write a demo CA and per-node certificates to a directory")
 	fmt.Fprintln(os.Stderr, "  node      run one replica of a shard group")
 	fmt.Fprintln(os.Stderr, "  client    run the routing client REPL")
+	fmt.Fprintln(os.Stderr, "  faultlog  write a copy of a data directory carrying one deliberate log defect (gate support)")
 	fmt.Fprintln(os.Stderr, "run 'naylamp <command> -h' for a command's flags")
 	fmt.Fprintln(os.Stderr, "every node and client dials over mutual TLS, so run gencerts first")
 }
