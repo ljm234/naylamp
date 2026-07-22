@@ -127,6 +127,7 @@ func runNode(args []string) {
 		defer ticker.Stop()
 		lastRole, lastLeader := host.Role(), host.Leader()
 		logger.Printf("role=%v leader=%v", lastRole, lastLeader)
+		var lastReadCtx uint64
 		for {
 			select {
 			case <-stop:
@@ -140,6 +141,15 @@ func runNode(args []string) {
 				if r, l := host.Role(), host.Leader(); r != lastRole || l != lastLeader {
 					lastRole, lastLeader = r, l
 					logger.Printf("role=%v leader=%v", r, l)
+				}
+				// A read index confirms only after a majority answered its round,
+				// so this line, logged when the context rises, is the observable
+				// proof that the majority round completed before any answer. It
+				// sits outside the role change above on purpose: a read confirms
+				// under steady leadership, which never changes the role line.
+				if ctx, idx := host.LastConfirmedRead(); ctx > lastReadCtx {
+					lastReadCtx = ctx
+					logger.Printf("readindex ctx=%d index=%d", ctx, idx)
 				}
 			}
 		}

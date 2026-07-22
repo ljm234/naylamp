@@ -309,6 +309,19 @@ func (h *Host) LastIndex() uint64 {
 	return h.node.LastIndex()
 }
 
+// LastConfirmedRead returns the context and read index of the node's most
+// recently confirmed linearizable read, or zeros on a poisoned Host. It takes
+// the same lock every entry point does, so a caller reading it never races the
+// deliver path that advances it.
+func (h *Host) LastConfirmedRead() (ctx, index uint64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.err != nil {
+		return 0, 0
+	}
+	return h.node.LastConfirmedRead()
+}
+
 // StateHash returns the committed-data digest, or the zero hash on a poisoned
 // Host.
 func (h *Host) StateHash() [32]byte {

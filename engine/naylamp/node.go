@@ -76,6 +76,16 @@ type Node struct {
 	// it must wait for; a context is removed the moment it is served.
 	reads map[uint64]uint64
 
+	// lastReadCtx and lastReadIndex retain the most recently confirmed
+	// linearizable read, its context and its read index, for observation only.
+	// They are kept apart from reads because reads is consumed the instant a
+	// search is served (see ReadServable), so the served context is gone from it
+	// before anything outside the node could look. A read confirms only after a
+	// majority answered its round, and the context only ever rises, so a reader
+	// that acts on a rising context sees each majority round exactly once.
+	lastReadCtx   uint64
+	lastReadIndex uint64
+
 	// pendingWrites parks a client write, keyed by the log index its command
 	// was proposed at, until that index commits (see processReady). term is the
 	// term the entry was proposed in, so a commit at that index in another term
@@ -425,6 +435,14 @@ func (n *Node) Role() raft.Role { return n.core.Role() }
 // LastIndex returns the last log index the core holds.
 func (n *Node) LastIndex() uint64 { return n.core.LastIndex() }
 
+// LastConfirmedRead returns the context and read index of the most recently
+// confirmed linearizable read, or zeros if none has confirmed yet. A read
+// confirms only after a majority answered its round, so a rising context is the
+// trace that a majority read-index round completed on this node. Unlike
+// ReadServable it does not consume the context: it only reads the retained pair,
+// never proposing, applying, emitting a frame or mutating state.
+func (n *Node) LastConfirmedRead() (ctx, index uint64) { return n.lastReadCtx, n.lastReadIndex }
+
 // StateHash returns a digest of the committed data this replica holds: the
 // store contents (every id and its vector) and nothing else. This is State
 // Machine Safety made checkable, since two correct replicas that applied the
@@ -552,6 +570,9 @@ func (n *Node) processReady(rd raft.Ready) ([][]byte, error) {
 			n.reads = make(map[uint64]uint64)
 		}
 		n.reads[rs.Ctx] = rs.Index
+		if rs.Ctx > n.lastReadCtx {
+			n.lastReadCtx, n.lastReadIndex = rs.Ctx, rs.Index
+		}
 	}
 
 	// Serve every parked search whose read round has confirmed and whose read
