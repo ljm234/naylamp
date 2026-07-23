@@ -138,15 +138,10 @@ func TestVerifyLog_CorruptOpen(t *testing.T) {
 	dir := t.TempDir()
 	writeCommittedLog(t, dir, cmds)
 
-	// Flip a byte inside the hard state file so it no longer reads.
-	hs := filepath.Join(dir, "raft-hardstate")
-	b, rerr := os.ReadFile(hs) //nolint:gosec // a test file in a temp dir
-	if rerr != nil {
-		t.Fatalf("read hard state: %v", rerr)
-	}
-	b[len(b)-1] ^= 0xFF
-	if werr := os.WriteFile(hs, b, 0o600); werr != nil {
-		t.Fatalf("write hard state: %v", werr)
+	// Overwrite the hard state with bytes that are not a valid block, so it no
+	// longer reads and OpenNode reports a corrupt hard state.
+	if werr := os.WriteFile(filepath.Join(dir, "raft-hardstate"), []byte("not a hard state block"), 0o600); werr != nil {
+		t.Fatalf("overwrite hard state: %v", werr)
 	}
 
 	ok, reasons := verifyLog(dir, 1, cfg, 3, man)
