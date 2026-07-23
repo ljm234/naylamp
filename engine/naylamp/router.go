@@ -41,6 +41,34 @@ type Router struct {
 	ops       map[uint64]*routeOp    // op id -> the write operation in flight
 	searchOps map[uint64]*searchOp   // op id -> the search operation in flight
 	results   map[uint64]RouteResult // op id -> its terminal (or exhausted) result
+
+	// Timeout-rotation tuning, all inert unless rotateOnTimeout is set. When it is
+	// off the coordinator behaves exactly as it did before rotation existed, and
+	// retransmitTicks alone is read, defaulting to retransmitTimeout so the sealed
+	// timeout behavior is unchanged.
+	rotateOnTimeout     bool
+	rotateAfterTimeouts int          // consecutive timeouts against a target before abandoning it
+	retransmitTicks     cluster.Tick // unanswered-attempt timeout before a resend or rotation
+	probeTicks          cluster.Tick // paced peer-probe cadence while a mute hint is suppressed
+	suppressCooldown    cluster.Tick // how long a redirect hint back to an abandoned target is ignored
+}
+
+// rotState is the per-target rotation state a routeOp or a searchLeg carries,
+// used only when rotateOnTimeout is set and otherwise left at its zero value.
+// timeouts counts consecutive retransmit timeouts against the current target; on
+// the rotateAfterTimeouts-th the target is abandoned. suppressedTarget and
+// suppressUntil hold a bounded cooldown during which a redirect hint back to that
+// abandoned target is ignored, so a leader that has gone mute toward this client
+// cannot bounce the operation straight back to itself; the cooldown auto-heals on
+// expiry, so a leader whose egress recovered is reachable again. holdUntil parks
+// the operation between paced peer probes while the hint is suppressed, so a peer
+// is reached every probe cadence without a tight re-emit loop spending the whole
+// retry budget at once.
+type rotState struct {
+	timeouts         int
+	suppressedTarget cluster.NodeID
+	suppressUntil    cluster.Tick
+	holdUntil        cluster.Tick
 }
 
 // pendingRef correlates a response to the attempt that provoked it. The
@@ -68,6 +96,7 @@ type routeOp struct {
 	targetIdx     int
 	attemptsLeft  int
 	lastRetryable ClientStatus
+	rot           rotState
 }
 
 // searchLeg is one shard's fan-out of a search: which shard, which target in
@@ -80,6 +109,7 @@ type searchLeg struct {
 	lastRetryable ClientStatus
 	result        []vector.Neighbor
 	done          bool
+	rot           rotState
 }
 
 // searchOp is one scatter-gather search in flight: the query, k, one leg per
@@ -103,12 +133,58 @@ type RouteResult struct {
 	Exhausted bool
 }
 
-// NewRouter builds a write coordinator over a shard map. The map is validated,
-// and the router's own id may be neither the reserved zero nor a member of any
-// group: a router that shared an id with a replica would hand that replica's
-// consensus traffic to the router and hand a Node the client responses it
-// declares fatal.
+// RouterOptions tunes a coordinator's retry behavior. Its zero value is the
+// historical coordinator: no target rotation on timeout and the default
+// retransmit budget. RotateOnTimeout turns on the timeout-driven target rotation
+// and the redirect-hint suppression that pair with the core's service-health
+// signal; the two are one feature and must be enabled together, since rotating
+// without the signal reopens the mute-leader hint bounce and the signal without
+// rotating deadlocks the recovery. The tuning fields fall back to their defaults
+// when left zero.
+type RouterOptions struct {
+	RotateOnTimeout bool
+	// RotateAfterTimeouts is how many consecutive timeouts against one target the
+	// coordinator tolerates before abandoning it; below it a retransmit re-aims at
+	// the same target, exactly as it did before rotation existed, so a single lost
+	// frame never moves the target. Zero uses defaultRotateAfterTimeouts.
+	RotateAfterTimeouts int
+	// RetransmitTicks is how long an attempt may go unanswered before a Tick
+	// resends or rotates it. Zero uses retransmitTimeout.
+	RetransmitTicks cluster.Tick
+	// ProbeTicks is the cadence at which a parked operation probes a peer while a
+	// mute leader's hint is suppressed, kept near one election window so a peer is
+	// reached every window without burning the retry budget in a tight loop. Zero
+	// uses defaultProbeTicks.
+	ProbeTicks cluster.Tick
+	// SuppressCooldown is how long a redirect hint back to an abandoned target is
+	// ignored. It is bounded and auto-healing: once it elapses the target is
+	// eligible again, so a leader whose egress recovered is not stranded. Zero uses
+	// RetransmitTicks, so the cooldown scales with the retransmit budget.
+	SuppressCooldown cluster.Tick
+}
+
+// defaultRotateAfterTimeouts keeps a lost frame from moving the target: the first
+// timeout re-aims at the same node, exactly as the plain retransmit does, and only
+// a second consecutive silence abandons it. defaultProbeTicks is the paced peer
+// probe cadence, near one default election window so a peer is reached every
+// window while a mute leader's hint is suppressed.
+const (
+	defaultRotateAfterTimeouts              = 2
+	defaultProbeTicks          cluster.Tick = 10
+)
+
+// NewRouter builds a write coordinator over a shard map with the default options
+// (no timeout rotation), byte-for-byte the historical coordinator.
 func NewRouter(id cluster.NodeID, m cluster.ShardMap) (*Router, error) {
+	return NewRouterWithOptions(id, m, RouterOptions{})
+}
+
+// NewRouterWithOptions builds a coordinator with explicit retry options. The map
+// is validated, and the router's own id may be neither the reserved zero nor a
+// member of any group: a router that shared an id with a replica would hand that
+// replica's consensus traffic to the router and hand a Node the client responses
+// it declares fatal.
+func NewRouterWithOptions(id cluster.NodeID, m cluster.ShardMap, opts RouterOptions) (*Router, error) {
 	if err := m.Validate(); err != nil {
 		return nil, err
 	}
@@ -120,14 +196,32 @@ func NewRouter(id cluster.NodeID, m cluster.ShardMap) (*Router, error) {
 			return nil, fmt.Errorf("naylamp: router id %d also serves shard %d; the router needs an identity of its own", id, shard)
 		}
 	}
-	return &Router{
-		id:        id,
-		shards:    m,
-		pending:   make(map[uint64]pendingRef),
-		ops:       make(map[uint64]*routeOp),
-		searchOps: make(map[uint64]*searchOp),
-		results:   make(map[uint64]RouteResult),
-	}, nil
+	r := &Router{
+		id:                  id,
+		shards:              m,
+		pending:             make(map[uint64]pendingRef),
+		ops:                 make(map[uint64]*routeOp),
+		searchOps:           make(map[uint64]*searchOp),
+		results:             make(map[uint64]RouteResult),
+		rotateOnTimeout:     opts.RotateOnTimeout,
+		rotateAfterTimeouts: defaultRotateAfterTimeouts,
+		retransmitTicks:     retransmitTimeout,
+		probeTicks:          defaultProbeTicks,
+	}
+	if opts.RotateAfterTimeouts > 0 {
+		r.rotateAfterTimeouts = opts.RotateAfterTimeouts
+	}
+	if opts.RetransmitTicks > 0 {
+		r.retransmitTicks = opts.RetransmitTicks
+	}
+	if opts.ProbeTicks > 0 {
+		r.probeTicks = opts.ProbeTicks
+	}
+	r.suppressCooldown = r.retransmitTicks
+	if opts.SuppressCooldown > 0 {
+		r.suppressCooldown = opts.SuppressCooldown
+	}
+	return r, nil
 }
 
 // Upsert routes an add-or-replace to its shard and emits the first attempt. It
@@ -290,20 +384,19 @@ const retransmitTimeout cluster.Tick = 50
 // attempts' own emission order.
 func (r *Router) Tick(now cluster.Tick) ([][]byte, error) {
 	r.now = now
-	// Gather first, emit second: ranging r.pending only collects the due request
-	// ids into a slice; the sorted slice below is what the emitting loop walks.
+	var out [][]byte
+
+	// Phase 1: retransmit due pending attempts. Gather first, emit second: ranging
+	// r.pending only collects the due request ids into a slice; the sorted slice
+	// below is what the emitting loop walks. With rotation on, retransmit also
+	// counts the timeout toward abandoning a silent target.
 	var due []uint64
 	for reqID, ref := range r.pending {
-		if now-ref.emittedAt >= retransmitTimeout {
+		if now-ref.emittedAt >= r.retransmitTicks {
 			due = append(due, reqID)
 		}
 	}
-	if len(due) == 0 {
-		return nil, nil
-	}
 	sort.Slice(due, func(i, j int) bool { return due[i] < due[j] })
-
-	var out [][]byte
 	for _, reqID := range due {
 		ref, ok := r.pending[reqID]
 		if !ok {
@@ -321,7 +414,125 @@ func (r *Router) Tick(now cluster.Tick) ([][]byte, error) {
 		}
 		out = append(out, frames...)
 	}
+
+	// Phase 2: re-probe parked operations whose paced hold has elapsed, so a peer
+	// keeps being reached while a mute leader's hint is suppressed. Inert unless
+	// rotation is on, so an idle tick with nothing due stays byte-for-byte a no-op.
+	if r.rotateOnTimeout {
+		frames, err := r.probeHeld(now)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, frames...)
+	}
 	return out, nil
+}
+
+// probeHeld re-probes every parked operation whose hold has elapsed, one paced
+// peer probe each, so a peer keeps being reached while a mute leader's hint is
+// suppressed. Writes are gathered and emitted in op-id order and search legs in
+// (op-id, leg) order, so no emitting path ranges a map for its order and a seeded
+// run replays the probes identically.
+func (r *Router) probeHeld(now cluster.Tick) ([][]byte, error) {
+	var out [][]byte
+
+	var writeIDs []uint64
+	for opID, o := range r.ops {
+		if o.rot.holdUntil != 0 && now >= o.rot.holdUntil {
+			writeIDs = append(writeIDs, opID)
+		}
+	}
+	sort.Slice(writeIDs, func(i, j int) bool { return writeIDs[i] < writeIDs[j] })
+	for _, opID := range writeIDs {
+		o := r.ops[opID]
+		o.rot.holdUntil = 0
+		group := r.shards.Groups[o.shard].Nodes
+		o.targetIdx = nextLiveTarget(group, o.targetIdx, &o.rot, now)
+		frames, err := r.emitAttempt(opID, o)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, frames...)
+	}
+
+	type heldLeg struct {
+		opID uint64
+		leg  int
+	}
+	var legs []heldLeg
+	for opID, o := range r.searchOps {
+		for i := range o.legs {
+			if o.legs[i].rot.holdUntil != 0 && now >= o.legs[i].rot.holdUntil {
+				legs = append(legs, heldLeg{opID: opID, leg: i})
+			}
+		}
+	}
+	sort.Slice(legs, func(i, j int) bool {
+		if legs[i].opID != legs[j].opID {
+			return legs[i].opID < legs[j].opID
+		}
+		return legs[i].leg < legs[j].leg
+	})
+	for _, hl := range legs {
+		o := r.searchOps[hl.opID]
+		if o == nil {
+			// A prior held leg of this same op already retired the whole search
+			// (its budget was spent), so this sibling leg has nothing left to
+			// probe. Skip it, the same way the retransmit path drops a leg whose
+			// op is already gone.
+			continue
+		}
+		lg := &o.legs[hl.leg]
+		lg.rot.holdUntil = 0
+		group := r.shards.Groups[lg.shard].Nodes
+		lg.targetIdx = nextLiveTarget(group, lg.targetIdx, &lg.rot, now)
+		frames, err := r.emitLegAttempt(hl.opID, o, hl.leg)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, frames...)
+	}
+	return out, nil
+}
+
+// nextLiveTarget returns the next target index after from, skipping a target
+// under an active suppression cooldown. With nothing suppressed, which is always
+// the case while rotation is off and also once a cooldown elapses, it is a plain
+// round-robin step, byte-for-byte the old hintless rotation. If every member is
+// the suppressed one it steps anyway, so an operation never deadlocks on an empty
+// choice.
+func nextLiveTarget(group []cluster.NodeAddr, from int, rot *rotState, now cluster.Tick) int {
+	n := len(group)
+	suppressed := rot.suppressedTarget != cluster.None && now < rot.suppressUntil
+	for step := 1; step <= n; step++ {
+		idx := (from + step) % n
+		if !suppressed || group[idx].ID != rot.suppressedTarget {
+			return idx
+		}
+	}
+	return (from + 1) % n
+}
+
+// hintSuppressed reports whether a redirect hint points at a target still under
+// its cooldown, which the coordinator declines to obey so a mute leader cannot
+// bounce the operation straight back to itself.
+func (r *Router) hintSuppressed(rot *rotState, hint cluster.NodeID) bool {
+	return rot.suppressedTarget != cluster.None && r.now < rot.suppressUntil && hint == rot.suppressedTarget
+}
+
+// onTimeout advances one target's rotation state after it timed out. Below the
+// threshold it leaves the target in place, so the retransmit re-aims at the same
+// node exactly as it did before rotation existed; at the threshold it abandons the
+// silent target under a bounded cooldown and rotates to the next live member.
+func (r *Router) onTimeout(group []cluster.NodeAddr, targetIdx *int, rot *rotState) {
+	rot.timeouts++
+	if rot.timeouts < r.rotateAfterTimeouts {
+		return
+	}
+	rot.timeouts = 0
+	rot.suppressedTarget = group[*targetIdx].ID
+	rot.suppressUntil = r.now + r.suppressCooldown
+	*targetIdx = nextLiveTarget(group, *targetIdx, rot, r.now)
 }
 
 // retransmit re-emits one timed-out attempt down the same path a retryable
@@ -335,11 +546,18 @@ func (r *Router) retransmit(ref pendingRef) ([][]byte, error) {
 		if !ok {
 			return nil, nil
 		}
+		if r.rotateOnTimeout {
+			r.onTimeout(r.shards.Groups[o.shard].Nodes, &o.targetIdx, &o.rot)
+		}
 		return r.emitAttempt(ref.opID, o)
 	}
 	o, ok := r.searchOps[ref.opID]
 	if !ok {
 		return nil, nil
+	}
+	if r.rotateOnTimeout {
+		lg := &o.legs[ref.leg]
+		r.onTimeout(r.shards.Groups[lg.shard].Nodes, &lg.targetIdx, &lg.rot)
 	}
 	return r.emitLegAttempt(ref.opID, o, ref.leg)
 }
@@ -402,6 +620,9 @@ func (r *Router) handleWriteResponse(opID uint64, resp ClientResponse) ([][]byte
 	if !ok {
 		return nil, nil
 	}
+	if r.rotateOnTimeout {
+		o.rot.timeouts = 0 // any answer proves this target is not silent
+	}
 	switch resp.Status {
 	case StatusOK:
 		if resp.Index == 0 {
@@ -419,15 +640,7 @@ func (r *Router) handleWriteResponse(opID uint64, resp ClientResponse) ([][]byte
 		return nil, nil
 	case StatusNotLeader:
 		o.lastRetryable = StatusNotLeader
-		group := r.shards.Groups[o.shard].Nodes
-		if pos, found := groupIndex(group, resp.Leader); found && resp.Leader != cluster.None {
-			o.targetIdx = pos // the hint knows the leader; obey it
-		} else {
-			// No usable hint: zero means the replica knows no leader, and an
-			// id outside the group cannot be obeyed. Probe the next member.
-			o.targetIdx = (o.targetIdx + 1) % len(group)
-		}
-		return r.emitAttempt(opID, o)
+		return r.redirectWrite(opID, o, resp.Leader)
 	case StatusNotReady:
 		o.lastRetryable = StatusNotReady
 		// The leader exists but has no commit in its term yet; the same target
@@ -438,6 +651,27 @@ func (r *Router) handleWriteResponse(opID uint64, resp ClientResponse) ([][]byte
 		// unreachable; it keeps the switch total.
 		return nil, fmt.Errorf("naylamp: router got an unknown status %d", resp.Status)
 	}
+}
+
+// redirectWrite advances one write past a NotLeader. With rotation on, a hint
+// back to a suppressed mute leader is not obeyed: the operation parks and Tick
+// probes a peer at the paced cadence until the cooldown heals or the hint points
+// elsewhere. Any usable hint is obeyed, and a hintless answer rotates to the next
+// live member, which reduces to the plain round-robin when nothing is suppressed.
+func (r *Router) redirectWrite(opID uint64, o *routeOp, hint cluster.NodeID) ([][]byte, error) {
+	group := r.shards.Groups[o.shard].Nodes
+	if r.rotateOnTimeout && r.hintSuppressed(&o.rot, hint) {
+		o.rot.holdUntil = r.now + r.probeTicks
+		return nil, nil
+	}
+	if pos, found := groupIndex(group, hint); found && hint != cluster.None {
+		o.targetIdx = pos // the hint knows the leader; obey it
+	} else {
+		// No usable hint: zero means the replica knows no leader, and an id
+		// outside the group cannot be obeyed. Probe the next live member.
+		o.targetIdx = nextLiveTarget(group, o.targetIdx, &o.rot, r.now)
+	}
+	return r.emitAttempt(opID, o)
 }
 
 // handleSearchResponse advances or completes one leg of a search. A leg's OK
@@ -452,6 +686,9 @@ func (r *Router) handleSearchResponse(opID uint64, leg int, resp ClientResponse)
 		return nil, nil
 	}
 	lg := &o.legs[leg]
+	if r.rotateOnTimeout {
+		lg.rot.timeouts = 0 // any answer proves this target is not silent
+	}
 	switch resp.Status {
 	case StatusOK:
 		if resp.Index != 0 {
@@ -480,19 +717,32 @@ func (r *Router) handleSearchResponse(opID uint64, leg int, resp ClientResponse)
 		return nil, nil
 	case StatusNotLeader:
 		lg.lastRetryable = StatusNotLeader
-		group := r.shards.Groups[lg.shard].Nodes
-		if pos, found := groupIndex(group, resp.Leader); found && resp.Leader != cluster.None {
-			lg.targetIdx = pos // the hint knows the leader; obey it
-		} else {
-			lg.targetIdx = (lg.targetIdx + 1) % len(group)
-		}
-		return r.emitLegAttempt(opID, o, leg)
+		return r.redirectLeg(opID, o, leg, resp.Leader)
 	case StatusNotReady:
 		lg.lastRetryable = StatusNotReady
 		return r.emitLegAttempt(opID, o, leg)
 	default:
 		return nil, fmt.Errorf("naylamp: router got an unknown status %d", resp.Status)
 	}
+}
+
+// redirectLeg advances one search leg past a NotLeader, the search-side mirror of
+// redirectWrite: a hint back to a suppressed mute leader parks the leg for a paced
+// probe, any usable hint is obeyed, and a hintless answer rotates to the next live
+// member.
+func (r *Router) redirectLeg(opID uint64, o *searchOp, leg int, hint cluster.NodeID) ([][]byte, error) {
+	lg := &o.legs[leg]
+	group := r.shards.Groups[lg.shard].Nodes
+	if r.rotateOnTimeout && r.hintSuppressed(&lg.rot, hint) {
+		lg.rot.holdUntil = r.now + r.probeTicks
+		return nil, nil
+	}
+	if pos, found := groupIndex(group, hint); found && hint != cluster.None {
+		lg.targetIdx = pos // the hint knows the leader; obey it
+	} else {
+		lg.targetIdx = nextLiveTarget(group, lg.targetIdx, &lg.rot, r.now)
+	}
+	return r.emitLegAttempt(opID, o, leg)
 }
 
 // Result reports an operation's outcome once, then forgets it, exactly like

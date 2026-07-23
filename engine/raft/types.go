@@ -71,7 +71,9 @@ const (
 //	             ReadCtx = pending read round when nonzero
 //	MsgAppResp:  Term, From, To, Granted, LastIndex = last replicated index
 //	             when Granted, the follower's last log index as a catch-up
-//	             hint when rejected, ReadCtx echoed from the append it answers
+//	             hint when rejected, ReadCtx echoed from the append it answers,
+//	             Reached set when the responder framed a client answer this
+//	             window (off unless the service-health option is enabled)
 //	MsgSnap:     Term, From, To, LogIndex/LogTerm = snapshot position,
 //	             Offset = byte offset of Chunk, Chunk, Done = final chunk,
 //	             Commit = leader commit
@@ -97,4 +99,5 @@ type Message struct {
 	Chunk     []byte
 	Done      bool
 	ReadCtx   uint64
+	Reached   bool
 }

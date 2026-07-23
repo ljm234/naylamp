@@ -44,6 +44,16 @@ var ErrInvalidArgument = errors.New("naylamp: invalid argument")
 // one; 0 disables compaction entirely.
 type NodeOptions struct {
 	CompactEvery uint64
+	// ServiceHealth turns on the self-declared client-reach signal in the core:
+	// this node stamps a bit on its MsgAppResp when it framed a client answer this
+	// window, and as a leader it steps down when a peer is reaching clients while
+	// it is not. Its zero value is off, byte-for-byte the historical behavior. It
+	// is only sound paired with the client router's timeout rotation (see the
+	// router's RotateOnTimeout), so the two are enabled together or not at all.
+	ServiceHealth bool
+	// ServiceHealthWindows overrides the reach signal's hysteresis window count
+	// for tuning under simulation; its zero value uses the core default.
+	ServiceHealthWindows int
 }
 
 // Node is a single replica of a vector collection: a sans-io state machine
@@ -166,6 +176,8 @@ func OpenNode(dir string, id cluster.NodeID, cfg cluster.Config, dim int, rng *r
 
 	raftOpts := raft.DefaultOptions()
 	raftOpts.CheckQuorum = true // an isolated leader demotes itself rather than hold a mute term forever
+	raftOpts.ServiceHealth = opts.ServiceHealth
+	raftOpts.ServiceHealthWindows = opts.ServiceHealthWindows
 	core, err := raft.New(id, cfg, rng, raftOpts)
 	if err != nil {
 		_ = storage.Close()
@@ -303,10 +315,22 @@ func (n *Node) beginClientSearch(from cluster.NodeID, reqID uint64, query []floa
 	return n.processReady(rd)
 }
 
+// frameClientResponse frames one response to a client, first noting the framing
+// as a service-health reach for the current window. Every client answer funnels
+// through here, and every call is a response to a client by construction (the
+// destination is always the requester's id), so the reach bit turns on for any
+// answer this node hands a client, a redirect included. The core keeps and
+// windows the bit, stamps it on this node's outbound MsgAppResp, and on a leader
+// reads it locally; the note is a no-op while the option is off.
+func (n *Node) frameClientResponse(to cluster.NodeID, resp ClientResponse) ([]byte, error) {
+	n.core.NoteClientReached()
+	return EncodeClientResponse(n.id, to, resp)
+}
+
 // respond frames one client response for the requester as this node's outbound
 // set. n.id is the sender; the requester correlates the reply by its reqID.
 func (n *Node) respond(to cluster.NodeID, resp ClientResponse) ([][]byte, error) {
-	frame, err := EncodeClientResponse(n.id, to, resp)
+	frame, err := n.frameClientResponse(to, resp)
 	if err != nil {
 		return nil, err
 	}
@@ -558,7 +582,7 @@ func (n *Node) processReady(rd raft.Ready) ([][]byte, error) {
 		if e.Term != pw.term {
 			resp = ClientResponse{ReqID: pw.reqID, Status: StatusNotLeader, Leader: n.core.Leader()}
 		}
-		frame, err := EncodeClientResponse(n.id, pw.from, resp)
+		frame, err := n.frameClientResponse(pw.from, resp)
 		if err != nil {
 			return nil, err
 		}
@@ -590,7 +614,7 @@ func (n *Node) processReady(rd raft.Ready) ([][]byte, error) {
 			kept = append(kept, ctx)
 			continue
 		}
-		frame, err := EncodeClientResponse(n.id, ps.from, ClientResponse{
+		frame, err := n.frameClientResponse(ps.from, ClientResponse{
 			ReqID:     ps.reqID,
 			Status:    StatusOK,
 			Neighbors: n.index.Search(ps.query, ps.k),
@@ -620,7 +644,7 @@ func (n *Node) processReady(rd raft.Ready) ([][]byte, error) {
 				stillPending = append(stillPending, ctx)
 				continue
 			}
-			frame, err := EncodeClientResponse(n.id, ps.from, ClientResponse{ReqID: ps.reqID, Status: StatusNotLeader, Leader: n.core.Leader()})
+			frame, err := n.frameClientResponse(ps.from, ClientResponse{ReqID: ps.reqID, Status: StatusNotLeader, Leader: n.core.Leader()})
 			if err != nil {
 				return nil, err
 			}

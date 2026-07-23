@@ -24,6 +24,8 @@ func TestCodec_RoundTripAllKinds(t *testing.T) {
 		{Kind: MsgApp, From: 1, To: 3, Term: 7, LogIndex: 45, LogTerm: 7, Commit: 45, ReadCtx: 7}, // read-carrying heartbeat
 		{Kind: MsgAppResp, From: 3, To: 1, Term: 7, Granted: true, LastIndex: 45},
 		{Kind: MsgAppResp, From: 3, To: 1, Term: 7, Granted: true, LastIndex: 45, ReadCtx: 7},
+		{Kind: MsgAppResp, From: 3, To: 1, Term: 7, Granted: true, LastIndex: 45, Reached: true},
+		{Kind: MsgAppResp, From: 3, To: 1, Term: 7, Granted: true, LastIndex: 45, ReadCtx: 7, Reached: true},
 	}
 	for _, want := range msgs {
 		raw, err := EncodeMsg(want)
@@ -65,7 +67,8 @@ func TestCodec_SnapshotRoundTripAndBounds(t *testing.T) {
 		}
 	}
 
-	// Unknown flag bits fail loudly instead of being silently ignored.
+	// The reached bit (bit 2) decodes as a valid flag; a bit above it still
+	// fails loudly instead of being silently ignored.
 	raw, err := EncodeMsg(msgs[0])
 	if err != nil {
 		t.Fatalf("encode: %v", err)
@@ -75,9 +78,18 @@ func TestCodec_SnapshotRoundTripAndBounds(t *testing.T) {
 		t.Fatalf("decode envelope: %v", err)
 	}
 	env.Payload[58] |= 1 << 2
-	if _, derr := DecodeMsgEnvelope(env); !errors.Is(derr, ErrMalformedMessage) {
-		t.Fatalf("invalid flag bit accepted: %v", derr)
+	got, derr := DecodeMsgEnvelope(env)
+	if derr != nil {
+		t.Fatalf("reached bit rejected as invalid: %v", derr)
 	}
+	if !got.Reached {
+		t.Fatalf("reached bit did not decode: %+v", got)
+	}
+	env.Payload[58] |= 1 << 3
+	if _, derr := DecodeMsgEnvelope(env); !errors.Is(derr, ErrMalformedMessage) {
+		t.Fatalf("flag bit above the reached bit accepted: %v", derr)
+	}
+	env.Payload[58] &^= (1 << 2) | (1 << 3) // restore valid flags before reusing the payload
 
 	// A chunk length lying beyond the payload is rejected before any
 	// allocation sized by it.
@@ -91,7 +103,6 @@ func TestCodec_SnapshotRoundTripAndBounds(t *testing.T) {
 	// Entries and chunk together must account for every byte: a trailing
 	// byte after the declared chunk is a framing bug and fails loudly.
 	trailing := append(append([]byte(nil), env.Payload...), 0xAA)
-	trailing[58] &^= 1 << 2 // restore valid flags on the copy
 	if _, derr := DecodeMsgEnvelope(cluster.Envelope{From: 1, To: 2, Kind: EnvelopeKind,
 		Payload: trailing}); !errors.Is(derr, ErrMalformedMessage) {
 		t.Fatalf("trailing byte after chunk accepted: %v", derr)
@@ -135,9 +146,10 @@ func TestCodec_MalformedBodies(t *testing.T) {
 		t.Fatalf("impossible entry count accepted: %v", err)
 	}
 
-	// Invalid flag bits.
+	// A flag bit above the defined ones (bit 3 here) is invalid. The reached bit
+	// (bit 2) is exercised as a valid flag in TestCodec_SnapshotRoundTripAndBounds.
 	badFlag := make([]byte, msgHeaderSize)
-	badFlag[58] = 4
+	badFlag[58] = 1 << 3
 	if _, err := DecodeMsgEnvelope(cluster.Envelope{From: 1, To: 2, Kind: EnvelopeKind,
 		Payload: badFlag}); !errors.Is(err, ErrMalformedMessage) {
 		t.Fatalf("invalid flag accepted: %v", err)

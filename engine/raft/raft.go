@@ -51,6 +51,22 @@ type Options struct {
 	// the term instead of holding it mute forever. Its zero value is off, which
 	// is exactly the behavior before this option existed.
 	CheckQuorum bool
+	// ServiceHealth makes a leader step down when a peer reports having reached a
+	// client this window while the leader itself reached none, sustained for the
+	// hysteresis window count: the case where a leader still holds quorum with its
+	// peers but has gone mute toward clients, which CheckQuorum cannot see. Its
+	// zero value is off, byte-for-byte the behavior before this option existed:
+	// no bit is stamped, no set is kept, and no leader ever steps down for it. It
+	// is only sound paired with the client router's timeout rotation, which is
+	// what stops a redirect hint from bouncing a stuck client straight back to the
+	// mute leader; enabling the signal without that rotation lets the recovery
+	// deadlock, so the two are one feature and must be turned on together. It also
+	// stamps a flag bit a build from before it rejects, so enabling it across a
+	// fleet of mixed builds is unsupported (see flagReached).
+	ServiceHealth bool
+	// ServiceHealthWindows overrides the ServiceHealth hysteresis window count for
+	// tuning under simulation; its zero value falls back to the default.
+	ServiceHealthWindows int
 }
 
 // DefaultOptions keeps heartbeats well below the election timeout. CheckQuorum
@@ -64,6 +80,14 @@ func DefaultOptions() Options { return Options{ElectionTicks: 10, HeartbeatTicks
 // one-window check would misread as a lost quorum, while still catching a
 // genuine isolation within a bounded number of windows.
 const defaultCheckQuorumWindows = 2
+
+// defaultServiceHealthWindows is how many consecutive windows a leader must see
+// a peer reaching a client while it reaches none before it steps down. Two
+// windows of hysteresis absorb the healthy first-contact case, a client's first
+// request landing on a follower that frames a redirect (turning its bit on) one
+// window before the leader has served that client, which a one-window check
+// would misread as the leader having gone mute.
+const defaultServiceHealthWindows = 2
 
 // snapChunkSize bounds one snapshot chunk on the wire, well below the
 // envelope payload cap so framing overhead never pushes a chunk over it.
@@ -165,6 +189,22 @@ type Raft struct {
 	failedWindows      int
 	checkQuorumWindows int
 
+	// ServiceHealth state. clientReached is this node's own bit: it framed an
+	// answer to a client within the current window, set through NoteClientReached
+	// and window-cleared like recentActive. A follower stamps it on its outbound
+	// MsgAppResp; the leader reads its own copy locally. reachedClient is the
+	// leader-only set of peers whose MsgAppResp carried that bit this window, the
+	// structural parallel to recentActive. reachElapsed counts ticks toward the
+	// next window evaluation and reachFailedWindows counts consecutive windows the
+	// cede condition held, toward the hysteresis threshold serviceHealthWindows.
+	// All are reset in becomeLeader and becomeFollower, so none survives a role
+	// change, and all stay nil or zero while the option is off.
+	reachedClient        map[cluster.NodeID]bool
+	clientReached        bool
+	reachElapsed         int
+	reachFailedWindows   int
+	serviceHealthWindows int
+
 	votes map[cluster.NodeID]bool
 	// prevotes counts would-grants of the pending pre-vote round; nil when
 	// no round is pending.
@@ -204,7 +244,11 @@ func New(id cluster.NodeID, cfg cluster.Config, rng *rand.Rand, opts Options) (*
 	if opts.CheckQuorum && opts.HeartbeatTicks*2 > opts.ElectionTicks {
 		return nil, errors.New("raft: CheckQuorum needs at least two heartbeat intervals per election timeout")
 	}
-	r := &Raft{id: id, cfg: cfg, opts: opts, rng: rng, log: NewLog(), checkQuorumWindows: defaultCheckQuorumWindows}
+	r := &Raft{id: id, cfg: cfg, opts: opts, rng: rng, log: NewLog(),
+		checkQuorumWindows: defaultCheckQuorumWindows, serviceHealthWindows: defaultServiceHealthWindows}
+	if opts.ServiceHealthWindows > 0 {
+		r.serviceHealthWindows = opts.ServiceHealthWindows
+	}
 	r.becomeFollower(0, cluster.None)
 	return r, nil
 }
@@ -338,12 +382,46 @@ func (r *Raft) Tick() Ready {
 				}
 			}
 		}
+		if r.opts.ServiceHealth {
+			r.reachElapsed++
+			if r.reachElapsed >= r.opts.ElectionTicks {
+				r.reachElapsed = 0
+				// Evaluate before sweeping, the same order CheckQuorum uses above:
+				// a peer reached a client this window and this leader reached none.
+				ceding := len(r.reachedClient) > 0 && !r.clientReached
+				r.sweepReached()
+				if ceding {
+					r.reachFailedWindows++
+					if r.reachFailedWindows >= r.serviceHealthWindows {
+						// The leader has been mute toward clients while a peer served
+						// them for serviceHealthWindows straight: step down at the
+						// SAME term with no known leader and emit nothing, byte for
+						// byte the CheckQuorum branch above, so a late heartbeat does
+						// not re-pin a follower's lease and block the election that
+						// must now happen.
+						r.becomeFollower(r.hs.Term, cluster.None)
+						return r.ready(nil)
+					}
+				} else {
+					r.reachFailedWindows = 0
+				}
+			}
+		}
 		r.heartbeatElapsed++
 		if r.heartbeatElapsed >= r.opts.HeartbeatTicks {
 			r.heartbeatElapsed = 0
 			msgs = r.bcastAppend()
 		}
 	} else {
+		if r.opts.ServiceHealth {
+			r.reachElapsed++
+			if r.reachElapsed >= r.opts.ElectionTicks {
+				r.reachElapsed = 0
+				// A non-leader keeps only its own bit, window-cleared so it never
+				// stamps a stale reach onto a later MsgAppResp.
+				r.clientReached = false
+			}
+		}
 		r.electionElapsed++
 		if r.electionElapsed >= r.randomizedTimeout {
 			msgs = r.preCampaign()
@@ -383,6 +461,35 @@ func (r *Raft) markActive(from cluster.NodeID) {
 // since-isolated leader in office today.
 func (r *Raft) sweepActive() {
 	r.recentActive = make(map[cluster.NodeID]bool, len(r.cfg.Nodes)-1)
+}
+
+// NoteClientReached records that this node framed an answer to a client within
+// the current window. A follower stamps the resulting bit on its next MsgAppResp
+// so a leader learns the peer is reaching clients; the leader reads its own copy
+// locally when it evaluates whether to cede. It is a no-op while the
+// service-health option is off, so the runtime may call it on every client
+// answer without a branch of its own.
+func (r *Raft) NoteClientReached() {
+	if r.opts.ServiceHealth {
+		r.clientReached = true
+	}
+}
+
+// markReached folds a peer's reached bit into the leader's window set, the
+// structural parallel to markActive. It is a no-op off the leader or while the
+// option is off, where reachedClient is nil.
+func (r *Raft) markReached(from cluster.NodeID) {
+	if r.reachedClient != nil {
+		r.reachedClient[from] = true
+	}
+}
+
+// sweepReached clears the leader's reach set and its own bit at a window
+// boundary, the parallel to sweepActive, so each window measures only itself: a
+// peer that reached a client three windows ago must not cede a leader today.
+func (r *Raft) sweepReached() {
+	r.reachedClient = make(map[cluster.NodeID]bool, len(r.cfg.Nodes)-1)
+	r.clientReached = false
 }
 
 // Propose appends data to the leader's log and starts replicating it,
@@ -478,6 +585,10 @@ func (r *Raft) becomeFollower(term uint64, leader cluster.NodeID) {
 	r.recentActive = nil
 	r.checkElapsed = 0
 	r.failedWindows = 0
+	r.reachedClient = nil
+	r.clientReached = false
+	r.reachElapsed = 0
+	r.reachFailedWindows = 0
 	r.resetElectionTimer()
 }
 
@@ -592,6 +703,18 @@ func (r *Raft) becomeLeader() []Message {
 			}
 		}
 	}
+	r.reachElapsed = 0
+	r.reachFailedWindows = 0
+	r.reachedClient = nil
+	r.clientReached = false
+	if r.opts.ServiceHealth {
+		// A fresh leader starts with an empty reach set. Unlike CheckQuorum there is
+		// nothing to seed: even if a peer's bit lands during the first window and the
+		// cede condition holds, the hysteresis means one window only raises the
+		// counter and never steps the leader down, so the healthy first-contact case
+		// is carried by serviceHealthWindows rather than by a seed.
+		r.reachedClient = make(map[cluster.NodeID]bool, len(r.cfg.Nodes)-1)
+	}
 	r.nextIndex = make(map[cluster.NodeID]uint64, len(r.cfg.Nodes))
 	r.matchIndex = make(map[cluster.NodeID]uint64, len(r.cfg.Nodes))
 	r.snapXfer = make(map[cluster.NodeID]uint64)
@@ -652,9 +775,12 @@ func (r *Raft) handleVoteResp(m Message) []Message {
 // actually confirmed (a longer stale tail must not ride along).
 func (r *Raft) handleApp(m Message) Message {
 	r.recognizeLeader(m.From)
+	// reached carries this node's own window bit back to the leader on the same
+	// MsgAppResp, granted or not; it stays false unless the option is enabled.
+	reached := r.opts.ServiceHealth && r.clientReached
 	lastNew := m.LogIndex + uint64(len(m.Entries))
 	if _, ok := r.log.TryAppend(m.LogIndex, m.LogTerm, m.Entries); !ok {
-		return Message{Kind: MsgAppResp, From: r.id, To: m.From, Term: r.hs.Term, LastIndex: r.log.LastIndex(), ReadCtx: m.ReadCtx}
+		return Message{Kind: MsgAppResp, From: r.id, To: m.From, Term: r.hs.Term, LastIndex: r.log.LastIndex(), ReadCtx: m.ReadCtx, Reached: reached}
 	}
 	if len(m.Entries) > 0 && m.LogIndex < r.stableTo {
 		// The batch may have overwritten indices already handed out as
@@ -668,7 +794,7 @@ func (r *Raft) handleApp(m Message) Message {
 		r.hs.Commit = min(m.Commit, lastNew)
 		r.dirty = true
 	}
-	return Message{Kind: MsgAppResp, From: r.id, To: m.From, Term: r.hs.Term, Granted: true, LastIndex: lastNew, ReadCtx: m.ReadCtx}
+	return Message{Kind: MsgAppResp, From: r.id, To: m.From, Term: r.hs.Term, Granted: true, LastIndex: lastNew, ReadCtx: m.ReadCtx, Reached: reached}
 }
 
 // recognizeLeader is the shared reaction to leader traffic at the current
@@ -792,6 +918,9 @@ func (r *Raft) handleAppResp(m Message) []Message {
 		return nil
 	}
 	r.markActive(m.From)
+	if m.Reached {
+		r.markReached(m.From)
+	}
 	if m.ReadCtx != 0 {
 		// Any answer at this term counts toward the read round, granted or
 		// not: a log mismatch is repair business, while the answer itself

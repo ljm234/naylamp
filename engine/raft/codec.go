@@ -24,7 +24,8 @@ const EnvelopeKind cluster.Kind = 1
 //	lastIndex uint64
 //	offset    uint64
 //	readCtx   uint64
-//	flags     uint8 (bit 0 granted, bit 1 done; any other bit is invalid)
+//	flags     uint8 (bit 0 granted, bit 1 done, bit 2 reached; bit 3 and up
+//	          are invalid)
 //	nEntries  uint32
 //	chunkLen  uint32
 //	entries   nEntries times: index uint64, term uint64, dataLen uint32, data
@@ -35,6 +36,17 @@ const (
 
 	flagGranted = 1 << 0
 	flagDone    = 1 << 1
+	// flagReached rides in the same flags byte, no field added to the wire. A
+	// responder sets it when it framed an answer to a client within the current
+	// window, so a leader can tell a peer that is reaching clients from one that
+	// is not. Only a sender with the service-health option enabled ever sets it;
+	// with the option off the bit stays zero and every frame is byte-for-byte
+	// what it was before this bit existed. The decoder accepts it unconditionally
+	// so both option settings interoperate on one node, but a node still running
+	// a build from before this bit rejects the whole frame as an invalid flag
+	// (see DecodeMsgEnvelope), so enabling the option across a fleet of mixed
+	// builds is not supported and must wait for a protocol-version handshake.
+	flagReached = 1 << 2
 )
 
 var (
@@ -69,6 +81,9 @@ func EncodeMsg(m Message) ([]byte, error) {
 	if m.Done {
 		flags |= flagDone
 	}
+	if m.Reached {
+		flags |= flagReached
+	}
 	body = append(body, flags)
 	binary.LittleEndian.PutUint32(scratch[:4], uint32(len(m.Entries))) //nolint:gosec // bounded by the envelope payload cap at wrap time
 	body = append(body, scratch[:4]...)
@@ -100,8 +115,8 @@ func DecodeMsg(data []byte) (Message, error) {
 // DecodeMsgEnvelope parses the raft body out of an already-decoded envelope.
 // Every length is checked before it is trusted: a claimed entry count or
 // chunk length that cannot fit in the payload is rejected before any
-// allocation sized by it, and unknown flag bits fail loudly instead of being
-// silently ignored.
+// allocation sized by it, and flag bits above the ones defined fail loudly
+// instead of being silently ignored.
 func DecodeMsgEnvelope(env cluster.Envelope) (Message, error) {
 	if env.Kind != EnvelopeKind {
 		return Message{}, fmt.Errorf("%w: kind %d", ErrWrongEnvelopeKind, env.Kind)
@@ -120,11 +135,12 @@ func DecodeMsgEnvelope(env cluster.Envelope) (Message, error) {
 	m.Offset = binary.LittleEndian.Uint64(b[42:50])
 	m.ReadCtx = binary.LittleEndian.Uint64(b[50:58])
 	flags := b[58]
-	if flags&^(byte(flagGranted)|byte(flagDone)) != 0 {
+	if flags&^(byte(flagGranted)|byte(flagDone)|byte(flagReached)) != 0 {
 		return Message{}, fmt.Errorf("%w: invalid flags %#x", ErrMalformedMessage, flags)
 	}
 	m.Granted = flags&flagGranted != 0
 	m.Done = flags&flagDone != 0
+	m.Reached = flags&flagReached != 0
 	n := binary.LittleEndian.Uint32(b[59:63])
 	chunkLen := binary.LittleEndian.Uint32(b[63:67])
 	rest := len(b) - msgHeaderSize
