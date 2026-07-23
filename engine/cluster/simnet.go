@@ -27,6 +27,7 @@ type SimNet struct {
 	seq         uint64
 	handlers    map[NodeID]Handler
 	blocked     map[[2]NodeID]bool
+	edges       map[[2]NodeID]bool
 	frozenUntil map[NodeID]Tick
 	stats       SimStats
 	closed      bool
@@ -59,6 +60,13 @@ type SimStats struct {
 	DroppedByPartition uint64
 	DroppedNoReceiver  uint64
 	Duplicated         uint64
+
+	// DroppedByEdge counts frames killed by a DropsByEdge block, kept apart
+	// from DroppedByPartition so a coverage gate can prove a directed edge to a
+	// client was muted rather than fold it into a peer-to-peer partition. It
+	// stays zero unless a harness calls DropsByEdge, so existing schedules never
+	// see it move.
+	DroppedByEdge uint64
 
 	// Freezes counts Freeze calls and DeferredToFrozen counts deliveries
 	// pushed back one tick because their receiver was frozen. Both stay zero
@@ -116,6 +124,7 @@ func NewSimNet(seed uint64, cfg SimConfig) *SimNet {
 		clock:       &ManualClock{},
 		handlers:    make(map[NodeID]Handler),
 		blocked:     make(map[[2]NodeID]bool),
+		edges:       make(map[[2]NodeID]bool),
 		frozenUntil: make(map[NodeID]Tick),
 	}
 }
@@ -174,6 +183,32 @@ func (s *SimNet) HealAll() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.blocked = make(map[[2]NodeID]bool)
+}
+
+// DropsByEdge blocks the directed link from -> to just like Partition, but its
+// drops land in DroppedByEdge instead of DroppedByPartition. It exists so a
+// schedule that mutes a node's egress to a client endpoint can prove that
+// specific edge fired, kept distinct from the peer-to-peer partitions the
+// coverage gate already counts; folding both into one counter would let a
+// client-edge mute pass for a peer partition. The semantics match Partition
+// exactly: directed, asymmetric, all-or-nothing, and checked at delivery time,
+// so a frame already in flight when the edge drops still dies. RestoreEdge is
+// the reverse.
+func (s *SimNet) DropsByEdge(from, to NodeID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.edges[[2]NodeID{from, to}] = true
+}
+
+// RestoreEdge lifts a DropsByEdge block on the directed link from -> to. It is a
+// separate call from Heal on purpose: the partition and edge-drop faults stay
+// independently addressable, so restoring a client-edge drop never lifts a peer
+// partition on the same pair and the reverse holds too. HealAll leaves
+// DropsByEdge blocks untouched for the same reason.
+func (s *SimNet) RestoreEdge(from, to NodeID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.edges, [2]NodeID{from, to})
 }
 
 // Freeze stalls a node for d ticks of virtual time: while the window holds,
@@ -245,15 +280,28 @@ func (s *SimNet) Tick() {
 	}
 	var out []delivery
 	for _, ev := range due {
-		if s.blocked[[2]NodeID{ev.from, ev.to}] {
+		edge := [2]NodeID{ev.from, ev.to}
+		// Precedence is fixed so the outcome is deterministic when an edge is
+		// blocked by both primitives: Partition is checked before DropsByEdge,
+		// so such a frame counts once as DroppedByPartition and never as
+		// DroppedByEdge. Partition keeps priority because it predates this
+		// primitive; an edge already partitioned then behaves exactly as it did
+		// before DropsByEdge existed. Both blocked-edge checks run before the
+		// freeze check, so a cut link kills an in-flight frame at delivery
+		// regardless of the receiver's freeze state.
+		if s.blocked[edge] {
 			s.stats.DroppedByPartition++
+			continue
+		}
+		if s.edges[edge] {
+			s.stats.DroppedByEdge++
 			continue
 		}
 		if s.frozenUntil[ev.to] > now {
 			// The receiver is frozen: defer, never drop. Re-arming one tick
 			// at a time with the ORIGINAL seq keeps deferred frames in (tick,
 			// seq) order among themselves and lets an early Unfreeze release
-			// them on the very next tick. The partition check stays first, so
+			// them on the very next tick. The blocked-edge checks stay first, so
 			// an in-flight frame on a cut link still dies at delivery time.
 			ev.deliverAt = now + 1
 			heap.Push(&s.queue, ev)
