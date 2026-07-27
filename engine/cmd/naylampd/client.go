@@ -48,8 +48,9 @@ func runClient(args []string) {
 	var listen, op, vecArg string
 	var groups groupFlag
 	var id uint64
-	var k, dim int
-	var deadline, poll time.Duration
+	var k, dim, count int
+	var deadline, poll, tick time.Duration
+	var serviceHealth bool
 	fs.StringVar(&listen, "listen", "", "this client's own listen address host:port (required)")
 	fs.Var(&groups, "group", "one shard as id=addr,id=addr (repeatable, at least one required)")
 	fs.StringVar(&op, "op", "", "operation: put, del, or search (required)")
@@ -59,6 +60,9 @@ func runClient(args []string) {
 	fs.IntVar(&dim, "dim", 3, "vector dimension")
 	fs.DurationVar(&deadline, "deadline", 5*time.Second, "deadline for the operation's result")
 	fs.DurationVar(&poll, "poll", 20*time.Millisecond, "result poll interval")
+	fs.BoolVar(&serviceHealth, "service-health", false, "drive a continuous ticked load over one rotating router; off by default, one feature with the node -service-health, so enable both or neither")
+	fs.IntVar(&count, "count", 1, "operations the continuous load re-issues; above 1 requires -service-health")
+	fs.DurationVar(&tick, "tick", 10*time.Millisecond, "router tick period under -service-health, matching the node -tick")
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: naylampd client -listen ADDR -group id=addr,... -op OP [args]")
 		fs.PrintDefaults()
@@ -69,6 +73,15 @@ func runClient(args []string) {
 	if listen == "" || len(groups) == 0 || op == "" {
 		fmt.Fprintln(os.Stderr, "client: -listen, at least one -group, and -op are required")
 		fs.Usage()
+		os.Exit(2)
+	}
+
+	// A count above one is continuous load, which only the service-health feature
+	// drives, so refuse it here rather than silently running one operation and
+	// ignoring the flag. Validated before the network so a usage error costs
+	// nothing on the wire and exits 2, not 1.
+	if count != 1 && !serviceHealth {
+		fmt.Fprintln(os.Stderr, "client: -count above 1 requires -service-health; continuous load is part of that feature")
 		os.Exit(2)
 	}
 
@@ -117,6 +130,13 @@ func runClient(args []string) {
 		}
 	}
 
+	// Under -service-health the client runs a different recovery: one long-lived
+	// router with timeout rotation on, ticked so the rotation and peer probe wake,
+	// carrying a continuous load. It never returns.
+	if serviceHealth {
+		runClientReach(parsed, emit, describe, swap, tr, count, tick, deadline, poll)
+	}
+
 	// Emit, poll for a result, and re-emit on a rotated view every reemitInterval
 	// until the deadline. A single emission is not enough against the real
 	// transport: it is at-most-once and the router does not retry replies
@@ -131,7 +151,7 @@ func runClient(args []string) {
 		if gen > 0 && !time.Now().Before(end) {
 			break
 		}
-		rh, verr := makeView(parsed, gen, swap, tr)
+		rh, verr := makeView(parsed, gen, swap, tr, false)
 		if verr != nil {
 			fmt.Fprintf(os.Stderr, "client: %v\n", verr)
 			os.Exit(1)
@@ -178,6 +198,112 @@ func runClient(args []string) {
 	os.Exit(1)
 }
 
+// runClientReach drives the service-health load and exits. It keeps one router
+// host alive for the whole run with timeout rotation on, advances that host's
+// logical clock from a ticker at the node tick cadence so the rotation and the
+// paced peer probe wake, and re-issues the operation up to count times within the
+// deadline. A single operation cannot unseat a mute leader: it retires exhausted
+// after its bounded per-view retries, before the leader's multi-window step-down
+// completes, so the load issues a fresh operation the moment the last one
+// exhausts, exactly as the router host contract expects of a caller past a
+// budget. It prints the first success and a final tally, and exits 0 if any
+// operation was served StatusOK, the recovery observed end to end, or 1 if the
+// deadline elapsed with none served. It does not stop at the first success, so
+// the same run also sustains the healthy-load control, where every operation is
+// served and the leader must never step down.
+func runClientReach(groups [][]nodeAddr, emit func(*naylamp.RouterHost) (uint64, error), describe func(naylamp.RouteResult) string, swap *handlerSwap, tr cluster.Transport, count int, tick, deadline, poll time.Duration) {
+	if count < 1 {
+		count = 1
+	}
+	// One rotating router host for the whole run. Generation 0 is the identity view,
+	// because the router's own timeout rotation, not a rebuilt view, moves the target
+	// here; the view is rebuilt only in the single-operation client above.
+	rh, verr := makeView(groups, 0, swap, tr, true)
+	if verr != nil {
+		fmt.Fprintf(os.Stderr, "client: %v\n", verr)
+		os.Exit(1)
+	}
+
+	// A ticker advances the router's logical clock so its retransmit timeouts and
+	// target rotation fire; a router that is never ticked never times an attempt
+	// out. now counts ticks, the same monotone clock the nodes advance on.
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(tick)
+		defer ticker.Stop()
+		var now cluster.Tick
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				now++
+				if terr := rh.Tick(now); terr != nil {
+					// A poisoned host is fatal; the operation loop observes the same
+					// poison through rh.Err and exits with the diagnosis.
+					return
+				}
+			}
+		}
+	}()
+	halt := func() {
+		close(stop)
+		wg.Wait()
+	}
+
+	end := time.Now().Add(deadline)
+	served, attempted := 0, 0
+	for i := 0; i < count && time.Now().Before(end); i++ {
+		attempted++
+		opID, eerr := emit(rh)
+		if eerr != nil {
+			if errors.Is(eerr, naylamp.ErrInvalidArgument) {
+				fmt.Fprintln(os.Stderr, "client: invalid argument")
+				halt()
+				os.Exit(1)
+			}
+			fmt.Fprintf(os.Stderr, "client: emit: %v\n", eerr)
+			halt()
+			os.Exit(1)
+		}
+		// Wait for this operation to reach a terminal or exhausted result, never past
+		// the overall deadline, then let the next iteration re-issue a fresh one.
+		res, ok := awaitResult(rh, opID, time.Until(end), poll)
+		if perr := rh.Err(); perr != nil {
+			fmt.Fprintf(os.Stderr, "client: router host poisoned: %v\n", perr)
+			halt()
+			os.Exit(1)
+		}
+		switch {
+		case ok && !res.Exhausted && res.Status == naylamp.StatusOK:
+			served++
+			// The first success is the recovery; print it once so the log carries the
+			// moment and the committed index, then keep the load going.
+			if served == 1 {
+				fmt.Printf("service-health: first served at op %d %s\n", i, describe(res))
+			}
+		case ok && !res.Exhausted && res.Status == naylamp.StatusInvalidArgument:
+			// A terminal input error: re-issuing cannot change it.
+			fmt.Fprintln(os.Stderr, "client: status invalid-argument")
+			halt()
+			os.Exit(1)
+		default:
+			// Exhausted its per-view retries, or no result before the deadline: the
+			// next iteration issues a fresh operation. Left unprinted so a long run
+			// does not flood the log with one line per unserved attempt.
+		}
+	}
+	halt()
+	fmt.Printf("service-health load: served=%d attempted=%d\n", served, attempted)
+	if served > 0 {
+		os.Exit(0)
+	}
+	os.Exit(1)
+}
+
 // handlerSwap is the client transport's inbound trampoline. The transport is
 // built once with swap.deliver, and each rotated view repoints swap at that
 // view's router host handler. Because the listener is never recreated, the links
@@ -205,8 +331,11 @@ func (s *handlerSwap) deliver(from cluster.NodeID, data []byte) {
 // makeView builds the router host for one re-emission generation: each shard's
 // nodes rotated gen positions, so a fresh emission tries a different member
 // first, over the shared transport, with the trampoline pointed at the new
-// handler.
-func makeView(groups [][]nodeAddr, gen int, swap *handlerSwap, tr cluster.Transport) (*naylamp.RouterHost, error) {
+// handler. When rotate is false the router is the historical coordinator with no
+// timeout rotation, byte-for-byte the single-operation client; when true it turns
+// on the timeout-driven target rotation and hint suppression, whose tunings fall
+// to the sealed defaults, so a ticked host recovers from a mute leader.
+func makeView(groups [][]nodeAddr, gen int, swap *handlerSwap, tr cluster.Transport, rotate bool) (*naylamp.RouterHost, error) {
 	shardGroups := make([]cluster.Config, len(groups))
 	for i, g := range groups {
 		rotated := rotateNodes(g, gen)
@@ -217,7 +346,13 @@ func makeView(groups [][]nodeAddr, gen int, swap *handlerSwap, tr cluster.Transp
 		}
 		shardGroups[i] = cluster.Config{Nodes: nodes}
 	}
-	router, err := naylamp.NewRouter(clientID, cluster.ShardMap{Groups: shardGroups})
+	var router *naylamp.Router
+	var err error
+	if rotate {
+		router, err = naylamp.NewRouterWithOptions(clientID, cluster.ShardMap{Groups: shardGroups}, naylamp.RouterOptions{RotateOnTimeout: true})
+	} else {
+		router, err = naylamp.NewRouter(clientID, cluster.ShardMap{Groups: shardGroups})
+	}
 	if err != nil {
 		return nil, fmt.Errorf("build router: %w", err)
 	}

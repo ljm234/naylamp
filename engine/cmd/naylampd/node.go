@@ -27,6 +27,8 @@ func runNode(args []string) {
 	var listen, peers, clientSpec, dir string
 	var dim int
 	var tick time.Duration
+	var serviceHealth bool
+	var serviceHealthWindows int
 	fs.UintVar(&id, "id", 0, "this node's id (required)")
 	fs.StringVar(&listen, "listen", "", "listen address host:port (required)")
 	fs.StringVar(&peers, "peers", "", "other group members as id=addr,id=addr")
@@ -34,6 +36,8 @@ func runNode(args []string) {
 	fs.StringVar(&dir, "dir", "", "data directory (required)")
 	fs.IntVar(&dim, "dim", 3, "vector dimension")
 	fs.DurationVar(&tick, "tick", 10*time.Millisecond, "logical tick period")
+	fs.BoolVar(&serviceHealth, "service-health", false, "step down when a peer reaches this client and this leader does not; off by default, one feature with the client -service-health, so enable both or neither")
+	fs.IntVar(&serviceHealthWindows, "service-health-windows", 0, "reach step-down hysteresis windows; 0 uses the built-in default")
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: naylampd node [flags]")
 		fs.PrintDefaults()
@@ -82,7 +86,13 @@ func runNode(args []string) {
 	// A seed unique per process: the id fixes one coordinate and the wall clock
 	// the other, so two nodes never draw the same randomized election timeout.
 	rng := rand.New(rand.NewPCG(uint64(id), uint64(time.Now().UnixNano()))) //nolint:gosec // a node seed for randomized election timeouts, not cryptographic
-	node, err := naylamp.OpenNode(dir, nid, cfg, dim, rng, naylamp.NodeOptions{})
+	// With -service-health false and -service-health-windows 0 this literal is the
+	// zero NodeOptions the daemon has always opened with, so the default deployment
+	// is unchanged; the flags exist only to arm the reach step-down for the gate.
+	node, err := naylamp.OpenNode(dir, nid, cfg, dim, rng, naylamp.NodeOptions{
+		ServiceHealth:        serviceHealth,
+		ServiceHealthWindows: serviceHealthWindows,
+	})
 	if err != nil {
 		logger.Fatalf("open node: %v", err)
 	}
