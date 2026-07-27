@@ -6,6 +6,11 @@
 # on its private ip, dialing its two peers, and dialing the client (id 90) back
 # on host 1. start-node and stop-node act on a single host, which the runbook
 # needs to relaunch a killed node and to relocate leadership off host 1.
+#
+# NAYLAMP_GATE_NODE_FLAGS, if set, is appended verbatim to every node's naylampd
+# command line, the way the service-health gate arms -service-health on the whole
+# fleet. Unset or empty, the launch line is byte-for-byte the historical one, so an
+# ordinary start is unchanged.
 set -euo pipefail
 
 GATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,7 +18,7 @@ GATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${GATE_DIR}/common.sh"
 
 launch_node() {
-	local n="$1" peers="" j listen client
+	local n="$1" peers="" j listen client extra
 	for j in "${NODE_IDS[@]}"; do
 		if [ "$j" != "$n" ]; then
 			[ -n "$peers" ] && peers="${peers},"
@@ -22,10 +27,14 @@ launch_node() {
 	done
 	listen="${PRIV[$n]}:${NODE_PORT}"
 	client="${CLIENT_ID}=${PRIV[1]}:${CLIENT_PORT}"
-	echo "gate: starting node ${n} on ${HOSTS[$n]} (listen ${listen}, peers ${peers}, client ${client})"
+	# Extra flags carry a leading space only when present, so an empty variable
+	# leaves the command line exactly as it has always been.
+	extra="${NAYLAMP_GATE_NODE_FLAGS:-}"
+	[ -n "${extra}" ] && extra=" ${extra}"
+	echo "gate: starting node ${n} on ${HOSTS[$n]} (listen ${listen}, peers ${peers}, client ${client})${extra:+, extra flags${extra}}"
 	# nohup detaches the node; stdin from /dev/null and output to the log free the
 	# ssh channel so this returns. The pid is recorded for kill and stop.
-	run_on "$n" "cd naylamp || exit 1; NAYLAMP_TLS_CERT=certs/node-${n}.pem NAYLAMP_TLS_KEY=certs/node-${n}-key.pem NAYLAMP_TLS_CA=certs/ca.pem nohup ./bin/naylampd node -id ${n} -listen ${listen} -peers ${peers} -client ${client} -dir data -tick 10ms > logs/node.log 2>&1 < /dev/null & echo \$! > naylampd.pid; sleep 1; echo node ${n} pid \$(cat naylampd.pid)"
+	run_on "$n" "cd naylamp || exit 1; NAYLAMP_TLS_CERT=certs/node-${n}.pem NAYLAMP_TLS_KEY=certs/node-${n}-key.pem NAYLAMP_TLS_CA=certs/ca.pem nohup ./bin/naylampd node -id ${n} -listen ${listen} -peers ${peers} -client ${client} -dir data -tick 10ms${extra} > logs/node.log 2>&1 < /dev/null & echo \$! > naylampd.pid; sleep 1; echo node ${n} pid \$(cat naylampd.pid)"
 }
 
 stop_node() {
