@@ -4,6 +4,11 @@
 *.out
 bin/
 dist/
+# A bare `go build ./cmd/naylampd` drops the daemon in the cwd; real gate builds
+# target the ignored gate/out/. Anchored so it never matches the source packages
+# engine/cmd/naylampd or engine/naylamp.
+/naylampd
+/engine/naylampd
 
 # Go
 /vendor/
