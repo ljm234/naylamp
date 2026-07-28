@@ -598,10 +598,11 @@ func runClusterSeed(t *testing.T, seed uint64) clusterSeedOutcome {
 // TestClusterDST_Seeded sweeps the distributed harness across many seeds and
 // gates on the coverage the schedule actually exercised.
 func TestClusterDST_Seeded(t *testing.T) {
-	// Seed budget and parsing follow the raft safety sweep exactly
-	// (TestRaft_SafetyInvariants_Seeded and its NAYLAMP_RAFT_SEEDS gate): 500
-	// seeds by default, 40 under -short, and NAYLAMP_CLUSTER_SEEDS overrides the
-	// count. NAYLAMP_CLUSTER_SEED (singular) pins one seed for a replay.
+	// Seed budget and parsing follow the shape of the raft safety sweep
+	// (TestRaft_SafetyInvariants_Seeded and its NAYLAMP_RAFT_SEEDS gate), but not
+	// its count: that sweep defaults to 300 seeds and this one to 500, both 40
+	// under -short, with NAYLAMP_CLUSTER_SEEDS overriding the count here.
+	// NAYLAMP_CLUSTER_SEED (singular) pins one seed for a replay.
 	seeds := 500
 	if testing.Short() {
 		seeds = 40
