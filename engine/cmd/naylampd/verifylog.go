@@ -34,16 +34,115 @@ const (
 	verifyExitUsage       = 2
 )
 
-// manifest is the oracle of what the client actually acked, reconstructed by the
-// gate from the exit-0 client invocations, never from the log under audit. seen
-// is every id the workload ever wrote (a put or a del), and live is the id to
-// vector map that remains after the workload replays in order, so a put then a
-// del of one id leaves it seen but not live. The faithful committed log must
-// carry exactly this: no id outside seen (no phantoms), and a replay whose live
-// set equals live (no gaps, and every value correct).
+// manifest is the oracle of what the client emitted, reconstructed by the gate
+// from the client invocations, never from the log under audit.
+//
+// An operation carries one of three standings, because under a real failure the
+// client's exit code does not divide the world in two. CONFIRMED means the
+// client was answered: the operation is committed, so its absence from the log
+// is an acknowledged write that was lost, and that is red. UNCERTAIN means the
+// client got no answer and cannot know whether the operation ran: both its
+// presence and its absence are correct, so neither is red. Anything the client
+// never emitted at all is in neither set, and its presence in the log is a
+// phantom, which stays red.
+//
+// The middle case is not hypothetical. The first hardware gate recorded a client
+// reporting a timeout under a partition while the operation had in fact
+// executed; a manifest built only from the answered operations omits it, and a
+// two-state checker then calls a correct entry a phantom. Grading a real run
+// needs the third standing or it reds for the wrong reason.
+//
+// seen is every id the workload emitted under either standing, so an uncertain
+// id is never mistaken for a phantom. confirmed is the ids with at least one
+// answered operation, and those are the ones whose absence is a verdict.
+// ambiguous is the ids any uncertain operation touched: their final value cannot
+// be predicted, so the replay comparison skips them in both directions and
+// reports them as a count instead. live is the id to vector map left by
+// replaying every operation in order, which is exact for an id no uncertain
+// operation touched, and those are the only ids it is read for.
+//
+// DECLARED BLIND SPOT, and it is wider than one case. Once an unanswered
+// operation touches an id, that id's VALUE is no longer checked in either
+// direction, so anything the log says about it is accepted: a value no client
+// ever proposed, a delete the workload never emitted, or an answered write that
+// was lost and whose id survives only because the unanswered one landed. The
+// oracle is keyed by id rather than by entry, and an unanswered operation makes
+// the id's final content genuinely unpredictable, so suppressing the comparison
+// is correct; what it costs is every other claim about that id.
+//
+// Presence is still enforced, so an id with any answered operation must appear.
+// The gate closes most of the gap by choosing its workload: keep unanswered
+// operations on ids of their own, and every id that carries an answered
+// operation stays fully checked. Narrowing it inside the checker would need
+// per-entry identity on the wire, which the client does not carry today, or a
+// membership test against the values the manifest actually wrote, which is
+// possible and deliberately not done here so the rule stays one sentence. The
+// limit is pinned by a test so it stays a known shape rather than a surprise.
 type manifest struct {
-	seen map[uint64]bool
-	live map[uint64][]float32
+	seen      map[uint64]bool
+	live      map[uint64][]float32
+	confirmed map[uint64]bool
+	ambiguous map[uint64]bool
+}
+
+// confirmedIDs returns the ids whose absence is a verdict. A manifest written
+// before the standings existed carries no confirmed set, and every operation in
+// it was an answered one, so the whole of seen is confirmed. That is what keeps
+// an older manifest reading exactly as it did.
+func (m manifest) confirmedIDs() map[uint64]bool {
+	if m.confirmed == nil {
+		return m.seen
+	}
+	return m.confirmed
+}
+
+// isAmbiguous reports whether an uncertain operation touched this id, in which
+// case its final value is not predictable and no verdict is taken from it.
+func (m manifest) isAmbiguous(id uint64) bool { return m.ambiguous[id] }
+
+// note records one operation against an id. An id stays confirmed once any
+// answered operation named it, because that entry is committed whatever a later
+// unanswered operation did, and it becomes ambiguous once any unanswered one
+// named it, because its final value can no longer be predicted. The two are not
+// exclusive: an id can be required to be present and still have an unpredictable
+// value, which is exactly the case a confirmed put followed by an unanswered
+// overwrite produces.
+func (m manifest) note(id uint64, uncertain bool) {
+	m.seen[id] = true
+	if uncertain {
+		m.ambiguous[id] = true
+		return
+	}
+	m.confirmed[id] = true
+}
+
+// splitStanding peels an optional trailing standing marker off a manifest line
+// and reports whether it said the operation was unanswered. A line with no
+// marker is confirmed, which is what makes an older manifest parse unchanged. A
+// trailing word that is neither marker is left in place on purpose, because a
+// put's last field is its vector and the two cannot be told apart here; it then
+// fails the arity check the caller applies, so a typo is rejected there rather
+// than swallowed as a standing.
+func splitStanding(fields []string) ([]string, bool, error) {
+	if len(fields) == 0 {
+		return fields, false, errors.New("empty operation")
+	}
+	uncertain := false
+	switch fields[len(fields)-1] {
+	case standingConfirmed:
+		fields = fields[:len(fields)-1]
+	case standingUncertain:
+		fields, uncertain = fields[:len(fields)-1], true
+	default:
+		return fields, false, nil
+	}
+	// Stripping the marker is what can empty the line, so the check belongs
+	// here and not before: a line carrying nothing but a standing names no
+	// operation, and it must be reported as such rather than indexed into.
+	if len(fields) == 0 {
+		return fields, false, errors.New("a standing with no operation")
+	}
+	return fields, uncertain, nil
 }
 
 // runVerifyLog reads a cold copy of one replica's durable state and checks that
@@ -154,16 +253,25 @@ func verifyLog(dir string, id cluster.NodeID, cfg cluster.Config, dim int, man m
 	}
 
 	var reasons []string
-	// No phantoms: every committed id was written by the workload.
+	// No phantoms: every committed id was emitted by the workload under one
+	// standing or the other. seen carries both, so an unanswered operation that
+	// did commit is not mistaken for an id nobody ever wrote.
 	for _, phantom := range sortedDiff(committedSeen, man.seen) {
-		reasons = append(reasons, fmt.Sprintf("verify: phantom id=%d is committed but was never written by the workload", phantom))
+		reasons = append(reasons, fmt.Sprintf("verify: phantom id=%d is committed but was never emitted by the workload", phantom))
 	}
-	// No gaps: every id the workload wrote is present in the committed record.
-	for _, missing := range sortedDiff(man.seen, committedSeen) {
-		reasons = append(reasons, fmt.Sprintf("verify: acked id=%d is in the workload but missing from the committed record", missing))
+	// No lost acknowledged writes: every id the client was ANSWERED about is
+	// present. An unanswered one is not required, because its absence is a
+	// legitimate outcome of the failure the gate injected.
+	for _, missing := range sortedDiff(man.confirmedIDs(), committedSeen) {
+		reasons = append(reasons, fmt.Sprintf("verify: acknowledged id=%d is in the workload but missing from the committed record", missing))
 	}
-	// Replay equals the oracle: the live set and every live value match.
+	// Replay equals the oracle, for the ids whose value the oracle can predict.
+	// An id an unanswered operation touched has no predictable final value, so
+	// it is counted below instead of judged here.
 	for _, id := range sortedKeys(man.live) {
+		if man.isAmbiguous(id) {
+			continue
+		}
 		got, ok := committedLive[id]
 		if !ok {
 			reasons = append(reasons, fmt.Sprintf("verify: id=%d is live in the workload but not in the committed replay", id))
@@ -174,16 +282,49 @@ func verifyLog(dir string, id cluster.NodeID, cfg cluster.Config, dim int, man m
 		}
 	}
 	for _, id := range sortedKeys(committedLive) {
+		if man.isAmbiguous(id) {
+			continue
+		}
 		if _, ok := man.live[id]; !ok {
 			reasons = append(reasons, fmt.Sprintf("verify: id=%d is live in the committed replay but not in the workload", id))
 		}
 	}
 
-	if len(reasons) == 0 {
-		return true, []string{fmt.Sprintf("verify: FAITHFUL dir=%s replica=%d committed_commands=%d seen=%d live=%d; no phantoms, no gaps, replay equals the workload live oracle (idempotent duplicates absorbed)", dir, id, len(cmds), len(committedSeen), len(committedLive))}
+	// The ids an unanswered operation touched are reported, never judged. The
+	// counters are per ID and not per operation, which matters when reading
+	// them: three unanswered writes to one id count once, and an id that also
+	// carries an answered write counts as present because that entry is there,
+	// whatever became of the unanswered one. What the pair measures is how many
+	// of the uncertain ids ended up in the log at all, which is a fact about the
+	// run the gate wants recorded even though it decides nothing: a partition
+	// that left every uncertain write committed tells a different story from one
+	// that lost them all, and neither is a failure of this replica.
+	uncertainPresent, uncertainAbsent := 0, 0
+	for _, id := range sortedIDs(man.ambiguous) {
+		if committedSeen[id] {
+			uncertainPresent++
+		} else {
+			uncertainAbsent++
+		}
 	}
-	reasons = append(reasons, fmt.Sprintf("verify: NOT FAITHFUL dir=%s replica=%d committed_commands=%d; %d discrepancy(ies) above", dir, id, len(cmds), len(reasons)))
+	standing := fmt.Sprintf("uncertain_ids_present=%d uncertain_ids_absent=%d", uncertainPresent, uncertainAbsent)
+
+	if len(reasons) == 0 {
+		return true, []string{fmt.Sprintf("verify: FAITHFUL dir=%s replica=%d committed_commands=%d seen=%d live=%d %s; no phantoms, no lost acknowledged writes, replay equals the workload live oracle (idempotent duplicates absorbed, unanswered operations counted not judged)", dir, id, len(cmds), len(committedSeen), len(committedLive), standing)}
+	}
+	reasons = append(reasons, fmt.Sprintf("verify: NOT FAITHFUL dir=%s replica=%d committed_commands=%d %s; %d discrepancy(ies) above", dir, id, len(cmds), standing, len(reasons)))
 	return false, reasons
+}
+
+// sortedIDs returns the keys of an id set in ascending order, so evidence lines
+// and counts come out in a stable order across runs.
+func sortedIDs(m map[uint64]bool) []uint64 {
+	out := make([]uint64, 0, len(m))
+	for id := range m {
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
 }
 
 // configFromFlags builds the group config from this id and the peer list, exactly
@@ -207,10 +348,20 @@ func configFromFlags(self cluster.NodeID, peers string) (cluster.Config, error) 
 	return cluster.Config{Nodes: members}, nil
 }
 
+// standingConfirmed and standingUncertain are the words a manifest line may end
+// with to declare whether the client was answered. The marker is optional and
+// its absence means confirmed, so a manifest written before the standings
+// existed parses to exactly the same oracle it always did.
+const (
+	standingConfirmed = "confirmed"
+	standingUncertain = "uncertain"
+)
+
 // readManifest parses the workload manifest: one operation per line, either
-// "put <id> <f,f,f>" or "del <id>", processed in order so the live map reflects
-// the final state. Blank lines and lines beginning with '#' are ignored, so the
-// gate can annotate the file.
+// "put <id> <f,f,f>" or "del <id>", optionally followed by "confirmed" or
+// "uncertain", processed in order so the live map reflects the final state. A
+// line with no marker is confirmed. Blank lines and lines beginning with '#'
+// are ignored, so the gate can annotate the file.
 func readManifest(path string) (manifest, error) {
 	f, err := os.Open(path) //nolint:gosec // path is an operator-provided manifest for a read-only audit, not untrusted input
 	if err != nil {
@@ -218,7 +369,12 @@ func readManifest(path string) (manifest, error) {
 	}
 	defer func() { _ = f.Close() }()
 
-	man := manifest{seen: map[uint64]bool{}, live: map[uint64][]float32{}}
+	man := manifest{
+		seen:      map[uint64]bool{},
+		live:      map[uint64][]float32{},
+		confirmed: map[uint64]bool{},
+		ambiguous: map[uint64]bool{},
+	}
 	sc := bufio.NewScanner(f)
 	line := 0
 	for sc.Scan() {
@@ -228,6 +384,10 @@ func readManifest(path string) (manifest, error) {
 			continue
 		}
 		fields := strings.Fields(text)
+		fields, uncertain, serr := splitStanding(fields)
+		if serr != nil {
+			return manifest{}, fmt.Errorf("line %d: %w", line, serr)
+		}
 		switch fields[0] {
 		case "put":
 			if len(fields) != 3 {
@@ -241,7 +401,7 @@ func readManifest(path string) (manifest, error) {
 			if err != nil {
 				return manifest{}, fmt.Errorf("line %d: %w", line, err)
 			}
-			man.seen[id] = true
+			man.note(id, uncertain)
 			man.live[id] = vec
 		case "del":
 			if len(fields) != 2 {
@@ -251,7 +411,7 @@ func readManifest(path string) (manifest, error) {
 			if err != nil {
 				return manifest{}, fmt.Errorf("line %d: bad id %q: %w", line, fields[1], err)
 			}
-			man.seen[id] = true
+			man.note(id, uncertain)
 			delete(man.live, id)
 		default:
 			return manifest{}, fmt.Errorf("line %d: unknown operation %q (want put or del)", line, fields[0])

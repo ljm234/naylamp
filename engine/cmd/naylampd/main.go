@@ -28,6 +28,10 @@ func main() {
 		runClient(os.Args[2:])
 	case "verify-log":
 		runVerifyLog(os.Args[2:])
+	case "state-hash":
+		runStateHash(os.Args[2:])
+	case "compare-logs":
+		runCompareLogs(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -40,6 +44,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  node        run one replica of a shard group until a signal stops it")
 	fmt.Fprintln(os.Stderr, "  client      run one routing operation and exit")
 	fmt.Fprintln(os.Stderr, "  verify-log  audit a cold copy of a replica's committed log against a workload manifest")
+	fmt.Fprintln(os.Stderr, "  state-hash  print the committed-data digest of a cold copy, to compare across replicas")
+	fmt.Fprintln(os.Stderr, "  compare-logs  check that cold copies agree over the span they share")
 	fmt.Fprintln(os.Stderr, "the mutual TLS material is read from the environment, never from flags:")
 	fmt.Fprintln(os.Stderr, "  NAYLAMP_TLS_CERT  this process's certificate PEM file")
 	fmt.Fprintln(os.Stderr, "  NAYLAMP_TLS_KEY   this process's private key PEM file")
