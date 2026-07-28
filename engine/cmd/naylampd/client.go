@@ -50,7 +50,7 @@ func runClient(args []string) {
 	var id uint64
 	var k, dim, count int
 	var deadline, poll, tick time.Duration
-	var serviceHealth bool
+	var serviceHealth, timing bool
 	fs.StringVar(&listen, "listen", "", "this client's own listen address host:port (required)")
 	fs.Var(&groups, "group", "one shard as id=addr,id=addr (repeatable, at least one required)")
 	fs.StringVar(&op, "op", "", "operation: put, del, or search (required)")
@@ -61,6 +61,7 @@ func runClient(args []string) {
 	fs.DurationVar(&deadline, "deadline", 5*time.Second, "deadline for the operation's result")
 	fs.DurationVar(&poll, "poll", 20*time.Millisecond, "result poll interval")
 	fs.BoolVar(&serviceHealth, "service-health", false, "drive a continuous ticked load over one rotating router; off by default, one feature with the node -service-health, so enable both or neither")
+	fs.BoolVar(&timing, "timing", false, "print one timing line per operation to stdout, after the result; off by default, and off means byte-identical output")
 	fs.IntVar(&count, "count", 1, "operations the continuous load re-issues; above 1 requires -service-health")
 	fs.DurationVar(&tick, "tick", 10*time.Millisecond, "router tick period under -service-health, matching the node -tick")
 	fs.Usage = func() {
@@ -82,6 +83,15 @@ func runClient(args []string) {
 	// nothing on the wire and exits 2, not 1.
 	if count != 1 && !serviceHealth {
 		fmt.Fprintln(os.Stderr, "client: -count above 1 requires -service-health; continuous load is part of that feature")
+		os.Exit(2)
+	}
+
+	// The continuous load has its own reporting and does not time individual
+	// operations, so accepting -timing there would take the flag and print
+	// nothing. Refused for the same reason -count is refused above: a flag that
+	// is silently ignored is worse than one that is rejected.
+	if timing && serviceHealth {
+		fmt.Fprintln(os.Stderr, "client: -timing does not apply under -service-health; that load reports its own tally, not per-operation times")
 		os.Exit(2)
 	}
 
@@ -146,7 +156,13 @@ func runClient(args []string) {
 	// belong. All three operations are idempotent under re-emission: an upsert of
 	// the same id and vector, a delete, and a read-only search, and a committed
 	// duplicate is legitimate under the log-fidelity semantics.
-	end := time.Now().Add(deadline)
+	// started is the reference for -timing. It is taken here, before the first
+	// view is built, so the reported elapsed covers what a caller waits for: the
+	// emission, the wait, and every re-emission the deadline allowed. The clock
+	// is local to this process and the span never leaves it, so nothing here
+	// depends on the hosts' clocks agreeing.
+	started := time.Now()
+	end := started.Add(deadline)
 	for gen := 0; ; gen++ {
 		if gen > 0 && !time.Now().Before(end) {
 			break
@@ -181,6 +197,7 @@ func runClient(args []string) {
 			switch res.Status {
 			case naylamp.StatusOK:
 				fmt.Println(describe(res))
+				printTiming(timing, op, "ok", started, gen)
 				os.Exit(0)
 			case naylamp.StatusInvalidArgument:
 				// A terminal input error: re-emitting cannot change it.
@@ -195,7 +212,29 @@ func runClient(args []string) {
 		// path and is dropped deterministically.
 	}
 	fmt.Fprintf(os.Stderr, "client: no result within %s; the cluster may be unreachable or without a leader\n", deadline)
+	printTiming(timing, op, "timeout", started, 0)
 	os.Exit(1)
+}
+
+// printTiming writes one timing line to stdout when -timing is on, and nothing
+// at all when it is off, so an ordinary run stays byte-identical. The line is
+// key=value in the same shape as the result lines above, so a gate script can
+// select it with a prefix match and sum the field it wants. A timed-out
+// operation is reported too: a latency run that silently dropped its failures
+// would report the mean of the survivors and call it the mean.
+// attempts is the number of emissions the operation took, so a slow sample can
+// be told apart from one that merely waited out a re-emission window; it is
+// reported as zero when the deadline elapsed with no result.
+func printTiming(on bool, op, status string, started time.Time, gen int) {
+	if !on {
+		return
+	}
+	attempts := 0
+	if status == "ok" {
+		attempts = gen + 1
+	}
+	fmt.Printf("timing op=%s status=%s elapsed_us=%d attempts=%d\n",
+		op, status, time.Since(started).Microseconds(), attempts)
 }
 
 // runClientReach drives the service-health load and exits. It keeps one router

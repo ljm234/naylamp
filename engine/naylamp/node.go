@@ -456,6 +456,24 @@ func (n *Node) Leader() cluster.NodeID { return n.core.Leader() }
 // Role returns this replica's current consensus role.
 func (n *Node) Role() raft.Role { return n.core.Role() }
 
+// ConsensusState is one replica's standing in consensus: the role it plays, the
+// node it believes leads, and the term all three belong to. The three travel as
+// one value because reading them one at a time can straddle a transition and
+// report a combination that never existed, for example the role sampled while
+// this node still led and the term sampled after a higher one deposed it.
+type ConsensusState struct {
+	Role   raft.Role
+	Leader cluster.NodeID
+	Term   uint64
+}
+
+// Consensus returns this replica's role, leader and term as one value. The core
+// is single threaded and its caller holds the owner's mutex, so the three reads
+// here cannot interleave with a transition.
+func (n *Node) Consensus() ConsensusState {
+	return ConsensusState{Role: n.core.Role(), Leader: n.core.Leader(), Term: n.core.Term()}
+}
+
 // LastIndex returns the last log index the core holds.
 func (n *Node) LastIndex() uint64 { return n.core.LastIndex() }
 

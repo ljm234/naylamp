@@ -58,7 +58,11 @@ func runNode(args []string) {
 	}
 
 	nid := cluster.NodeID(id)
-	logger := log.New(os.Stderr, fmt.Sprintf("node %d: ", id), log.LstdFlags)
+	// Microsecond stamps, not the standard second resolution: a failover on real
+	// hardware completes well inside one second, so a second-resolution log
+	// cannot time it. The extra digits sit inside the timestamp field, ahead of
+	// the message, so anything reading the message is unaffected.
+	logger := log.New(os.Stderr, fmt.Sprintf("node %d: ", id), log.LstdFlags|log.Lmicroseconds)
 
 	if merr := os.MkdirAll(dir, 0o750); merr != nil {
 		logger.Fatalf("mkdir %s: %v", dir, merr)
@@ -135,8 +139,14 @@ func runNode(args []string) {
 		defer wg.Done()
 		ticker := time.NewTicker(tick)
 		defer ticker.Stop()
-		lastRole, lastLeader := host.Role(), host.Leader()
-		logger.Printf("role=%v leader=%v", lastRole, lastLeader)
+		// One read for all three fields. Sampling role, leader and term with
+		// separate accessors would take the mutex once each and a delivery could
+		// move the replica between them, so the line could report a combination
+		// that never held at once. The term is what makes a log auditable for
+		// election safety after the fact: two nodes reporting leader in the same
+		// term is a violation regardless of how the hosts' clocks compare.
+		last := host.Consensus()
+		logger.Printf("role=%v leader=%v term=%d", last.Role, last.Leader, last.Term)
 		var lastReadCtx uint64
 		for {
 			select {
@@ -148,9 +158,19 @@ func runNode(args []string) {
 					// corrupt or its storage is broken.
 					logger.Fatalf("tick: %v", terr)
 				}
-				if r, l := host.Role(), host.Leader(); r != lastRole || l != lastLeader {
-					lastRole, lastLeader = r, l
-					logger.Printf("role=%v leader=%v", r, l)
+				// The line fires on a role or leader change, and deliberately NOT
+				// on a term that advances by itself. Comparing the term too would
+				// add lines on followers and candidates, which take a new term
+				// without either field moving, and that would quietly change what
+				// a count of these lines means to a reader that already treats
+				// such a count as evidence of a role transition. Nothing is lost
+				// by leaving it out: a node takes office only by campaigning, and
+				// campaigning moves the role first, so every acquisition of
+				// leadership still prints the term it was won at, which is what an
+				// after-the-fact audit needs.
+				if cur := host.Consensus(); cur.Role != last.Role || cur.Leader != last.Leader {
+					last = cur
+					logger.Printf("role=%v leader=%v term=%d", cur.Role, cur.Leader, cur.Term)
 				}
 				// A read index confirms only after a majority answered its round,
 				// so this line, logged when the context rises, is the observable

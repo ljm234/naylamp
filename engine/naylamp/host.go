@@ -299,6 +299,23 @@ func (h *Host) Role() raft.Role {
 	return h.node.Role()
 }
 
+// Consensus returns the node's role, leader and term under a SINGLE acquisition
+// of the mutex, so the three always describe the same instant. Calling Role and
+// Leader one after the other does not: each takes and releases the mutex, and a
+// delivery can run between them and move this replica to a different term, so
+// the pair printed would be one that never held at once. A caller reporting a
+// term alongside a role must use this, not two or three separate reads.
+// A poisoned Host reports a follower of nobody at term zero, matching what the
+// separate accessors report.
+func (h *Host) Consensus() ConsensusState {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.err != nil {
+		return ConsensusState{Role: raft.RoleFollower, Leader: cluster.None}
+	}
+	return h.node.Consensus()
+}
+
 // LastIndex returns the node's last log index, or 0 on a poisoned Host.
 func (h *Host) LastIndex() uint64 {
 	h.mu.Lock()
