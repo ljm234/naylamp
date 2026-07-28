@@ -27,6 +27,18 @@ node_modules/
 .env
 .env.local
 *.pem
+# Private keys by NAME as well as by extension. The gate's current private key
+# is named naylamp-gate-key-v2, with no suffix at all, so the *.pem above would
+# not catch it if it were ever copied into the tree. The pattern is anchored to
+# the key's own full name rather than to a -key stem: a pattern with no slash
+# matches at any depth, so a stem rule would silently swallow any future source
+# file whose name happens to contain it, engine/cluster/tls-key-loader.go being
+# exactly the kind of file this repository would write next. The trailing star
+# still covers -v3, -v4 and the pem without editing this list again. The
+# exception keeps a public half trackable, since a .pub is not a secret; it is
+# listed after the ignore so it wins.
+naylamp-gate-key*
+!*.pub
 
 # Run artifacts: whatever a benchmark, sweep or gate writes into the tree. These are
 # patterns rather than one line per file, so adding a benchmark or a gate does not
