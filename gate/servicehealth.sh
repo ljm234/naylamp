@@ -19,12 +19,14 @@
 # flags through cluster.sh, the client flags through its own wrapper) and never
 # only one.
 #
-# Only the unidirectional arm (leader->client dropped, client->leader open) is
-# built on hardware: the client shares host 1's ip with node 1, so a rule toward
-# the client ip cannot cut only the client->leader path without also cutting Raft
-# to node 1. The bidirectional arm, where the client reaches no node, is
-# not constructible here and stays a simulation-only result (the cluster DST), and
-# the unidirectional arm is exactly the one the simulation proved cedes and recovers.
+# Only the answers-only arm (leader->client dropped, client->leader open) is built
+# on hardware: the client shares host 1's ip with node 1, so a rule toward the
+# client ip cannot cut the client->node path without also cutting Raft to node 1.
+# That co-location is why the arm that cuts ONE node off in both directions is not
+# constructible here; it stays a simulation-only result, and so do the two regimes
+# that touch every node at once. The answers-only arm is the one the simulation
+# measured ceding and recovering, over two seeds, asserting safety and logging the
+# outcome rather than requiring it.
 #
 # Budgets are derived from the tick cadence and the sealed constants, never
 # trimmed to run faster:
@@ -35,14 +37,15 @@
 #   R_rot       50 ticks = 0.50s retransmit timeout (probe 10 ticks, cooldown 50)
 #   op budget   3 x group = 9 attempts, so a single op retires in about 4.5s,
 #               before the step-down closes, which is why the load is continuous
-# The simulation measured the worst of 500 seeds ceding at 249 ticks (2.49s) and
-# served at 1847 ticks (18.47s) after seven re-wins, inside an 80s hard budget.
+# Over 500 seeds the simulation measured a worst cede at 609 ticks (6.09s, seed
+# 203) and a worst serve at 1847 ticks (18.47s, seed 263) after seven re-wins, both
+# inside an 80s hard budget; the median cede is 119 ticks and the median serve 156.
 # The round-equals-tick equivalence is exact only in the simulation; a live daemon
 # adds real network and fsync latency per wall tick, so these are floors and the
-# service budget is doubled to 160s and observed generously. Recovery is EVENTUAL,
-# not bounded-fast: the aggregate signal lets a muted leader re-win the election it
-# released and drag the pre-vote metastable tail, so the positive is served-within
-# the budget with a reconverging tail, never a tight bound.
+# service budget is set to 170s, above twice the 80s simulation floor. Recovery is
+# EVENTUAL, not bounded-fast: the aggregate signal lets a muted leader re-win the
+# election it released and drag the pre-vote metastable tail, so the positive is
+# served-within the budget with a reconverging tail, never a tight bound.
 #
 # Every check registers a verdict; the final report, from the exit trap, calls the
 # run a success only when every expected check passed and a check that never ran
@@ -497,7 +500,7 @@ attribution() {
 	fi
 
 	begin_check
-	note "SH.attribution: driving a ${RETAIN_S}s load against the muted leader with the feature off"
+	note "SH.attribution: holding one write against the muted leader for ${RETAIN_S}s with the feature off"
 	local out ex rc_after pkts alive
 	out="$(client_single "$L" "${RETAIN_S}s")"
 	printf '%s\n' "${out}"

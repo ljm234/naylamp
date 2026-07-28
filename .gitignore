@@ -28,20 +28,18 @@ node_modules/
 .env.local
 *.pem
 
-# Scale test artifact
-engine/hnsw/scale_result.txt
-engine/hnsw/scale_sweep_result.txt
-
-# Cluster benchmark artifact
-engine/naylamp/cluster_bench.txt
-
-# Phase 4 gate artifacts (the scripts and README are committed; run output is not)
+# Run artifacts: whatever a benchmark, sweep or gate writes into the tree. These are
+# patterns rather than one line per file, so adding a benchmark or a gate does not
+# mean editing this list again; name the output <something>_result.txt,
+# <something>_bench.txt, or NAYLAMP_<NAME>_GATE<...>.txt and it is ignored already.
+# The scripts and READMEs that PRODUCE these are committed; only their output is not.
+engine/**/*_result.txt
+engine/**/*_bench.txt
+/NAYLAMP_*GATE*.txt
 gate/out/
-NAYLAMP_PHASE4_GATE.txt
 
-# SIFT benchmark dataset (lives outside the repo) and its result artifact
+# Benchmark datasets, which live outside the repo
 *.fvecs
 *.ivecs
-engine/hnsw/sift_result.txt
 
 .claude/
