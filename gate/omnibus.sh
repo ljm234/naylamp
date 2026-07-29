@@ -13,7 +13,9 @@
 #
 # THE PHASES, and why the wipes fall where they do:
 #   F0  off-cloud: govulncheck and the sealed cluster DST. If the logic regressed,
-#       no host time is spent finding that out.
+#       no host work is done finding that out. It is the one phase that runs with
+#       the machines switched off, which is why "omnibus.sh pre" skips the
+#       reachability probe entirely.
 #   F1  build, deploy, homogeneous sha256, and the GIT SHA written into this file.
 #       The July artifact carried no commit and that is precisely why its evidence
 #       could not be tied to any tree; a run that cannot be anchored is not
@@ -26,7 +28,16 @@
 #       orphan it.
 #   F4  wipe, then the real-infrastructure benchmark on a clean cluster, so the
 #       numbers are not shaped by the damage of F2.
-#   F5  hygiene: no rule left behind, one binary on all three.
+#   F5  hygiene: no rule left behind, one binary on all three. It is a CHECK, so
+#       nothing tears down before it; doing so would erase what it looks for.
+#
+# ORDER OF THE CHEAP THINGS. A reachability probe runs before every subcommand
+# that needs a host, one short ssh each, because everything after it is expensive
+# and none of it can succeed against hosts that do not answer. "pre" is the
+# exception and skips it, being entirely local. Teardown, twelve ssh round trips,
+# never precedes the off-cloud phase: under "all" it falls between that phase and
+# the first one that touches a host, and under a single-phase run it follows the
+# probe directly.
 #
 # THE ACK ORACLE HAS THREE STANDINGS, and two rules govern how this gate writes
 # it. They are not style; breaking either reintroduces the defect the three-valued
@@ -84,6 +95,7 @@ OP_DEADLINE=8s              # above the 4.5s the client spends on its own retrie
 FAILOVER_S=25               # 20x the window plus the client budget
 HEAL_SETTLE_S=15            # time for the healed node to rejoin as a follower
 QUIESCE_SETTLE_S=5          # let the last commits land before stopping
+REACH_TIMEOUT_S=5           # per-host liveness probe, short on purpose: see below
 BENCH_SAMPLES=20            # write-ack samples for the latency table
 DIM=3
 
@@ -125,6 +137,14 @@ COLD_LOCAL="${OUT_DIR}/omnibus-cold"
 LOGS_LOCAL="${OUT_DIR}/omnibus-logs"
 GIT_SHA=""
 GIT_DIRTY=""
+# HOSTS_REACHABLE is set only once every host has answered. The exit trap reads
+# it so a run that stopped BECAUSE the hosts are unreachable does not then spend
+# another twelve connect timeouts trying to clean rules off them.
+HOSTS_REACHABLE=0
+# RUN_STARTED separates a usage error from a run that began and then stopped. A
+# rejected subcommand has nothing to report about cleaning up; a run that stopped
+# on the reachability probe does.
+RUN_STARTED=0
 
 # ---- verdict registry (shape shared with servicehealth.sh) -------------------
 VERDICTS=" "
@@ -203,9 +223,16 @@ copy_dir_to() {
 	scp -r "${SSH_OPTS[@]}" "${src}" "${NAYLAMP_GATE_USER}@${HOSTS[$n]}:${dst}"
 }
 
-# teardown removes any partition rule this run may have left, looping the delete so
-# it clears a rule left by an earlier aborted run too. It runs from the exit trap,
-# so a run killed midway never leaves a host cut off.
+# teardown removes any partition rule this run may have left, looping the delete
+# so it clears a rule left by an earlier aborted run too. It runs from the exit
+# trap, whenever a host was confirmed reachable, so a run killed midway never
+# leaves one cut off. It also runs from the dispatch ahead of the arms that
+# INSTALL rules or need a clean slate, which is provenance, operability and
+# bench; audit does not need it and hygiene must not have it, since hygiene
+# exists to find exactly the rules teardown deletes. It is twelve ssh round
+# trips, which is why it never runs before the off-cloud phase: there is no
+# reason to reach for a host ahead of the phase that exists to avoid paying for
+# one.
 teardown() {
 	local n x
 	for n in "${NODE_IDS[@]}"; do
@@ -217,10 +244,54 @@ teardown() {
 	done
 }
 
+# require_hosts_reachable answers one question before anything else spends time:
+# do the three hosts respond at all. It runs its own ssh rather than run_on so it
+# can use a short connect timeout, and BatchMode so a host that would prompt for
+# a credential fails fast instead of hanging.
+#
+# It exists because of what the ordering used to cost. A bare run against dead
+# hosts paid twelve connect timeouts in teardown, then the whole off-cloud phase,
+# 476 seconds on the run that prompted this, and only then reached the deploy
+# that finally noticed. Worse is the case where the hosts are UP: the same bare
+# run would have gone on to build, deploy, and then wipe data on all three
+# machines, roughly ten minutes after the operator started it. So the cheapest
+# possible question has to be the first one asked.
+require_hosts_reachable() {
+	local n unreachable=""
+	for n in "${NODE_IDS[@]}"; do
+		# The probe's own options come FIRST and the shared ones are inherited
+		# after: ssh takes the first value it is given for an option, so this
+		# shortens the connect timeout while still picking up whatever else
+		# SSH_OPTS carries. Writing it the other way round would silently keep
+		# the ten second timeout, and duplicating the shared options here would
+		# drift the day one of them changes.
+		if ssh -o BatchMode=yes -o ConnectTimeout="${REACH_TIMEOUT_S}" "${SSH_OPTS[@]}" \
+			"${NAYLAMP_GATE_USER}@${HOSTS[$n]}" true >/dev/null 2>&1; then
+			note "reach: node ${n} (${HOSTS[$n]}) answers"
+		else
+			unreachable="${unreachable} ${n}(${HOSTS[$n]})"
+		fi
+	done
+	if [ -n "${unreachable}" ]; then
+		stop "unreachable host(s):${unreachable}. Check the instances are started and that NAYLAMP_GATE_HOSTS holds their current public addresses, which change on restart."
+	fi
+	HOSTS_REACHABLE=1
+	note "reach: all three hosts answer within ${REACH_TIMEOUT_S}s"
+}
+
 cleanup() {
 	local rc=$?
 	set +e
-	teardown
+	# Only clean the hosts if they were ever known to answer. Without this, a run
+	# that stopped precisely because a host is unreachable pays the whole teardown
+	# in connect timeouts on the way out, which is the same waste twice.
+	if [ "${HOSTS_REACHABLE}" -eq 1 ]; then
+		teardown
+	elif [ "${RUN_STARTED}" -eq 1 ]; then
+		# Worth saying once a run has begun, and not on a usage error, which
+		# never reached for a host and has nothing to clean.
+		echo "gate: skipping teardown; no host was ever confirmed reachable, so there is nothing to clean and nothing to wait for" >&2
+	fi
 	if ! emit_final_verdict; then
 		[ "${rc}" -eq 0 ] && rc=1
 	fi
@@ -384,7 +455,7 @@ peers_of() {
 # ---- F0: off-cloud ------------------------------------------------------------
 
 phase_pre() {
-	note "OM.pre: off-cloud preconditions, before any host time is spent"
+	note "OM.pre: off-cloud preconditions, before any host work is done"
 	begin_check
 
 	note "OM.pre: govulncheck over the whole engine (item 4.5.6)"
@@ -853,33 +924,149 @@ phase_hygiene() {
 	end_check OM.hygiene
 }
 
-# ---- run ------------------------------------------------------------------------
+# ---- dispatch ---------------------------------------------------------------
+#
+# There is no default. Running this script bare prints the usage and exits 2,
+# the shape checkquorum.sh uses, and deliberately NOT the shape servicehealth.sh
+# and tls.sh use, which default to all. This gate wipes the data directories on
+# three machines, so a mistyped or argument-less invocation must never be the one
+# that starts a destructive run. servicehealth.sh wipes too and does default to
+# all; the difference here is that a bare run of this gate spends the whole
+# off-cloud phase first, so the wipe arrives long after the operator has stopped
+# watching.
+usage() {
+	cat >&2 <<'USAGE'
+usage: omnibus.sh <all|pre|provenance|operability|audit|bench|hygiene>
 
-EXPECTED="OM.pre OM.provenance OM.serve OM.kill OM.partition OM.faithful OM.digest OM.logmatch OM.election OM.bench OM.hygiene"
+  all           every phase below, in the order they are listed
+  pre           off-cloud only: govulncheck and the sealed cluster DST.
+                The one subcommand that needs no hosts at all
+  provenance    build, deploy, homogeneous sha256, and the commit anchor
+  operability   WIPES, then serves, kills a leader, and partitions one.
+                The three arms share one cluster state on purpose
+  audit         the Arc 4.8 invariant audit over the state operability left
+  bench         WIPES, then the real-infrastructure benchmark
+  hygiene       no rule left behind, one binary on all three
+
+THE SUBCOMMANDS ARE NOT INDEPENDENT. The order in "all" is the only order in
+which they all mean something:
+
+  audit READS THE STATE operability LEFT. Run on a freshly wiped cluster it
+  attests nothing, because the acks oracle is the record of the client
+  operations operability itself issued. It refuses to run without that
+  manifest rather than produce an empty green.
+
+  bench WIPES BEFORE IT RUNS. Running it before audit destroys exactly what
+  audit needs. Two of the three orderings are caught: audit refuses a manifest
+  with no acknowledged write, and an operability-then-bench-then-audit run reds
+  in verify-log on the confirmed ids the wipe removed. Stated here because the
+  ordering is still the operator's to get right.
+
+  operability WIPES BEFORE IT RUNS, so it discards whatever a previous phase
+  left. It is the intended start of a fresh run and the wrong thing to re-run
+  in the middle of one.
+USAGE
+}
+
+cmd="${1:-}"
+
+# The name is validated here, before any banner prints, so an invalid one is
+# rejected without a wall of context. The dispatch below carries its own catch-all
+# for the same names; the two lists are deliberately redundant and both fail
+# CLOSED, so a name added to one and not the other exits 2 rather than falling
+# through the dispatch with an empty verdict set and reporting success.
+case "${cmd}" in
+	pre|provenance|operability|audit|bench|hygiene|all) ;;
+	*) usage; exit 2 ;;
+esac
+RUN_STARTED=1
 
 echo "=== NAYLAMP PHASE 4 OMNIBUS GATE, with the Arc 4.8 invariant audit, $(date -u) ==="
+echo "subcommand: ${cmd}"
 echo "hosts (pub): ${NAYLAMP_GATE_HOSTS}"
 echo "hosts (priv): ${NAYLAMP_GATE_PRIVATE}"
-echo "budgets: tick=${TICK_MS}ms window=${ELECTION_TICKS}t/${WINDOW_MS}ms elect=${ELECT_TIMEOUT_S}s failover=${FAILOVER_S}s heal=${HEAL_SETTLE_S}s client-deadline=${OP_DEADLINE} bench-samples=${BENCH_SAMPLES}"
+echo "budgets: tick=${TICK_MS}ms window=${ELECTION_TICKS}t/${WINDOW_MS}ms elect=${ELECT_TIMEOUT_S}s failover=${FAILOVER_S}s heal=${HEAL_SETTLE_S}s client-deadline=${OP_DEADLINE} bench-samples=${BENCH_SAMPLES} reach=${REACH_TIMEOUT_S}s"
 echo "grading: Subphase 4.5 grades Phase 4 on operability; Arc 4.8 grades Phase 3 on the invariants this same state admits"
 echo "not claimed: leader completeness and state machine safety are properties of the execution, and a restart replay rebuilds the corrected state, so no hardware gate falsifies them; they remain the seeded simulation's"
 
-teardown
+# Reachability comes before everything that costs anything, and teardown comes
+# after the off-cloud phase rather than before it. pre touches no host, so it is
+# the one subcommand that runs with the machines switched off.
+if [ "${cmd}" != pre ]; then
+	require_hosts_reachable
+fi
 
-phase_pre
-phase_provenance
-phase_serve
-phase_kill
-phase_partition
+# require_operability_state refuses an audit that has nothing to audit. The
+# manifest is written by operability and read by the faithfulness check, so its
+# absence means either operability never ran or it ran against a different
+# working directory. Cheap to check, and the alternative is a green verdict over
+# an empty comparison.
+require_operability_state() {
+	# The predicate is a CONFIRMED line, not merely a non-empty file. The benchmark
+	# appends its own ids as uncertain, so a file that exists proves nothing: a
+	# bench run followed by an audit would pass an emptiness check and then go
+	# green over the cluster bench had just wiped, with every step green for a bad
+	# reason. No confirmed write means no operability workload, whatever else the
+	# file holds.
+	grep -q " confirmed$" "${MANIFEST_LOCAL}" 2>/dev/null || stop "audit: ${MANIFEST_LOCAL} holds no acknowledged write, so the operability phase did not run in this working directory. The audit reads the state operability leaves and the acks it recorded; over a wiped cluster it would attest nothing. Run 'omnibus.sh all', or run operability first."
+}
 
-quiesce_and_copy || stop "the cluster could not be quiesced and copied; the invariant audit reads cold copies only"
-phase_faithful
-phase_digest
-phase_logmatch
-phase_election
+run_audit() {
+	require_operability_state
+	quiesce_and_copy || stop "the cluster could not be quiesced and copied; the invariant audit reads cold copies only"
+	phase_faithful
+	phase_digest
+	phase_logmatch
+	phase_election
+}
 
-phase_bench
-phase_hygiene
+case "${cmd}" in
+	pre)
+		EXPECTED="OM.pre"
+		phase_pre
+		;;
+	provenance)
+		EXPECTED="OM.provenance"
+		teardown
+		phase_provenance
+		;;
+	operability)
+		EXPECTED="OM.serve OM.kill OM.partition"
+		teardown
+		phase_serve
+		phase_kill
+		phase_partition
+		;;
+	audit)
+		EXPECTED="OM.faithful OM.digest OM.logmatch OM.election"
+		run_audit
+		;;
+	bench)
+		EXPECTED="OM.bench"
+		teardown
+		phase_bench
+		;;
+	hygiene)
+		EXPECTED="OM.hygiene"
+		phase_hygiene
+		;;
+	all)
+		EXPECTED="OM.pre OM.provenance OM.serve OM.kill OM.partition OM.faithful OM.digest OM.logmatch OM.election OM.bench OM.hygiene"
+		phase_pre
+		teardown
+		phase_provenance
+		phase_serve
+		phase_kill
+		phase_partition
+		run_audit
+		phase_bench
+		phase_hygiene
+		;;
+	*)
+		usage
+		exit 2
+		;;
+esac
 
 COMPLETED=1
-echo "=== OMNIBUS GATE COMPLETE $(date -u) ==="
+echo "=== OMNIBUS GATE COMPLETE (${cmd}) $(date -u) ==="
