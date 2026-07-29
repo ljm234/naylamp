@@ -591,3 +591,30 @@ func TestParseReplicaDirs_RejectsADuplicateID(t *testing.T) {
 		t.Fatal("the same replica id given twice must be rejected")
 	}
 }
+
+// TestParseReplicaDirs_RejectsADuplicateDirectory holds the OTHER half of the
+// guard, and it needs its own test because the id check fires first: a case that
+// repeats the id never reaches the directory check, so the directory half could
+// be deleted with the whole suite still green. Two DISTINCT ids pointed at one
+// path is the shape that reaches it, and it is the more dangerous typo of the
+// two. A copy compared against itself agrees at every position, and because the
+// shared prefix is then nonzero the vacuous-comparison hedge never fires, so the
+// run reports a clean match over a comparison that was never made.
+func TestParseReplicaDirs_RejectsADuplicateDirectory(t *testing.T) {
+	if _, err := parseReplicaDirs([]string{"1=/tmp/a", "2=/tmp/a"}); err == nil {
+		t.Fatal("two ids pointed at the same directory must be rejected; a copy agrees with itself and proves nothing")
+	}
+	// The guard compares cleaned paths, not the raw flag text, so redundant
+	// separators and dot elements do not slip a repeat past it. The cleaning is
+	// lexical only, which is worth knowing rather than assuming: a case variant,
+	// a relative spelling of an absolute path, and a symlinked parent all still
+	// read as different directories. The gate passes three distinct plain names,
+	// so none of those is reachable there today.
+	if _, err := parseReplicaDirs([]string{"1=/tmp/a", "2=/tmp/./a"}); err == nil {
+		t.Fatal("the same directory spelled with a dot element must still be rejected")
+	}
+	// And the case that must keep working: distinct ids on distinct paths.
+	if _, err := parseReplicaDirs([]string{"1=/tmp/a", "2=/tmp/b", "3=/tmp/c"}); err != nil {
+		t.Fatalf("three distinct replicas on distinct paths must be accepted: %v", err)
+	}
+}
