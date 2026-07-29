@@ -203,8 +203,9 @@ role_line_count() {
 
 # find_leader prints the id of the node whose last role line reports leader, empty
 # if none. A follower's last line is role=follower, so only a current leader
-# matches. Every launch truncates the log, so within a phase this reads a live
-# node's fresh line, never a stale one.
+# matches. Within a phase this reads a live node's fresh line rather than a stale
+# one, and the mechanism is wipe_hosts, which clears logs at the start of every
+# phase; the launch itself appends and no longer truncates.
 find_leader() {
 	local n
 	for n in "${NODE_IDS[@]}"; do

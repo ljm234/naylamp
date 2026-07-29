@@ -34,7 +34,25 @@ launch_node() {
 	echo "gate: starting node ${n} on ${HOSTS[$n]} (listen ${listen}, peers ${peers}, client ${client})${extra:+, extra flags${extra}}"
 	# nohup detaches the node; stdin from /dev/null and output to the log free the
 	# ssh channel so this returns. The pid is recorded for kill and stop.
-	run_on "$n" "cd naylamp || exit 1; NAYLAMP_TLS_CERT=certs/node-${n}.pem NAYLAMP_TLS_KEY=certs/node-${n}-key.pem NAYLAMP_TLS_CA=certs/ca.pem nohup ./bin/naylampd node -id ${n} -listen ${listen} -peers ${peers} -client ${client} -dir data -tick 10ms${extra} > logs/node.log 2>&1 < /dev/null & echo \$! > naylampd.pid; sleep 1; echo node ${n} pid \$(cat naylampd.pid)"
+	#
+	# The log is APPENDED to, not truncated. A truncating redirect loses the role
+	# and term history of the node being relaunched, and relaunching is exactly
+	# what the failure scenarios do: a killed leader is reintegrated, and a
+	# leadership redraw restarts all three. That history is the only record of
+	# which node held office at which term, so a gate that reads it after the fact
+	# would be auditing a log the gate itself had erased. Appending costs the
+	# readers nothing. They come in three shapes and each survives: one takes the
+	# last role line, which is still the current one because a relaunched node
+	# prints its role before anything else; one compares a count against a
+	# baseline it captured earlier in the same run, which a shared older prefix
+	# cancels out of; and one reads the whole file to collect the terms office was
+	# claimed at, which is the reader this change exists for and which needs the
+	# log and the data directory to be cleared together so terms and history share
+	# one epoch.
+	# Growth is bounded by whatever clears logs/. The gates that wipe do so
+	# already; the ones that do not also keep their data dirs across sessions by
+	# design, so the reset is the operator's, as it always was for the data.
+	run_on "$n" "cd naylamp || exit 1; NAYLAMP_TLS_CERT=certs/node-${n}.pem NAYLAMP_TLS_KEY=certs/node-${n}-key.pem NAYLAMP_TLS_CA=certs/ca.pem nohup ./bin/naylampd node -id ${n} -listen ${listen} -peers ${peers} -client ${client} -dir data -tick 10ms${extra} >> logs/node.log 2>&1 < /dev/null & echo \$! > naylampd.pid; sleep 1; echo node ${n} pid \$(cat naylampd.pid)"
 }
 
 stop_node() {

@@ -23,9 +23,18 @@
 # assumes cluster.sh start has run and a leader has been elected, the same
 # precondition tls.sh carries.
 #
-# TERM NOTE. The node log prints role= and leader= only, never the term (see the
-# role line in engine/cmd/naylampd/node.go). So term equality and term growth are read
-# from the role and leader transitions, which name them unambiguously:
+# TERM NOTE. Whether a term field is in the log depends on the build, so this
+# script never reads one. The daemon began printing role=, leader= and term=
+# together in dca7e2b; both binaries this gate is pointed at are older than that,
+# the red arm's d19bb19 and the green arm's 8f01feb, so neither prints a term at
+# all. And even on a current daemon a term is only ever visible AT a role or
+# leader transition, because node.go deliberately does not log a term that
+# advances on its own (see the comment on that condition). So a term-keyed check
+# would read nothing on the pinned builds and, on a newer one, would still be
+# reading transitions with extra steps.
+#
+# Term equality and term growth are therefore derived from the role and leader
+# transitions, which name both facts unambiguously:
 #   same term    the isolated leader drops to role=follower leader=0. It is cut
 #                off from both peers, so it cannot have heard a higher term; the
 #                only path from leader to follower under isolation is the quorum
@@ -34,9 +43,10 @@
 #   higher term  a new role=leader appears on a different node. A node becomes
 #                leader only by winning an election, which increments the term, so
 #                a new leader is at a term above the old leader's.
-# If a literal term field is wanted in the evidence, adding term to the role log
-# in node.go is the one change that does it, on both binaries; it is out of scope
-# here and this script proves the phenomenon from role and leader alone.
+# A literal term field is worth having in the evidence and is not what these
+# verdicts read. A run against a daemon at dca7e2b or later prints one on every
+# role line; the verdicts are unchanged by its presence or absence, which is what
+# lets the same assertions grade an old binary and a new one.
 #
 # BOUND. The nodes tick every 10ms (cluster.sh launches naylampd with -tick 10ms;
 # the flag default is also 10ms). With ElectionTicks=10 a window is 100ms, and the
@@ -280,12 +290,19 @@ LEADER=""
 BASE_COUNT=0
 
 # precondition (F0) requires a converged cluster of three with one leader, and
-# captures the baseline. Term is not in the log, so the baseline is the leader id
-# and its role-line count; see the header for how term is read from transitions.
+# captures the baseline. The baseline is the leader id and its role-line count
+# rather than a term, because the term is not read from the log at all; see the
+# header for why, and for how equality and growth come from the transitions.
 precondition() {
 	note "F0 precondition: cluster of three healthy, one leader elected, baseline captured"
 	local n
 	for n in "${NODE_IDS[@]}"; do
+		# Liveness is asserted alongside the role line, not inferred from it. The
+		# node log is appended to rather than truncated at launch, so a host whose
+		# daemon failed to come up still carries the role line of an earlier run
+		# and would satisfy a check that only asks whether a line exists. Reading
+		# the pid says whether the process is there now.
+		node_alive "$n" || stop "F0: node ${n} is not running; run cluster.sh start and wait until cluster.sh status shows a leader"
 		[ -n "$(role_of "$n")" ] || stop "F0: node ${n} has no role line yet; run cluster.sh start and wait until cluster.sh status shows a leader"
 	done
 	wait_converged "${CONVERGE_TIMEOUT_S}" || stop "F0: cluster did not converge on a single leader within ${CONVERGE_TIMEOUT_S}s"
@@ -293,7 +310,7 @@ precondition() {
 	[ -n "${LEADER}" ] || stop "F0: no leader found after convergence"
 	BASE_COUNT="$(role_line_count "${LEADER}")"
 	note "F0: leader is node ${LEADER}; baseline role-line count on the leader is ${BASE_COUNT}"
-	note "F0: the node log carries role= and leader= only, never term; term equality and growth are read from the role and leader transitions, see the header"
+	note "F0: no verdict here reads a term field; a term is printed only by a daemon at dca7e2b or later, and only at a role or leader transition, so term equality and growth are read from the transitions themselves, which grades an old binary and a new one alike, see the header"
 }
 
 # f1_red (old binary): isolate the leader, hold for the settle window, and require
