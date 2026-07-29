@@ -807,7 +807,12 @@ phase_election() {
 	fi
 
 	note "OM.election: office claims as term/node pairs"
-	sort -n "${claims}" | sed 's/^/gate:   term=/;s/ / node=/'
+	# awk, not sed. The claims file is "<term> <node>", and a sed that rewrites the
+	# first space hits the one inside the "gate: " prefix instead of the separator,
+	# which printed the node label empty and left the id stranded at the end of the
+	# line. The evidence file IS the artifact, so a line that reads wrong is a
+	# defect in it even when the verdict above is right.
+	sort -n "${claims}" | awk '{printf "gate:   term=%s node=%s\n", $1, $2}'
 
 	dup="$(cut -d' ' -f1 "${claims}" | sort | uniq -d || true)"
 	if [ -z "${dup}" ]; then
