@@ -19,15 +19,18 @@
 # reads it, not just the served-or-not consequence, so the verdict is tied to the
 # read-index round itself and not to the wider loss of majority.
 #
-#   green     with the majority intact, a client search is served (exit 0) AND a
-#             new readindex line appears: the majority round confirmed and the
-#             read was answered. That pairing is the verdict RI.green.
+#   green     with the majority intact, a client search is served (exit 0) AND the
+#             answer names the seed id AND a new readindex line appears: the
+#             majority round confirmed and the read was answered with the datum.
+#             That triple is the verdict RI.green. The id is part of it because the
+#             client exits 0 on a StatusOK whatever the result set holds, so an
+#             empty answer would otherwise read as a served one.
 #   red       with the leader cut off from its majority, the same search is NOT
 #             served (exit 1) AND no new readindex line appears: the read-index
 #             round never confirmed, so the read was withheld for the specific
 #             reason 4.3 promises. That absence is the verdict RI.red.
-#   negative  a healthy cluster with no partition serves the read (exit 0) and
-#             logs its readindex line, the control that keeps the instrument honest.
+#   negative  a healthy cluster with no partition serves the read again, id and
+#             readindex line included, the control that keeps the instrument honest.
 #
 # Usage: readindex.sh
 #
@@ -46,6 +49,26 @@
 # round, so its ABSENCE during the isolation witnesses that the round never
 # confirmed, whether or not the node has demoted yet. The red is tied to the round,
 # not to the demotion, so the deadline stays generous.
+#
+# STANDALONE, OR DRIVEN BY A WIDER GATE. Four optional environment variables let
+# omnibus.sh run this property inside its own audit instead of restating it.
+# Unset, every default below is the value the 22nd of July run used.
+#
+#   NAYLAMP_READINDEX_ID            the id of the seed write, 1 by default
+#   NAYLAMP_READINDEX_VEC           its vector, and the vector every search here
+#                                   asks for, 1,0,0 by default
+#   NAYLAMP_READINDEX_MANIFEST      a local file to append the seed write's ack
+#                                   line to, empty by default and then nothing is
+#                                   written anywhere
+#   NAYLAMP_READINDEX_RESTART_TRIES the redraw budget below, 8 by default
+#
+# THE ID IS AN INPUT, and that is the ack oracle's doing rather than a taste for
+# configuration. A wider gate audits its committed log against a manifest of what
+# its client emitted: an id on the wire that the manifest never names reads as a
+# phantom, and an id carrying an unanswered operation stops having its value
+# checked in either direction. Both rules are about the id SPACE, so the caller
+# that owns that space names the id, and this script reports back the standing its
+# own write earned rather than leaving the caller to guess it.
 set -euo pipefail
 
 GATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -61,7 +84,39 @@ DEMOTE_BOUND_MS=$(( 3 * ELECTION_TICKS * TICK_MS ))
 ELECT_TIMEOUT_S=15     # poll budget for a leader to appear after a restart
 SETTLE_S=5             # let a role change and its readindex line settle in the log
 READ_DEADLINE=8s       # the client's own budget for one linearizable read
-RESTART_TRIES=8        # bounded redraws of leadership until node 1 wins
+
+# The redraw budget is the one number a caller may want larger, because landing
+# office on node 1 is a coin the cluster tosses and giving up costs whatever that
+# caller had already spent. So the default stays at 8, and a caller with more to
+# lose raises it; omnibus.sh does, and prices it there.
+RESTART_TRIES="${NAYLAMP_READINDEX_RESTART_TRIES:-8}"
+
+# ---- the workload, an input for the same reason the header gives ------------
+SEED_ID="${NAYLAMP_READINDEX_ID:-1}"
+SEED_VEC="${NAYLAMP_READINDEX_VEC:-1,0,0}"
+ACK_MANIFEST="${NAYLAMP_READINDEX_MANIFEST:-}"
+
+# The inputs are checked here rather than left to fail somewhere downstream, and
+# the reason is the same one that runs through this whole file: a bad argument
+# reaches the client, the seed write comes back refused, and the script reads that
+# as a cluster that will not serve. That is a red for the wrong reason, and the
+# operator gets a message about the cluster when the fault was in the export. A
+# redraw budget that is not a number would instead make the bound in
+# ensure_leader_1 compare against nothing.
+#
+# The vector is checked for SHAPE and not for width. How many components a vector
+# needs is the node's business and this gate never opens one, so a vector with the
+# wrong number of them is still the client's to reject and it will say so plainly.
+# What is caught here is the typo that would not.
+case "${SEED_ID}" in
+	''|*[!0-9]*) echo "gate: NAYLAMP_READINDEX_ID must be digits only, got '${SEED_ID}'" >&2; exit 2 ;;
+esac
+case "${RESTART_TRIES}" in
+	''|*[!0-9]*) echo "gate: NAYLAMP_READINDEX_RESTART_TRIES must be digits only, got '${RESTART_TRIES}'" >&2; exit 2 ;;
+esac
+case "${SEED_VEC}" in
+	''|*[!0-9.,-]*) echo "gate: NAYLAMP_READINDEX_VEC must be a comma separated vector, got '${SEED_VEC}'" >&2; exit 2 ;;
+esac
 
 # Verdict registry, the same mechanism tls.sh and checkquorum.sh use.
 VERDICTS=" "
@@ -153,11 +208,29 @@ readindex_count() {
 	printf '%s' "${c}" | tr -dc '0-9'
 }
 
+# node_alive reports whether a node's daemon is actually running, read from the
+# pidfile the launcher writes. It is the same probe omnibus.sh carries, and it is
+# here for the same reason: the node log is APPENDED to across restarts, so a node
+# that was stopped keeps its last role line forever, and if that line said leader a
+# reader would go on believing it holds office.
+node_alive() {
+	run_on "$1" 'if [ -f naylamp/naylampd.pid ] && kill -0 "$(cat naylamp/naylampd.pid)" 2>/dev/null; then echo yes; fi' 2>/dev/null | grep -q yes
+}
+
 # find_leader prints the id of the node whose last role line reports leader, empty
 # if none.
+#
+# LIVENESS COMES FIRST, and without it two things go quietly wrong. A cluster the
+# operator stopped by hand still answers this with whichever node led last, so a
+# run against a dead cluster would sail past the precondition and only fail later
+# with a message about a write that did not commit. Worse is RI.red: if node 1's
+# daemon died between the green and the cut, the client reaches nothing, the read
+# comes back refused and no readindex line appears, and the red PASSES having
+# tested a dead process instead of an isolated leader. A dead node holds no office.
 find_leader() {
 	local n
 	for n in "${NODE_IDS[@]}"; do
+		node_alive "$n" || continue
 		case "$(leader_role "$n")" in *role=leader*) printf '%s' "$n"; return 0 ;; esac
 	done
 	return 1
@@ -207,25 +280,59 @@ served() { printf '%s' "$1" | grep -q 'exit=0$'; }
 # refused reports whether it ended in exit=1, a clean no-result, not a load error.
 refused() { printf '%s' "$1" | grep -q 'exit=1$'; }
 
+# returned reports whether a search answer actually names the seed id. served() is
+# not enough on its own: the client exits 0 on a StatusOK whatever the result set
+# holds, so an answer that came back EMPTY, or carrying somebody else's id, passes
+# a served-only test. What this gate grades is a read of a datum it wrote itself,
+# and a read that does not return that datum has not been served in any sense worth
+# the word. The pattern is anchored on both sides so id=41 is not matched by a run
+# whose seed happened to be id=410.
+returned() { printf '%s' "$1" | grep -qE "(^| )id=${SEED_ID}( |$)"; }
+
+# record_ack appends the seed write to the caller's ack manifest under the
+# standing its outcome earned, and does nothing when no manifest was named. It is
+# called on BOTH outcomes deliberately. Anything the client put on the wire is at
+# minimum uncertain, so an operation left out of the manifest because it went
+# unanswered would be read by the caller's checker as an id nobody ever emitted,
+# which is a phantom and the wrong red. The searches this gate issues write
+# nothing, so this one line is the whole of what it puts on the wire.
+record_ack() {
+	[ -n "${ACK_MANIFEST}" ] || return 0
+	printf 'put %s %s %s\n' "${SEED_ID}" "${SEED_VEC}" "$1" >> "${ACK_MANIFEST}"
+}
+
 # ---- precondition -----------------------------------------------------------
 
 precondition() {
-	note "RI.pre: cluster of three healthy, leader relocated onto node 1, seed written, one linearizable read served"
+	note "RI.pre: cluster of three healthy, leader relocated onto node 1, seed id=${SEED_ID} vec=${SEED_VEC} written, one linearizable read served"
 	begin_check
 	wait_for_leader || stop "RI.pre: no leader; run cluster.sh start and wait until cluster.sh status shows a leader"
 	if ! ensure_leader_1; then
 		stop "RI.pre: could not land leadership on node 1 within ${RESTART_TRIES} redraws; the co-located client can only reach a node-1 leader once its peers are cut, so the red cannot run"
 	fi
 	note "RI.pre: leader is node $(find_leader)"
+	# The || true is load-bearing and not defensive habit. client_op ends its remote
+	# command with echo exit=$?, so the operation's own outcome is in the TEXT; a
+	# non-zero status out here means ssh itself failed. Without the guard, set -e
+	# would end the script on that line, between the write reaching the cluster and
+	# record_ack naming it, and a write that committed but was never recorded is a
+	# phantom to whatever checker reads the manifest next.
 	local put_out
-	put_out="$(client_op -op put -id 1 -vec 1,0,0 -deadline 20s)"
+	put_out="$(client_op -op put -id "${SEED_ID}" -vec "${SEED_VEC}" -deadline 20s || true)"
 	printf '%s\n' "${put_out}"
-	served "${put_out}" || stop "RI.pre: the seed write did not commit (no exit=0); the cluster is not serving, so a read test would mean nothing"
+	if served "${put_out}"; then
+		record_ack confirmed
+	else
+		record_ack uncertain
+		stop "RI.pre: the seed write did not commit (no exit=0); the cluster is not serving, so a read test would mean nothing"
+	fi
 	local base_out
-	base_out="$(client_op -op search -vec 1,0,0 -k 1 -deadline "${READ_DEADLINE}")"
+	base_out="$(client_op -op search -vec "${SEED_VEC}" -k 1 -deadline "${READ_DEADLINE}")"
 	printf '%s\n' "${base_out}"
-	if served "${base_out}"; then
-		pass "RI.pre: a linearizable read was served on the healthy cluster; the read path is live"
+	if served "${base_out}" && returned "${base_out}"; then
+		pass "RI.pre: a linearizable read was served on the healthy cluster and it came back with id=${SEED_ID}; the read path is live"
+	elif served "${base_out}"; then
+		fail "RI.pre: the read exited 0 but did not return id=${SEED_ID}; a StatusOK over the wrong result set is not a served read, and the instrument is not ready"
 	else
 		fail "RI.pre: a linearizable read was not served on the healthy cluster; the instrument is not ready"
 	fi
@@ -239,14 +346,16 @@ green() {
 	begin_check
 	local ri_before ri_after out
 	ri_before="$(readindex_count 1)"
-	out="$(client_op -op search -vec 1,0,0 -k 1 -deadline "${READ_DEADLINE}")"
+	out="$(client_op -op search -vec "${SEED_VEC}" -k 1 -deadline "${READ_DEADLINE}")"
 	printf '%s\n' "${out}"
 	sleep "${SETTLE_S}"
 	ri_after="$(readindex_count 1)"
-	if served "${out}" && [ "${ri_after:-0}" -gt "${ri_before:-0}" ]; then
-		pass "RI.green: the read was served (exit=0) and node 1 logged a new readindex line (${ri_before} -> ${ri_after}); the majority read-index round confirmed and only then was the read answered"
+	if served "${out}" && returned "${out}" && [ "${ri_after:-0}" -gt "${ri_before:-0}" ]; then
+		pass "RI.green: the read was served with id=${SEED_ID} in the answer and node 1 logged a new readindex line (${ri_before} -> ${ri_after}); the majority read-index round confirmed and only then was the read answered"
 	elif ! served "${out}"; then
 		fail "RI.green: the read was not served on a healthy majority (no exit=0); either the cluster lost its leader or the read path is broken"
+	elif ! returned "${out}"; then
+		fail "RI.green: the read exited 0 on a healthy majority but did not return id=${SEED_ID}; the round may well have confirmed, and the answer it gated was still not the datum, so this is not a read the gate can grade"
 	else
 		fail "RI.green: the read was served but no new readindex line appeared (${ri_before} -> ${ri_after}); the served read is not witnessed by a confirmed majority round, so the instrument cannot attest the property"
 	fi
@@ -270,7 +379,7 @@ red() {
 	"${GATE_DIR}/partition.sh" apply 1
 	ri_before="$(readindex_count 1)"
 	note "RI.red: node 1 isolated from nodes 2 and 3; issuing the read while it still holds office (demote bound about ${DEMOTE_BOUND_MS}ms)"
-	out="$(client_op -op search -vec 1,0,0 -k 1 -deadline "${READ_DEADLINE}")"
+	out="$(client_op -op search -vec "${SEED_VEC}" -k 1 -deadline "${READ_DEADLINE}")"
 	printf '%s\n' "${out}"
 	sleep "${SETTLE_S}"
 	ri_after="$(readindex_count 1)"
@@ -298,14 +407,14 @@ negative() {
 	local ri_before ri_after out lead
 	lead="$(find_leader || true)"
 	ri_before="$(readindex_count "${lead}")"
-	out="$(client_op -op search -vec 1,0,0 -k 1 -deadline "${READ_DEADLINE}")"
+	out="$(client_op -op search -vec "${SEED_VEC}" -k 1 -deadline "${READ_DEADLINE}")"
 	printf '%s\n' "${out}"
 	sleep "${SETTLE_S}"
 	ri_after="$(readindex_count "${lead}")"
-	if served "${out}" && [ "${ri_after:-0}" -gt "${ri_before:-0}" ]; then
-		pass "RI.negative: the healed cluster served the read again (exit=0) and leader node ${lead} logged a new readindex line (${ri_before} -> ${ri_after}); the withholding was the partition, not the instrument"
+	if served "${out}" && returned "${out}" && [ "${ri_after:-0}" -gt "${ri_before:-0}" ]; then
+		pass "RI.negative: the healed cluster served the read again with id=${SEED_ID} in the answer and leader node ${lead} logged a new readindex line (${ri_before} -> ${ri_after}); the withholding was the partition, not the instrument"
 	else
-		fail "RI.negative: the healed cluster did not serve the read with a fresh readindex line (exit served=$(served "${out}" && echo yes || echo no), ${ri_before} -> ${ri_after}); the red is not attributable to the partition alone"
+		fail "RI.negative: the healed cluster did not serve the read with id=${SEED_ID} and a fresh readindex line (served=$(served "${out}" && echo yes || echo no), returned id=$(returned "${out}" && echo yes || echo no), ${ri_before} -> ${ri_after}); the red is not attributable to the partition alone"
 	fi
 	end_check RI.negative
 }

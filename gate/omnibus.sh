@@ -23,9 +23,15 @@
 #   F2  wipe, then the three operability arms. NO WIPE BETWEEN THEM: the evidence
 #       is the same datum surviving each failure in turn, and a wipe would destroy
 #       the very thing under test.
-#   F3  NO WIPE. Quiesce the cluster and audit the state F2 produced. The acks
-#       oracle is the record of F2's own client operations, so a wipe here would
-#       orphan it.
+#   F3  NO WIPE, but NOT NO RESTART. The linearizable read goes first, because it
+#       is the one audited property that needs a cluster still answering, and
+#       quiescing is what makes the other four readable. It needs office on node 1
+#       and the election is a coin, so it stops and starts all three until the coin
+#       lands: up to twelve times, though one or two is the usual bill. The data
+#       survives a restart and that is why this is not a wipe, but a reader of the
+#       log should not be surprised by the restarts. Then quiesce and audit the
+#       state F2 produced. The acks oracle is the record of F2's own client
+#       operations, so a wipe here would orphan it.
 #   F4  wipe, then the real-infrastructure benchmark on a clean cluster, so the
 #       numbers are not shaped by the damage of F2.
 #   F5  hygiene: no rule left behind, one binary on all three. It is a CHECK, so
@@ -98,6 +104,13 @@ QUIESCE_SETTLE_S=5          # let the last commits land before stopping
 REACH_TIMEOUT_S=5           # per-host liveness probe, short on purpose: see below
 BENCH_SAMPLES=20            # write-ack samples for the latency table
 DIM=3
+# The redraw budget handed to the read arm, wider than the 8 gate/readindex.sh
+# defaults to on its own. Landing office on node 1 is about a one in three coin
+# per redraw, so 8 gives up on roughly one run in twenty five; standalone that
+# costs a few minutes, here it would throw away everything spent since the
+# off-cloud phase. Twelve puts it under one in a hundred, and the redraws happen
+# only until the coin lands.
+READINDEX_TRIES=12
 
 # ---- workload id ranges, kept disjoint so R2 holds by construction ----------
 # Each id is written exactly once by the whole run. BASE ids are written on a
@@ -105,19 +118,40 @@ DIM=3
 # while a failure is in flight, so they may or may not be answered; whichever way
 # they land, they are recorded under their own id and never share one with a
 # BASE write.
+#
+# THE READINDEX ID IS ALLOCATED HERE TOO even though another script writes it.
+# The linearizable-read arm delegates to gate/readindex.sh, which seeds one write
+# of its own, and that write lands in the same committed log the audit reads. An
+# id space with two owners is how a phantom gets written by accident, so this
+# table stays the only owner and the id is handed down.
 BASE_IDS=(7 8 9)
 KILL_IDS=(21 22)
 PART_IDS=(31 32)
+READINDEX_ID=41             # the seed of the linearizable-read arm, on an id of its own
 SURVIVOR_ID=7               # the datum every arm must keep serving
 
-# EVERY ID GETS A DISTINCT VECTOR, and that is a correctness requirement of the
+# EVERY ID GETS A DISTINCT DIRECTION, and that is a correctness requirement of the
 # probe rather than a nicety. The index ranks purely by distance and breaks no tie
-# by id, so if every id carried the same vector they would all sit at distance
-# zero and a top-k would return an arbitrary k of them. The survivor would drop
-# out of the result the moment the run wrote more ids than k, and the gate would
-# report a datum lost on a perfectly healthy cluster. Distinct vectors make the
-# survivor the unique nearest neighbour of its own vector, so a search that fails
-# to return it is a real failure and nothing else.
+# by id, so if two ids sat at distance zero from each other a top-k would return an
+# arbitrary one of them. The survivor would drop out of the result the moment the
+# run wrote more ids than k, and the gate would report a datum lost on a perfectly
+# healthy cluster. Separated vectors make an id the unique nearest neighbour of its
+# own vector, so a search that fails to return it is a real failure and nothing
+# else.
+#
+# DIRECTION, NOT VALUE, AND THE DISTINCTION HAS TEETH. The index is built with
+# vector.CosineDistance (engine/naylamp/node.go), which measures angle and ignores
+# magnitude, so 2,0,0 and 1,0,0 are two different vectors at distance EXACTLY zero
+# and would collide as surely as writing the same one twice. Picking a new vector
+# here means picking a new direction.
+#
+# THE NAMED IDS ARE SEPARATED; THE CATCH-ALL IS NOT, and the difference is the
+# point. Every id with an arm of its own gets a direction no other named id
+# occupies. The catch-all returns 0.5,0.5,0.5 to all twenty benchmark ids, which
+# puts them at distance zero from each other and from id 32. That is tolerable for
+# exactly one reason, and it is not the wipe: nothing ever searches for them. They
+# exist to be written and timed. Give the benchmark a search and this stops being
+# tolerable.
 vec_for() {
 	case "$1" in
 		7)  printf '1,0,0' ;;
@@ -127,6 +161,7 @@ vec_for() {
 		22) printf '1,0,1' ;;
 		31) printf '0,1,1' ;;
 		32) printf '1,1,1' ;;
+		41) printf '1,2,3' ;;
 		*)  printf '0.5,0.5,0.5' ;;
 	esac
 }
@@ -135,6 +170,7 @@ MANIFEST_LOCAL="${OUT_DIR}/omnibus-manifest.txt"
 MANIFEST_REMOTE="gate-omnibus-manifest.txt"
 COLD_LOCAL="${OUT_DIR}/omnibus-cold"
 LOGS_LOCAL="${OUT_DIR}/omnibus-logs"
+READINDEX_LOCAL="${OUT_DIR}/omnibus-readindex.txt"
 GIT_SHA=""
 GIT_DIRTY=""
 # HOSTS_REACHABLE is set only once every host has answered. The exit trap reads
@@ -227,12 +263,18 @@ copy_dir_to() {
 # so it clears a rule left by an earlier aborted run too. It runs from the exit
 # trap, whenever a host was confirmed reachable, so a run killed midway never
 # leaves one cut off. It also runs from the dispatch ahead of the arms that
-# INSTALL rules or need a clean slate, which is provenance, operability and
-# bench; audit does not need it and hygiene must not have it, since hygiene
-# exists to find exactly the rules teardown deletes. It is twelve ssh round
-# trips, which is why it never runs before the off-cloud phase: there is no
-# reason to reach for a host ahead of the phase that exists to avoid paying for
-# one.
+# INSTALL rules or need a clean slate, which is provenance, operability, audit
+# and bench; hygiene must not have it, since hygiene exists to find exactly the
+# rules teardown deletes. It is twelve ssh round trips, which is why it never
+# runs before the off-cloud phase: there is no reason to reach for a host ahead
+# of the phase that exists to avoid paying for one.
+#
+# AUDIT IS ON THAT LIST NOW, and it did not use to be. Its read arm cuts node 1
+# from both peers and heals it again, so a stale rule anywhere on the fleet would
+# burn every redraw that arm has before it gave up. The dispatch entry covers an
+# audit run on its own. Inside a full run the arm probes the fleet itself, because
+# the teardown near the top only ever cleared a PREVIOUS run, and the operability
+# phase before it can leave a rule of its own when a heal gives up partway.
 teardown() {
 	local n x
 	for n in "${NODE_IDS[@]}"; do
@@ -375,7 +417,13 @@ answered() { printf '%s' "$1" | grep -q 'exit=0$'; }
 # omitted id that committed would be read as a phantom.
 manifest_put() {
 	local id="$1" vec="$2" out
-	out="$(client_op -op put -id "${id}" -vec "${vec}" -deadline "${OP_DEADLINE}")"
+	# The || true keeps R1 true even when ssh is what failed, since client_op puts
+	# the operation's own outcome in the text and a non-zero status here is the
+	# transport. Every call site today happens to sit in a || list, which already
+	# suppresses errexit for the whole of this function, so the guard buys nothing
+	# right now; it is here so that a bare call site added later cannot silently
+	# reintroduce the omission that turns a committed write into a phantom.
+	out="$(client_op -op put -id "${id}" -vec "${vec}" -deadline "${OP_DEADLINE}" || true)"
 	printf '%s\n' "${out}"
 	if answered "${out}"; then
 		echo "put ${id} ${vec} confirmed" >> "${MANIFEST_LOCAL}"
@@ -675,6 +723,206 @@ phase_partition() {
 
 # ---- F3: the Arc 4.8 audit, on the state F2 left, with no wipe -----------------
 
+# phase_readindex delegates to gate/readindex.sh instead of restating its property
+# here. That script already carries the whole instrument: it lands office where
+# the red needs it, reads the daemon's "readindex ctx=" line as the direct witness
+# that a majority round confirmed, and grades four checks against it: the
+# precondition, the green, the red and the negative control. A second definition
+# of a linearizable read living in this file could only drift away from that one,
+# and drift is not the problem this arm was added to fix. The problem is
+# anchoring: the standalone artifact of the 22nd of July carries no commit
+# anywhere in it, and a run that cannot name its tree is not evidence, which is
+# the same test this gate's own F1 applies to itself. Running the script INSIDE
+# the run puts its verdict under the same sha as the other four.
+#
+# IT RUNS BEFORE THE QUIESCE, and it is the only audit arm that does. The other
+# four read cold copies of a stopped cluster, for the reason quiesce_and_copy
+# gives below. A linearizable read needs a cluster that is still answering, so the
+# quiesce does not merely blur this arm, it removes it. First is the only place it
+# can go.
+#
+# WHAT IT NEEDS IS A LIVE CLUSTER OVER THIS RUN'S DATA, not the exact cluster F2
+# left standing, and the difference is worth stating because the log shows it. The
+# red needs office on node 1 and the election is a coin, so the delegated gate
+# stops and starts all three until it lands there. The data is on disk and a
+# restart replays it, so nothing the audit reads is lost; what is lost is the
+# damage history, since the arm ends up probing a freshly elected cluster plus its
+# own fresh cut rather than the one F2 beat up. Read-index safety is not a claim
+# about post-damage state, so that is no loss to this verdict. It would have been
+# a stronger claim as a fourth arm of F2, and F2 cannot host it: every arm there
+# needs the client to keep reaching the MAJORITY, which is the one thing this arm
+# must deny it.
+#
+# IT PARTITIONS NODE 1, which every other arm of this gate refuses to do, and the
+# two rules do not contradict each other. F2 claims the MAJORITY keeps serving, so
+# its client must be able to reach that majority and the cut node must not be the
+# client's own host. This arm claims the ISOLATED LEADER withholds the read, so
+# its client must be able to reach that leader and the cut node must BE the
+# client's host, which is the only way an isolated leader is still reachable at
+# all. Opposite claims, opposite requirements.
+#
+# THE VERDICT IS TAKEN FROM THE FOUR SUB-VERDICTS AND NOT ONLY FROM THE EXIT CODE.
+# Both are read, and a missing sub-verdict counts as a failure rather than as a
+# silence, so the day that script grows or loses a check this arm reds instead of
+# quietly attesting three checks where it used to attest four.
+phase_readindex() {
+	note "OM.readindex: a linearizable read is served only behind a confirmed majority round, and is withheld when that round cannot complete"
+	begin_check
+
+	local vec rc=0 before stale
+	vec="$(vec_for "${READINDEX_ID}")"
+	note "OM.readindex: handing gate/readindex.sh id=${READINDEX_ID} vec=${vec}, the manifest this run is building, and a redraw budget of ${READINDEX_TRIES}"
+
+	# A rule left standing BEFORE this arm starts is not its failure and does not
+	# count against it: partition.sh heal runs under errexit and gives up on the
+	# first delete that misses, and OM.partition already recorded that with its own
+	# fail. But it has to be cleared here anyway. The delegated gate spends its
+	# whole redraw budget trying to land office on node 1, and a peer that cannot
+	# be reached is exactly what stops office landing anywhere, so the arm would
+	# burn twelve stop and start cycles and then blame the election.
+	stale="$(rules_left)"
+	if [ -n "${stale}" ]; then
+		note "OM.readindex: partition rules were still installed before this arm ran (${stale}); clearing them, since a peer that cannot be reached is what keeps office from landing anywhere"
+		teardown
+	fi
+
+	# How many times this id is already in the manifest, so the check further down
+	# can require the count to have GROWN. Presence alone is not enough: a second
+	# audit in the same working directory would still see the first one's line, and
+	# the check that exists to catch a broken hand-off would be satisfied by the run
+	# before it.
+	before="$(grep -c "^put ${READINDEX_ID} " "${MANIFEST_LOCAL}" 2>/dev/null || true)"
+	before="${before:-0}"
+
+	# Truncate the evidence file HERE rather than trusting the tee to do it. A tee
+	# that cannot open its output warns and keeps going on this platform, the
+	# producer runs to completion and the status is unaffected, so the sub-verdicts
+	# would be read back out of the PREVIOUS run's file and printed into this run's
+	# artifact as if they were this run's. An unwritable evidence file is a stop.
+	: > "${READINDEX_LOCAL}" || stop "OM.readindex: ${READINDEX_LOCAL} cannot be written, and the sub-verdicts are read back out of it; a run that cannot record this arm must not report it"
+
+	# set +e because this arm reads the failing status instead of being stopped by
+	# it, and PIPESTATUS is taken on the next line before anything can replace it.
+	# The tee is not a convenience for the operator: the sub-verdicts below are read
+	# back out of that file.
+	set +e
+	(
+		export NAYLAMP_READINDEX_ID="${READINDEX_ID}"
+		export NAYLAMP_READINDEX_VEC="${vec}"
+		export NAYLAMP_READINDEX_MANIFEST="${MANIFEST_LOCAL}"
+		export NAYLAMP_READINDEX_RESTART_TRIES="${READINDEX_TRIES}"
+		"${GATE_DIR}/readindex.sh"
+	) 2>&1 | tee "${READINDEX_LOCAL}"
+	rc="${PIPESTATUS[0]}"
+	set -e
+
+	local id v why seeded short=""
+	for id in RI.pre RI.green RI.red RI.negative; do
+		# grep -F because the ids carry a dot, and the guard because a check that
+		# never reported leaves no line and grep exits 1, which pipefail would turn
+		# into the end of the run instead of the finding it is.
+		v="$(grep -F "verdict ${id} = " "${READINDEX_LOCAL}" | tail -1 | awk '{print $NF}' || true)"
+		note "OM.readindex: sub-verdict ${id} = ${v:-absent}"
+		[ "${v}" = pass ] || short="${short} ${id}(${v:-absent})"
+	done
+
+	# The seed it wrote has to reach the ack oracle, and here is where that is worth
+	# checking. The oracle is read three checks further down; a hand-off that broke
+	# would leave an id on the wire that the manifest never names, which is the
+	# definition of a phantom, and OM.faithful would red on it with nothing in its
+	# message pointing back to this arm. One grep here turns a confusing red into a
+	# named cause. The standing has to be CONFIRMED, not merely present: an uncertain
+	# id has its value unchecked in both directions, so a pass line saying the
+	# faithfulness check reads it as a write this run made would be false of it.
+	#
+	# The count has to land on EXACTLY ONE, which is stricter than growth and is the
+	# invariant the id table above declares: every id is written once by the whole
+	# run. Growth alone passes a second audit in the same working directory, which
+	# would leave two put lines for one id and hand the checker a duplicate.
+	local after
+	after="$(grep -c "^put ${READINDEX_ID} " "${MANIFEST_LOCAL}" 2>/dev/null || true)"
+	after="${after:-0}"
+	seeded=""
+	if [ "${after}" -eq 1 ] && [ "${before}" -eq 0 ]; then
+		seeded="$(grep "^put ${READINDEX_ID} " "${MANIFEST_LOCAL}" | tail -1 | awk '{print $NF}' || true)"
+	fi
+	note "OM.readindex: the ack oracle holds ${before} -> ${after} lines for id=${READINDEX_ID}, standing ${seeded:-absent}"
+
+	# THE CUT HAS TO BE PROVEN GONE, and this runs BEFORE the verdict rather than
+	# after it, so the verdict accounts for it instead of the artifact carrying a
+	# PASS and a FAIL for the same check. The delegated gate heals node 1 from its
+	# exit trap, but that heal is one ssh whose failure is swallowed, and a single
+	# transient sudo error leaves the node isolated with nothing saying so. What
+	# follows then is a run of reds that all blame something else: the replicas will
+	# not agree, the benchmark takes no sample because every write from the
+	# co-located client is dropped on the way out, and only OM.hygiene at the very
+	# end names the rule.
+	local leftover
+	leftover="$(rules_left)"
+	if [ -n "${leftover}" ]; then
+		fail "OM.readindex: a partition rule is still installed after the arm finished (${leftover}), so its heal did not take. Clearing it now, because everything below reads a cluster and would otherwise red on a cut nobody declared"
+		teardown
+	else
+		note "OM.readindex: no host carries a partition rule; the cut this arm installed is gone"
+	fi
+
+	# The anchor is the run's, not this arm's, so it is stated as a fact about the
+	# run and kept out of the verdict. GIT_SHA is set by the provenance phase, which
+	# a bare "omnibus.sh audit" never runs; a pass line carrying "anchored to an
+	# unrecorded head" would be this gate contradicting its own F1 in the one place
+	# an operator reads for reassurance.
+	if [ -n "${GIT_SHA}" ]; then
+		note "OM.readindex: this verdict lands under ${GIT_SHA}${GIT_DIRTY}, the head the provenance phase recorded"
+	else
+		note "OM.readindex: no head was recorded, because this subcommand did not run the provenance phase; the verdict below names no tree"
+	fi
+
+	if [ "${rc}" -eq 0 ] && [ -z "${short}" ] && [ "${seeded}" = confirmed ]; then
+		pass "OM.readindex: the read-index gate ran green inside this run. On the healthy majority the read was served and a new readindex line appeared; with node 1 cut from both peers the read was withheld and NO readindex line appeared, so the round never confirmed; after the heal the read was served again. Its seed id=${READINDEX_ID} is in the ack oracle as ${seeded}, so the faithfulness check below reads it as a write this run made. Scope: this exercises the read-index MECHANISM and the gate on it, not linearizability. One client, one read at a time, no concurrent history, and the answer is checked for the datum but never against an index, so it falsifies a read answered without a confirmable quorum and cannot falsify staleness inside a read that was served. The literal claim, that the served state reflects a prefix at or beyond the read index, needs the read-index accessor and stays with the seeded simulation; DEFER-014 is not closed by this"
+	else
+		if [ -n "${short}" ]; then
+			why="sub-verdicts short of pass:${short}. RI.pre, RI.green and RI.negative failing is the instrument outright: office never landing on node 1, a read served on a healthy majority with no readindex line to witness it, or a healed cluster that will not serve again. Any of those and the red attests nothing, so this verdict is not a finding about the read path. RI.red is where the property lives, and it is the one that has to be READ rather than assumed, because it has failure branches of both kinds. It is a linearizability regression when the read was ANSWERED, or a readindex line was LOGGED, while the leader could reach no majority. It is the instrument when office left node 1 before the cut, or when the read exited neither 0 nor 1, which is a load or argument error and not a refusal. Its own FAIL line above says which of the four it was, and this verdict does not presume"
+		elif [ "${seeded}" != confirmed ]; then
+			why="every sub-verdict passed, and the ack oracle does not hold exactly one confirmed line for id=${READINDEX_ID} (${before} -> ${after} lines, standing ${seeded:-absent}) after that gate put the id on the wire. None means the hand-off of NAYLAMP_READINDEX_MANIFEST broke, and left alone OM.faithful would red on that id as a phantom and say nothing about this arm; more than one means the audit ran twice over one manifest, and the id was written once but is claimed twice. Either way the fault is here and not in the read path"
+		else
+			why="every sub-verdict reported pass, so the status alone is the failure: that script exits non-zero when its run did not reach a clean completion, which means it stopped somewhere after the last check registered. Read the text above this line"
+		fi
+		fail "OM.readindex: the read-index gate did not end all-pass (exit ${rc}); ${why}"
+	fi
+
+	# The arm cut node 1 from both peers and healed it, so node 1 gets the same
+	# rejoin budget OM.partition gives its own healed node before any state is
+	# read. The four checks below compare the three replicas against each other,
+	# and a replica that is merely still catching up is not a divergence.
+	note "OM.readindex: letting node 1 rejoin for ${HEAL_SETTLE_S}s before the state is read"
+	sleep "${HEAL_SETTLE_S}"
+
+	end_check OM.readindex
+}
+
+# rules_left prints the node pairs that still carry a partition DROP rule, empty
+# when none does. It asks with the same iptables -C phase_hygiene uses, but it
+# reports THREE outcomes rather than two: a bare non-zero status cannot tell a rule
+# that is absent from a host that would not answer, and reading the second as the
+# first is how a swallowed heal stays invisible. So the remote command says which
+# it is and a reply that is neither is reported as unreadable, which is a finding
+# and not a clean bill.
+rules_left() {
+	local n x out found=""
+	for n in "${NODE_IDS[@]}"; do
+		for x in "${NODE_IDS[@]}"; do
+			[ "$x" = "$n" ] && continue
+			out="$(run_on "$n" "if sudo iptables -C INPUT -s ${PRIV[$x]} -j DROP 2>/dev/null || sudo iptables -C OUTPUT -d ${PRIV[$x]} -j DROP 2>/dev/null; then echo present; else echo absent; fi" 2>/dev/null || true)"
+			case "${out}" in
+				*present*) found="${found} ${n}-x-${x}" ;;
+				*absent*)  ;;
+				*)         found="${found} ${n}-x-${x}(unreadable)" ;;
+			esac
+		done
+	done
+	printf '%s' "${found}"
+}
+
 # quiesce_and_copy stops every node and takes a cold copy of each data directory.
 # The tools open storage read-write and truncate a torn tail, so they must never be
 # pointed at an original. Stopping first is what makes the comparison meaningful:
@@ -849,7 +1097,12 @@ phase_bench() {
 	while [ "${i}" -lt "${BENCH_SAMPLES}" ]; do
 		i=$((i + 1))
 		bid=$((1000 + i))
-		out="$(client_op -op put -id "${bid}" -vec "$(vec_for "${bid}")" -deadline "${OP_DEADLINE}" -timing)"
+		# The || true is what makes the paragraph below true rather than merely
+		# intended. phase_bench is dispatched bare, so errexit is live in this loop,
+		# and an ssh that failed on its own account would end the run on this line,
+		# after the write may have reached the cluster and before the append below
+		# names it. The operation's own outcome is in the text, not in this status.
+		out="$(client_op -op put -id "${bid}" -vec "$(vec_for "${bid}")" -deadline "${OP_DEADLINE}" -timing || true)"
 		# R1 applies here too. These ids go on the wire, so they are recorded, and
 		# as uncertain because the benchmark reads no verdict from them. Nothing
 		# audits them today, but a wipe that silently failed would leave them
@@ -949,7 +1202,8 @@ usage: omnibus.sh <all|pre|provenance|operability|audit|bench|hygiene>
   provenance    build, deploy, homogeneous sha256, and the commit anchor
   operability   WIPES, then serves, kills a leader, and partitions one.
                 The three arms share one cluster state on purpose
-  audit         the Arc 4.8 invariant audit over the state operability left
+  audit         the linearizable read on the live cluster, then the Arc 4.8
+                invariant audit over the state operability left
   bench         WIPES, then the real-infrastructure benchmark
   hygiene       no rule left behind, one binary on all three
 
@@ -960,6 +1214,13 @@ which they all mean something:
   attests nothing, because the acks oracle is the record of the client
   operations operability itself issued. It refuses to run without that
   manifest rather than produce an empty green.
+
+  audit ALSO NEEDS THAT CLUSTER STILL RUNNING. Its first arm is a linearizable
+  read, which no stopped cluster can answer, and it is that arm which stops the
+  cluster for the four that follow. operability leaves the nodes up, so an
+  audit that follows it finds what it needs; an audit run after a hand
+  cluster.sh stop reds on its own precondition instead, saying there is no
+  leader to read from.
 
   bench WIPES BEFORE IT RUNS. Running it before audit destroys exactly what
   audit needs. Two of the three orderings are caught: audit refuses a manifest
@@ -1018,7 +1279,10 @@ require_operability_state() {
 
 run_audit() {
 	require_operability_state
-	quiesce_and_copy || stop "the cluster could not be quiesced and copied; the invariant audit reads cold copies only"
+	# The live arm first. Everything under it reads cold copies, and producing
+	# those copies is what stops the cluster.
+	phase_readindex
+	quiesce_and_copy || stop "the cluster could not be quiesced and copied; the rest of the invariant audit reads cold copies only"
 	phase_faithful
 	phase_digest
 	phase_logmatch
@@ -1043,7 +1307,8 @@ case "${cmd}" in
 		phase_partition
 		;;
 	audit)
-		EXPECTED="OM.faithful OM.digest OM.logmatch OM.election"
+		EXPECTED="OM.readindex OM.faithful OM.digest OM.logmatch OM.election"
+		teardown
 		run_audit
 		;;
 	bench)
@@ -1056,7 +1321,7 @@ case "${cmd}" in
 		phase_hygiene
 		;;
 	all)
-		EXPECTED="OM.pre OM.provenance OM.serve OM.kill OM.partition OM.faithful OM.digest OM.logmatch OM.election OM.bench OM.hygiene"
+		EXPECTED="OM.pre OM.provenance OM.serve OM.kill OM.partition OM.readindex OM.faithful OM.digest OM.logmatch OM.election OM.bench OM.hygiene"
 		phase_pre
 		teardown
 		phase_provenance

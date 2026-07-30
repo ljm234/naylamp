@@ -36,7 +36,11 @@ deviation and its reason are recorded here and in the subphase closure.
 - `cluster.sh` - start, stop, status, start-node, stop-node.
 - `partition.sh` - apply, heal, status of a real iptables partition.
 - `readindex.sh` - the read-index gate (Subphase 4.3): a linearizable read is
-  served only after a confirmed majority round, and withheld under isolation.
+  served only after a confirmed majority round, and withheld under isolation. It
+  runs standalone, and `omnibus.sh` drives it as the first arm of its audit, which
+  is what puts this property under the same commit as the rest of an `all` run;
+  the `NAYLAMP_READINDEX_*` variables that make that possible are in the script
+  header.
 - `tls.sh` - the mutual TLS gate (Subphase 4.4): a forged identity is rejected and
   the raft traffic carries no framing magic in the clear.
 - `faithlog.sh` - the log-fidelity gate (Subphase 4.2): each replica's committed
@@ -44,6 +48,24 @@ deviation and its reason are recorded here and in the subphase closure.
   (phantom, missing, corrupt, and an idempotent duplicate as the negative control)
   prove the checker reds for the right reason. Build and gate run under one tee into
   `NAYLAMP_FAITHLOG_GATE_<date>.txt`; the runbook is in the script header.
+- `checkquorum.sh` - the CheckQuorum gate (Subphase 4.1): a leader that can reach
+  no majority steps down, and the arm with the older binary shows the check reds
+  for the right reason.
+- `servicehealth.sh` - the service-health gate (Subphase 4.1): the same fleet with
+  the feature switched off is the arm that makes the green mean something.
+- `omnibus.sh` - the Subphase 4.5 gate widened with the Arc 4.8 invariant audit,
+  in six phases from an off-cloud precondition to a hygiene check. It is the only
+  gate here that grades a whole phase. It has no default subcommand, because it
+  wipes the data directories on all three hosts. The provenance phase records the
+  commit HEAD sat at, and that is what ties a run's verdicts to a tree; only `all`
+  and `provenance` run it, so any other single subcommand names no tree and says
+  so.
+
+Everything the gate scripts build or write locally lands in `gate/out`, which is
+ignored, and `make clean` empties it except for `gate/out/certs`: `build.sh` mints
+those identities once and reuses them, so clearing them without running
+`deploy.sh` afterwards leaves the hosts on the old CA. The `NAYLAMP_*GATE*.txt`
+run artifacts live outside `gate/out` and `make clean` never looks at them.
 
 ## Environment (all four, fail loud if missing)
 
