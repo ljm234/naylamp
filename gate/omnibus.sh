@@ -530,6 +530,40 @@ phase_provenance() {
 	note "OM.provenance: build, deploy, homogeneous fleet, and the commit this run is anchored to"
 	begin_check
 
+	# THE FLEET IS STOPPED HERE, before deploy.sh, and the reason cost half an hour
+	# to diagnose on the 29th of July. A finished run leaves all three daemons
+	# UP: hygiene tears nothing down on purpose, and teardown only deletes iptables
+	# rules. So the next run reaches deploy.sh, which scp's the new binary over
+	# naylamp/bin/naylampd while that exact file is still executing, and the kernel
+	# refuses the write with ETXTBSY, "Text file busy". That is the real error.
+	#
+	# It is not the error the operator reads. sftp-server has no portable status
+	# code for ETXTBSY, so it collapses to the generic SSH_FX_FAILURE and scp
+	# prints its message for that code:
+	#
+	#   scp: dest open "naylamp/bin/naylampd": Failure
+	#
+	# "Failure" reads like a permission problem or a full disk, and sends the
+	# operator to check both. Neither was the cause. The wasted time is not
+	# the minute of scp either: in an `all` run OM.pre has already spent the sealed
+	# cluster DST before reaching here, so every re-diagnosis pays those seven
+	# minutes again before hitting the same wall.
+	#
+	# Stopping costs nothing that was not already spent. In `all`, phase_serve
+	# follows immediately and opens with cluster.sh stop, wipe_hosts and
+	# cluster.sh start, so every node stopped here was going to be stopped, wiped
+	# and relaunched a few steps later regardless. The one ordering where the
+	# behavior does change is a standalone `omnibus.sh provenance`, which now
+	# leaves the fleet down rather than up; that is the honest state after a
+	# redeploy, since the binary underneath those processes has just been replaced,
+	# and the operability phase starts its own cluster whenever it runs next.
+	#
+	# What this does NOT cover: cluster.sh stop works from the pidfile and sends
+	# TERM, so a daemon with no pidfile or one that ignores TERM still holds the
+	# text segment and deploy.sh still fails the old way.
+	"${GATE_DIR}/cluster.sh" stop >/dev/null 2>&1 || true
+	note "OM.provenance: the fleet is stopped before deploy, so scp is not writing over a running naylampd"
+
 	GIT_SHA="$(git -C "${REPO_DIR}" rev-parse HEAD 2>/dev/null || true)"
 	if [ -n "$(git -C "${REPO_DIR}" status --porcelain 2>/dev/null)" ]; then
 		GIT_DIRTY=" plus uncommitted changes"
@@ -878,7 +912,7 @@ phase_readindex() {
 	fi
 
 	if [ "${rc}" -eq 0 ] && [ -z "${short}" ] && [ "${seeded}" = confirmed ]; then
-		pass "OM.readindex: the read-index gate ran green inside this run. On the healthy majority the read was served and a new readindex line appeared; with node 1 cut from both peers the read was withheld and NO readindex line appeared, so the round never confirmed; after the heal the read was served again. Its seed id=${READINDEX_ID} is in the ack oracle as ${seeded}, so the faithfulness check below reads it as a write this run made. Scope: this exercises the read-index MECHANISM and the gate on it, not linearizability. One client, one read at a time, no concurrent history, and the answer is checked for the datum but never against an index, so it falsifies a read answered without a confirmable quorum and cannot falsify staleness inside a read that was served. The literal claim, that the served state reflects a prefix at or beyond the read index, needs the read-index accessor and stays with the seeded simulation; DEFER-014 is not closed by this"
+		pass "OM.readindex: the read-index gate ran green inside this run. On the healthy majority the read was served and a new readindex line appeared; with node 1 cut from both peers the read was withheld and NO readindex line appeared, so the round never confirmed; after the heal the read was served again. Its seed id=${READINDEX_ID} is in the ack oracle as ${seeded}, so the faithfulness check below reads it as a write this run made. Scope: this exercises the read-index MECHANISM and the gate on it, not linearizability. One client, one read at a time, no concurrent history, and the answer is checked for the datum but never against an index, so it falsifies a read answered without a confirmable quorum and cannot falsify staleness inside a read that was served. The literal claim, that the served state reflects a prefix at or beyond the read index, needs the read-index accessor and stays with the seeded simulation, where TestClusterDST_ReadIndexLinearizableLiteral closed DEFER-014 in 4.3; this arm does not carry that claim onto hardware"
 	else
 		if [ -n "${short}" ]; then
 			why="sub-verdicts short of pass:${short}. RI.pre, RI.green and RI.negative failing is the instrument outright: office never landing on node 1, a read served on a healthy majority with no readindex line to witness it, or a healed cluster that will not serve again. Any of those and the red attests nothing, so this verdict is not a finding about the read path. RI.red is where the property lives, and it is the one that has to be READ rather than assumed, because it has failure branches of both kinds. It is a linearizability regression when the read was ANSWERED, or a readindex line was LOGGED, while the leader could reach no majority. It is the instrument when office left node 1 before the cut, or when the read exited neither 0 nor 1, which is a load or argument error and not a refusal. Its own FAIL line above says which of the four it was, and this verdict does not presume"
