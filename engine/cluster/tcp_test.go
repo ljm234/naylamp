@@ -140,6 +140,174 @@ func TestTCP_RejectsUnauthenticatedPeer(t *testing.T) {
 	}
 }
 
+// TestTCP_RejectsTrustedCertificateWithWrongNodeID covers a case nothing in
+// this tree covered. TestTCP_RejectsUnauthenticatedPeer takes the RECEIVING
+// side's chain check, a certificate from a stranger authority and no
+// certificate at all. This one takes the dialing side's identity check: a
+// certificate the cluster's own CA really did sign, whose common name is a
+// DIFFERENT node than the one being dialed. Nothing else presents that
+// combination, so without this test the comparison in verifyPeerIdentity could
+// be deleted and every package would stay green.
+//
+// The four boxes are worth naming, because only three are filled. Two
+// directions, dial and accept, times two properties, chain and identity. This
+// test is dial-and-identity, the one below is accept-and-identity, and
+// TestTCP_RejectsUnauthenticatedPeer is accept-and-chain. Dial-and-chain, the
+// leaf.Verify call in verifyPeerIdentity, is still pinned by nothing: neutering
+// it leaves this package green too. That gap is recorded, not closed here.
+//
+// The property is the one the dialer alone can hold. A listener has no
+// expectation to check a peer against, so only the side that chose which node
+// to dial can refuse a stand-in: were the check absent, any holder of a valid
+// cluster certificate that sits on another node's address would be dialed,
+// trusted, and fed that node's consensus traffic.
+//
+// The shape: the impostor is a real transport carrying node 7's certificate,
+// and the sender is told node 2 lives at its address, so the dial expects the
+// common name 2 and is offered 7. In TLS 1.3 the client verifies the server's
+// flight before sending its own, so the connection dies inside the dial and
+// takes the frame with it; the impostor's handler never runs.
+//
+// The control runs FIRST and is what gives the silence afterwards a meaning.
+// Same sender, same address, same certificates, only the expected id corrected
+// to 7: the frame arrives. Everything the second half depends on is therefore
+// known to work before it is asked to stay quiet, so the silence can only be
+// the identity mismatch, never a wrong address, an untrusted CA or a transport
+// that never sent.
+//
+// The window is sized against the failure that matters. A false red costs a
+// rerun; a false GREEN would hide exactly the impersonation this test exists to
+// catch, so the wait is deliberately long. An accepted impostor delivers over
+// the same loopback dial, handshake and write the control just completed in
+// milliseconds, and two seconds leaves room for that path to run some hundreds
+// of times slower under the race detector on a loaded host and still be caught.
+func TestTCP_RejectsTrustedCertificateWithWrongNodeID(t *testing.T) {
+	ca := mustCA(t)
+
+	// The impostor holds node 7's certificate, signed by the CA the whole
+	// cluster trusts. It is a legitimate member presenting legitimate material,
+	// which is exactly what makes it the interesting attacker.
+	delivered := make(chan []byte, 2)
+	impostor, err := NewTCPTransport(7, "127.0.0.1:0", func(_ NodeID, data []byte) {
+		delivered <- append([]byte(nil), data...)
+	}, mustMaterial(t, ca, 7))
+	if err != nil {
+		t.Fatalf("impostor transport: %v", err)
+	}
+	defer func() { _ = impostor.Close() }()
+
+	sender, err := NewTCPTransport(1, "127.0.0.1:0", func(NodeID, []byte) {}, mustMaterial(t, ca, 1))
+	if err != nil {
+		t.Fatalf("sender transport: %v", err)
+	}
+	defer func() { _ = sender.Close() }()
+
+	// The control: dial the impostor as the node it actually is.
+	const control = "addressed to node 7"
+	sender.AddPeer(7, impostor.Addr())
+	if serr := sender.Send(7, []byte(control)); serr != nil {
+		t.Fatalf("send toward the certificate's own id: %v", serr)
+	}
+	select {
+	case data := <-delivered:
+		if string(data) != control {
+			t.Fatalf("the control delivered %q, want %q", data, control)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("the control frame never arrived, so this test cannot tell a refused identity from a broken link")
+	}
+
+	// The impersonation: the same listener, now dialed as node 2. Its
+	// certificate says 7, so the dialer must refuse the connection.
+	sender.AddPeer(2, impostor.Addr())
+	if serr := sender.Send(2, []byte("addressed to node 2")); serr != nil {
+		t.Fatalf("send toward the impersonated id: %v", serr)
+	}
+	select {
+	case data := <-delivered:
+		t.Fatalf("a certificate for node 7 was accepted as node 2 and delivered %q: any holder of a cluster certificate can stand in for any node", data)
+	case <-time.After(2 * time.Second):
+		// Nothing arrived: the dialer refused an identity it did not ask for.
+	}
+}
+
+// TestTCP_AttributesFrameToCertificateIdentity is the accepting side of the
+// same property, and it is a different claim, not a mirror of the one above.
+// The dialer compares an identity it expects; a listener has none to compare
+// against, so its half is that the identity it hands the handler is READ OFF
+// the verified certificate and can come from nowhere else. A peer holding real
+// cluster material is confined to the single id that material carries.
+//
+// The peer here holds node 9's certificate and sends a well formed envelope
+// whose own From field declares node 2, which is the shape an authenticated
+// node would use to pass itself off as another: the envelope carries From and
+// To precisely so a receiver need not trust connection state alone, and that
+// same field is the one an attacker controls. The receiver must attribute the
+// frame to 9, the common name it verified, and never to 2, the number the
+// frame asserts about itself. This is the self-declared identity the transport
+// stopped trusting, handed back to it to check that it stays ignored.
+//
+// Scope, stated so the green is not read as more than it is: what this pins is
+// the identity the TRANSPORT attributes, and the transport is where it stops.
+// Every consumer above discards it and reads the envelope's own From instead,
+// the raft core included, so nothing here says an authenticated member cannot
+// still name another node inside a frame. That is a property of the layers
+// above and it is not defended anywhere yet.
+func TestTCP_AttributesFrameToCertificateIdentity(t *testing.T) {
+	ca := mustCA(t)
+	const (
+		certID    NodeID = 9
+		claimedID NodeID = 2
+	)
+
+	attributed := make(chan NodeID, 1)
+	recv, err := NewTCPTransport(1, "127.0.0.1:0", func(from NodeID, _ []byte) { attributed <- from }, mustMaterial(t, ca, 1))
+	if err != nil {
+		t.Fatalf("recv transport: %v", err)
+	}
+	defer func() { _ = recv.Close() }()
+
+	// A well formed envelope declaring a sender this peer holds no certificate
+	// for. The transport treats the payload as opaque and never reads that
+	// field, which is the whole point: the declaration is put on the wire in the
+	// exact shape a layer above would act on, so a transport that ever started
+	// preferring it would be caught here rather than in production.
+	frame, err := EncodeMessage(Envelope{From: claimedID, To: 1, Kind: 7, Payload: []byte("a node id this peer cannot prove")})
+	if err != nil {
+		t.Fatalf("encode envelope: %v", err)
+	}
+
+	client := &tls.Config{
+		Certificates:       []tls.Certificate{mustNodeCert(t, ca, certID)},
+		RootCAs:            ca.Pool(),
+		MinVersion:         tls.VersionTLS13,
+		InsecureSkipVerify: true, //nolint:gosec // the receiver's attribution is what this test checks; the dialer's own identity check is covered by TestTCP_RejectsTrustedCertificateWithWrongNodeID
+	}
+	conn, err := tls.Dial("tcp", recv.Addr(), client)
+	if err != nil {
+		t.Fatalf("tls dial with valid node %d material: %v", certID, err)
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+	// The transport block wraps the envelope block, the same double framing
+	// writeFrame puts on the wire for a frame produced above it.
+	if _, werr := persist.WriteBlock(conn, persist.BlockClusterMessage, frame); werr != nil {
+		t.Fatalf("write frame: %v", werr)
+	}
+
+	select {
+	case from := <-attributed:
+		if from == claimedID {
+			t.Fatalf("the receiver took the id the frame declared: it attributed the frame to node %d while the presented certificate names node %d", claimedID, certID)
+		}
+		if from != certID {
+			t.Fatalf("frame attributed to node %d, want node %d, the common name of the certificate the peer presented", from, certID)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("the frame never reached the handler: a peer with valid cluster material must be admitted and attributed, not dropped")
+	}
+}
+
 // TestTCP_TrafficIsEncrypted proves the payload never crosses the wire in the
 // clear. A transparent byte-copying proxy sits in front of the receiver and
 // records the client to server bytes; the sender delivers a known marker over
