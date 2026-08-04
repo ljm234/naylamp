@@ -9,6 +9,14 @@ dist/
 # engine/cmd/naylampd or engine/naylamp.
 /naylampd
 /engine/naylampd
+# The demo binary the other main package drops, by the same accident and from the
+# repo root. It is listed second because it was missed first: `go build
+# ./engine/cmd/naylamp` left 7.8MB untracked AND unignored, which is worse than
+# the daemon case, since it turns up in git status ready to be committed. Only
+# the root path is anchored here, and there is no /engine/naylamp twin on
+# purpose: that path is the source package, and from inside engine/ the build
+# cannot land there anyway because the directory already holds it.
+/naylamp
 
 # Go
 /vendor/

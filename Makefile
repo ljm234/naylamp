@@ -72,6 +72,15 @@ ci: build vet lint test vuln
 # `git clean -X` would look like the obvious implementation and is not used: it
 # takes every ignored path, and some of those are local tool and environment
 # configuration that happens to be untracked rather than output.
+#
+# The compiled output goes by the same principle, and the three binary paths are
+# spelled out rather than matched because .gitignore anchors them for a reason it
+# states: an unanchored pattern with no slash matches at any depth, and the
+# source packages engine/cmd/naylampd and engine/naylamp would be in its way.
+# Naming the files exactly cannot reach a directory, and the -type f on the sweep
+# below cannot either.
 clean:
 	test ! -d gate/out || find gate/out -mindepth 1 -maxdepth 1 ! -name certs -exec rm -rf -- {} +
 	find engine -type f \( -name '*_result.txt' -o -name '*_bench.txt' \) -delete
+	find engine -type f \( -name '*.test' -o -name '*.out' \) -delete
+	rm -f -- naylampd engine/naylampd naylamp
