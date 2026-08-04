@@ -76,10 +76,17 @@ func measureRecall(t *testing.T, store *vector.Store, idx *Index, dim, k, nQuery
 // than the basic correctness test. HNSW is approximate, so recall at this scale
 // is expected to be high but may dip below 100%. This documents the real
 // quality of the index, not just that it works on toy inputs.
+//
+// This case is NOT -short skipped, on purpose: it is the only recall floor
+// above toy size that CI executes. Measured under the race detector, which is
+// what CI runs, it costs 20.6s against a CI run of roughly six minutes.
+//
+// It is worth that because the other CI-live floor is nearly blind. At n=500,
+// in hnsw_test.go, the 0.95 floor holds until efSearch drops under about 20, a
+// fifteenfold collapse from the default of 300: ef=18 measures 0.945 and fails,
+// ef=20 measures 0.950 and passes. At n=5000 the same floor trips at ef=30 with
+// 0.878, which the previous 0.85 threshold accepted.
 func TestHNSW_RecallAtScale(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping scale test in -short mode")
-	}
 	const (
 		n      = 5000
 		dim    = 64
@@ -93,15 +100,8 @@ func TestHNSW_RecallAtScale(t *testing.T) {
 	t.Logf("recall@%d at scale (n=%d, dim=%d, %d queries) = %.3f", k, n, dim, nQuery, recall)
 
 	// Same 0.95 floor as the basic case, and for the same reason: it is the
-	// number Phase 1 claims. This assertion read 0.85 until 3 de agosto de 2026.
+	// number Phase 1 claims. This assertion read 0.85 until 449d98c.
 	// Measured at that point: 1.000 on this seed at n=5000.
-	//
-	// THIS FLOOR DOES NOT RUN IN CI, and the caveat belongs next to the number
-	// rather than in a report nobody reads. The -short skip at the top of this
-	// function is taken by `go test -short -race ./...`, which is what the CI
-	// workflow runs and what `make test` runs, so this assertion fires only
-	// under `make test-scale` or an explicit -run. The one recall floor that CI
-	// does execute is the n=500 case in hnsw_test.go, which has no -short skip.
 	if recall < 0.95 {
 		t.Errorf("recall at scale = %.3f, want >= 0.95", recall)
 	}
@@ -127,26 +127,36 @@ func TestHNSW_RecallLargeScale(t *testing.T) {
 	recall := measureRecall(t, store, idx, dim, k, nQuery, 99)
 	t.Logf("recall@%d at LARGE scale (n=%d, dim=%d, %d queries) = %.3f", k, n, dim, nQuery, recall)
 
-	// This is the only 50k recall instrument in the tree, and it measures 0.994,
-	// the same figure NAYLAMP_PHASE_1.md records as "recall 99.4% a 50k" when it
-	// cites evidence for its 0.95 claim. The assertion nonetheless read 0.80
-	// until 3 de agosto de 2026, so the tree tolerated losing nineteen points of
-	// recall without turning red while the document went on claiming 0.95.
+	// The only 50k recall instrument in the tree. It measures 0.994, and the
+	// assertion below read 0.80 until 449d98c, so the tree tolerated losing
+	// nineteen points of recall without turning red.
 	//
-	// Two things this comment deliberately does NOT say. It does not claim the
-	// two numbers are the same measurement: the sibling figure on that same doc
-	// line, 98.9% at 5k, does not reproduce here, since the n=5000 case above
-	// measures 1.000 under today's defaults. And it does not explain the 0.044
-	// margin by saying recall falls as the graph grows, which the project's own
-	// evidence contradicts: efSearch=300 gives 0.9990 at n=1,000,000 on real
-	// SIFT1M (sift_result_2026-07-11.txt) and 0.790 at n=1.5M on synthetic
-	// gaussian (DEFER-008). Both cannot be a size effect. What moves recall at a
-	// fixed efSearch is the data distribution, and this suite measures the
-	// synthetic-gaussian arm only. 50k is the largest regime this suite asserts
-	// on, not the largest Phase 1 sealed.
+	// What this comment does NOT claim: that 0.994 and the "99.4% a 50k" in
+	// NAYLAMP_PHASE_1.md are the same measurement. The sibling figure on that
+	// same doc line, 98.9% at 5k, does not reproduce here, since the n=5000 case
+	// above measures 1.000 under today's defaults.
 	//
-	// Like the case above, this floor is behind the -short skip and so does not
-	// run in CI.
+	// Nor does it explain the 0.044 margin by size alone. At a fixed efSearch of
+	// 300 the corpus matters as much as n: gaussian dim=64 gives 0.994 here and
+	// 0.790 at n=1.5M (DEFER-008), while real SIFT1M holds 0.9990 at n=1,000,000
+	// (sift_result_2026-07-11.txt). Both axes move it, and this suite measures
+	// the synthetic-gaussian arm only. 50k is the largest regime this suite
+	// asserts on, not the largest Phase 1 sealed.
+	//
+	// This one STAYS behind the -short skip, and the number is why: 849.9s under
+	// the race detector, against a CI run of roughly six minutes. The n=5000
+	// case carries the per-push duty at 20.6s instead.
+	//
+	// Nothing schedules this one, so today it runs only when someone remembers
+	// to, and the assertion below guards nothing on a push. The fix is a
+	// scheduled workflow off the push path, running this test by anchored name:
+	//
+	//	go test ./hnsw/ -run '^TestHNSW_RecallLargeScale$' -race -timeout 30m
+	//
+	// Not `make test-scale`. That target is -run 'Scale' unanchored against a
+	// 60m timeout, which also matches TestHNSW_ScaleRecallSweep, TestHNSW_BuildScale
+	// and TestHNSW_SIFTScale; two of those are multi-hour runs, so the target
+	// cannot finish inside its own timeout and is the wrong vehicle for a timer.
 	if recall < 0.95 {
 		t.Errorf("recall at large scale = %.3f, want >= 0.95", recall)
 	}

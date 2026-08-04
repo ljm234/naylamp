@@ -103,7 +103,7 @@ func TestHNSW_RecallVsBruteForce(t *testing.T) {
 	t.Logf("recall@%d over %d queries = %.3f", k, nQuery, recall)
 
 	// 0.95 is the recall@10-versus-brute-force floor Phase 1 claims as its
-	// central property, and until 3 de agosto de 2026 no test in the tree
+	// central property, and until 449d98c no test in the tree
 	// enforced it: this assertion read 0.90 while the two scale tests read 0.85
 	// and 0.80, so the claim rested on figures in a document rather than on a
 	// gate. Measured on this seed at the time the floor was raised, this case
