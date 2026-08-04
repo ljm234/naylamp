@@ -149,12 +149,12 @@ func TestTCP_RejectsUnauthenticatedPeer(t *testing.T) {
 // combination, so without this test the comparison in verifyPeerIdentity could
 // be deleted and every package would stay green.
 //
-// The four boxes are worth naming, because only three are filled. Two
-// directions, dial and accept, times two properties, chain and identity. This
-// test is dial-and-identity, the one below is accept-and-identity, and
-// TestTCP_RejectsUnauthenticatedPeer is accept-and-chain. Dial-and-chain, the
-// leaf.Verify call in verifyPeerIdentity, is still pinned by nothing: neutering
-// it leaves this package green too. That gap is recorded, not closed here.
+// The four boxes are worth naming. Two directions, dial and accept, times two
+// properties, chain and identity. This test is dial-and-identity, the one below
+// is accept-and-identity, TestTCP_RejectsUnauthenticatedPeer is accept-and-chain,
+// and TestTCP_RejectsServerCertificateNotSignedByTheClusterCA is dial-and-chain.
+// All four are filled; when this comment first went in, the fourth was still
+// pinned by nothing.
 //
 // The property is the one the dialer alone can hold. A listener has no
 // expectation to check a peer against, so only the side that chose which node
@@ -305,6 +305,115 @@ func TestTCP_AttributesFrameToCertificateIdentity(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatalf("the frame never reached the handler: a peer with valid cluster material must be admitted and attributed, not dropped")
+	}
+}
+
+// TestTCP_RejectsServerCertificateNotSignedByTheClusterCA fills the last of the
+// four boxes named on TestTCP_RejectsTrustedCertificateWithWrongNodeID. That one
+// takes the dialer's IDENTITY half, a certificate the cluster CA really signed
+// carrying the wrong node id. This one takes the dialer's CHAIN half, the
+// leaf.Verify call in verifyPeerIdentity: a certificate carrying the RIGHT node
+// id that no cluster authority ever signed. Neutering that call used to leave
+// engine/cluster, engine/naylamp and both engine/cmd packages green.
+//
+// The two halves have to be separated by construction or neither is pinned,
+// because verifyPeerIdentity runs them in sequence and any refusal looks alike
+// from outside. So the impostor's common name is the id being dialed, exactly
+// right: the identity comparison cannot be what refuses it, and the chain is the
+// only thing left that can.
+//
+// The property is the dialer's alone, but NOT for the reason the identity half
+// is: there the listener genuinely has no expected id to check against, while
+// here it runs a chain check of its own, RequireAndVerifyClientCert against
+// ClientCAs, and TestTCP_RejectsUnauthenticatedPeer pins that one. What belongs
+// to the dialer is the SERVER half of the chain. Only the side that chose which
+// node to reach ever sees the certificate the answer arrives on, so only it can
+// insist that certificate came from an authority it trusts.
+// Were the check absent, anyone able to occupy a peer's address would be dialed
+// and fed that node's consensus traffic on the strength of a certificate they
+// minted themselves, which is the whole vulnerability mutual TLS is here to
+// close.
+//
+// The impostor trusts the REAL cluster CA for the clients it admits while
+// presenting a certificate from the stranger authority. The asymmetry is
+// deliberate and it is what makes the silence mean something: an impostor that
+// also refused the cluster's certificates would turn the frame away for a second
+// reason. The control is what refuses to let that pass for a verdict, since it
+// carries the same cluster-signed certificate: such an impostor would never land
+// the control frame, so this test would go red at the link check rather than
+// fall quiet in the wrong place. It is also the realistic attacker, who wants
+// the cluster's connections to land.
+//
+// The control runs FIRST, as on the sibling test, and here it pins one variable
+// exactly: both senders carry the SAME node 1 certificate, dial the SAME
+// address and expect the SAME node id, differing only in which root they trust.
+// The control trusts the stranger authority, so its chain check passes and its
+// frame arrives, which leaves the trusted root as the only thing the silence
+// below can be about.
+//
+// The window is sized against the failure that matters, as on the sibling test.
+// An accepted impostor delivers over the same loopback dial, handshake and write
+// the control just finished in milliseconds.
+func TestTCP_RejectsServerCertificateNotSignedByTheClusterCA(t *testing.T) {
+	ca := mustCA(t)
+	stranger := mustCA(t)
+	const impersonated NodeID = 2
+
+	// The impostor: node 2's common name on a certificate the cluster CA never
+	// signed, and it admits clients holding real cluster material.
+	delivered := make(chan []byte, 2)
+	impostor, err := NewTCPTransport(impersonated, "127.0.0.1:0", func(_ NodeID, data []byte) {
+		delivered <- append([]byte(nil), data...)
+	}, TLSMaterial{Cert: mustNodeCert(t, stranger, impersonated), CA: ca.Pool()})
+	if err != nil {
+		t.Fatalf("impostor transport: %v", err)
+	}
+	defer func() { _ = impostor.Close() }()
+
+	// One certificate, shared by both senders, so the two differ in their
+	// trusted root and in nothing else.
+	senderCert := mustNodeCert(t, ca, 1)
+
+	// The control trusts the stranger authority, so the chain check it runs is
+	// the one that passes.
+	control, err := NewTCPTransport(1, "127.0.0.1:0", func(NodeID, []byte) {}, TLSMaterial{Cert: senderCert, CA: stranger.Pool()})
+	if err != nil {
+		t.Fatalf("control transport: %v", err)
+	}
+	defer func() { _ = control.Close() }()
+
+	const controlFrame = "dialed while trusting the authority that signed it"
+	control.AddPeer(impersonated, impostor.Addr())
+	if serr := control.Send(impersonated, []byte(controlFrame)); serr != nil {
+		t.Fatalf("control send: %v", serr)
+	}
+	select {
+	case data := <-delivered:
+		if string(data) != controlFrame {
+			t.Fatalf("the control delivered %q, want %q", data, controlFrame)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("the control frame never arrived, so this test cannot tell a refused chain from a broken link")
+	}
+
+	// The real sender trusts only the cluster CA, which is the production
+	// configuration. Same certificate, same address, same expected id.
+	sender, err := NewTCPTransport(1, "127.0.0.1:0", func(NodeID, []byte) {}, TLSMaterial{Cert: senderCert, CA: ca.Pool()})
+	if err != nil {
+		t.Fatalf("sender transport: %v", err)
+	}
+	defer func() { _ = sender.Close() }()
+
+	sender.AddPeer(impersonated, impostor.Addr())
+	if serr := sender.Send(impersonated, []byte("dialed while trusting the cluster CA alone")); serr != nil {
+		t.Fatalf("send toward the unsigned impostor: %v", serr)
+	}
+	select {
+	case data := <-delivered:
+		t.Fatalf("a server certificate no cluster authority signed was accepted as node %d and delivered %q: anyone who can occupy a peer's address can be dialed as that peer", impersonated, data)
+	case <-time.After(2 * time.Second):
+		// Nothing arrived: the dialer refused a certificate that chains nowhere
+		// it trusts, even though the id on it was the id it asked for.
 	}
 }
 
