@@ -44,8 +44,9 @@ type Host struct {
 	node *Node
 	tr   cluster.Transport
 
-	mu  sync.Mutex
-	err error // first fatal error; once set the Host is poisoned
+	mu       sync.Mutex
+	err      error  // first fatal error; once set the Host is poisoned
+	rejected uint64 // frames refused because the declared sender was not the authenticated one
 }
 
 // errHostClosed poisons a closed Host so a late inbound frame is dropped
@@ -79,16 +80,60 @@ func NewHost(node *Node, bind func(cluster.Handler) cluster.Transport) (*Host, e
 	return h, nil
 }
 
-// deliver is the inbound handler the transport calls. from is ignored: the
-// envelope inside data already carries a verified From. A poisoned Host drops
-// the frame untouched.
-func (h *Host) deliver(_ cluster.NodeID, data []byte) {
+// deliver is the inbound handler the transport calls, and the place where the
+// identity the transport AUTHENTICATED is bound to the one the frame DECLARES.
+// Under TCP the authenticated id is the common name of the peer's verified
+// certificate, which readLoop derives with nodeIDFromCN; under SimNet it is the
+// endpoint the fabric recorded as the sender, which the sender cannot choose
+// because Send carries no from at all. The declared id is the envelope's own
+// From, a field that rides inside data and is therefore written by whoever
+// framed it, and it is the one every layer below acts on: Node.HandleEnvelope
+// hands the envelope to raft.DecodeMsgEnvelope, which builds Message{From:
+// env.From}, so the consensus core's sender is that declaration. A frame whose
+// two ids disagree is refused here, the only point on a frame's way into the
+// Node where both values are in scope at once. RouterHost.deliver runs the same
+// check on the client path.
+//
+// The refusal is a DROP and never a poison, and the difference is the whole
+// point: any principal the cluster CA signed can reach this handler, so
+// latching a fatal error on a mismatch would hand every one of them a remote
+// kill switch for any node, which is the shape of attack this check exists to
+// remove. It only fires on a frame that decodes: an unreadable one never
+// reaches the comparison, because deliver decodes first and latches the same
+// error DecodeMessage used to hand back through HandleMessage, so the existing
+// poison route is byte for byte the one that was there. It also sits after the
+// poison check
+// above, so a frame arriving on an already-poisoned or closed Host still drops
+// without replacing the error that got there first.
+//
+// What this does NOT do is check membership. The authenticated id may be any
+// principal the cluster CA signed, member or not, and the client is exactly
+// such a non-member by design, so a rule here could only ever ask whether a
+// sender is honest about who it is. Whether that sender is entitled to be
+// heard as a peer is asked in raft.Step, which holds the config this one does
+// not.
+func (h *Host) deliver(from cluster.NodeID, data []byte) {
 	h.mu.Lock()
 	if h.err != nil {
 		h.mu.Unlock()
 		return
 	}
-	out, err := h.node.HandleMessage(data)
+	env, derr := cluster.DecodeMessage(data)
+	if derr != nil {
+		// Unchanged: a frame that will not decode poisons, exactly as it did
+		// when the Node was the one decoding it and handing the error back.
+		// That policy is a separate question from this one and is not settled
+		// here.
+		h.err = derr
+		h.mu.Unlock()
+		return
+	}
+	if env.From != from {
+		h.rejected++
+		h.mu.Unlock()
+		return
+	}
+	out, err := h.node.HandleEnvelope(env)
 	if err != nil {
 		h.err = err
 		h.mu.Unlock()
@@ -355,6 +400,31 @@ func (h *Host) Err() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.err
+}
+
+// RejectedFrames counts the frames deliver refused because the sender declared
+// an id other than the one it authenticated as. It exists because the refusal
+// is otherwise invisible: a dropped frame leaves no trace, so a test could only
+// assert that nothing happened, and a check that wrongly refused everything
+// would satisfy that assertion just as well as a correct one. A counter turns
+// the drop into something a test can require to have happened exactly once. In
+// a healthy cluster it stays at zero, so a nonzero value in the field means
+// either a node whose id disagrees with its certificate or a peer putting
+// someone else's name on its frames.
+func (h *Host) RejectedFrames() uint64 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.rejected
+}
+
+// DroppedKindFrames reports the Node's count of envelopes turned away for a kind
+// it does not serve. It goes through the same lock every other entry point
+// takes, because the field is written on the transport's goroutine and reading
+// it from the runtime's ticker without the lock would be a race.
+func (h *Host) DroppedKindFrames() uint64 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.node.DroppedKindFrames()
 }
 
 // Close releases the Node under the lock, marks the Host closed so late

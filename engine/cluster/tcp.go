@@ -197,6 +197,38 @@ func NewTCPTransport(self NodeID, listenAddr string, h Handler, mat TLSMaterial)
 	if len(mat.Cert.Certificate) == 0 || mat.CA == nil {
 		return nil, errors.New("cluster: tcp requires TLS material (a certificate and a CA); there is no plaintext mode")
 	}
+	// The certificate has to carry the identity this transport claims. Until
+	// now nothing compared the two: self and the material arrive as independent
+	// arguments, so a node started against another node's certificate ran
+	// perfectly and merely looked odd to its peers, who attributed it by the
+	// common name it presented rather than by the id it thought it had. Once
+	// the layers above refuse a frame whose declared sender is not the
+	// authenticated one, that mismatch stops looking odd and becomes total
+	// silence: every frame the node sends is dropped by every peer, and nothing
+	// on this side reports why. Failing here turns a silent partition into a
+	// startup error that names both numbers.
+	//
+	// Leaf is filled in by LoadX509KeyPair, which is how the daemons build
+	// their material, but a certificate assembled in memory carries only DER,
+	// which is how the tests in this package build theirs. So the nil case
+	// parses instead of skipping. A guard that switches itself off when a field
+	// it wanted is absent is a guard that can never go red, and absent is
+	// exactly what that field is on the path most of the tests take.
+	leaf := mat.Cert.Leaf
+	if leaf == nil {
+		parsed, perr := x509.ParseCertificate(mat.Cert.Certificate[0])
+		if perr != nil {
+			return nil, fmt.Errorf("cluster: tcp certificate does not parse: %w", perr)
+		}
+		leaf = parsed
+	}
+	certID, cerr := nodeIDFromCN(leaf.Subject.CommonName)
+	if cerr != nil {
+		return nil, fmt.Errorf("cluster: tcp certificate identity: %w", cerr)
+	}
+	if certID != self {
+		return nil, fmt.Errorf("cluster: tcp self id %d presents the certificate of node %d; every peer would attribute this node by the certificate and drop what it sends", self, certID)
+	}
 	serverCfg := &tls.Config{
 		Certificates: []tls.Certificate{mat.Cert},
 		ClientCAs:    mat.CA,

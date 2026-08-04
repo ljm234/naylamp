@@ -26,8 +26,9 @@ type RouterHost struct {
 	router *Router
 	tr     cluster.Transport
 
-	mu  sync.Mutex
-	err error // first fatal error; once set the RouterHost is poisoned
+	mu       sync.Mutex
+	err      error  // first fatal error; once set the RouterHost is poisoned
+	rejected uint64 // frames refused because the declared sender was not the authenticated one
 }
 
 // errRouterHostClosed poisons a closed RouterHost so a late inbound frame is
@@ -60,16 +61,37 @@ func NewRouterHost(router *Router, bind func(cluster.Handler) cluster.Transport)
 	return rh, nil
 }
 
-// deliver is the inbound handler the transport calls. from is ignored: the
-// envelope inside data already carries a verified From. A poisoned host drops
-// the frame untouched.
-func (rh *RouterHost) deliver(_ cluster.NodeID, data []byte) {
+// deliver binds the authenticated identity to the declared one exactly as
+// Host.deliver does, and for the same reasons; see that comment for the shape
+// and for why the refusal is a drop rather than a poison. What differs is what
+// the check is worth on this side, and it is worth more than it looks.
+//
+// Router.HandleMessage spends the envelope's From on the DEFER-012 rule that a
+// response resolves an operation only when it comes from the node the live
+// attempt was aimed at. That rule is correlation, not authentication: it drops
+// a superseded replica answering late, and until now a peer that simply named
+// the current target in its From walked straight through it and resolved an
+// operation it never served. Binding the field is what turns that correlation
+// into something an outsider cannot forge, because naming the target now
+// requires being the target.
+func (rh *RouterHost) deliver(from cluster.NodeID, data []byte) {
 	rh.mu.Lock()
 	if rh.err != nil {
 		rh.mu.Unlock()
 		return
 	}
-	out, err := rh.router.HandleMessage(data)
+	env, derr := cluster.DecodeMessage(data)
+	if derr != nil {
+		rh.err = derr
+		rh.mu.Unlock()
+		return
+	}
+	if env.From != from {
+		rh.rejected++
+		rh.mu.Unlock()
+		return
+	}
+	out, err := rh.router.HandleEnvelope(env)
 	if err != nil {
 		rh.err = err
 		rh.mu.Unlock()
@@ -213,6 +235,15 @@ func (rh *RouterHost) Err() error {
 	rh.mu.Lock()
 	defer rh.mu.Unlock()
 	return rh.err
+}
+
+// RejectedFrames counts the frames deliver refused because the sender declared
+// an id other than the one it authenticated as. It is the counterpart of the
+// counter on Host and is there for the reason given on that one.
+func (rh *RouterHost) RejectedFrames() uint64 {
+	rh.mu.Lock()
+	defer rh.mu.Unlock()
+	return rh.rejected
 }
 
 // Close marks the host closed so late frames drop, then closes the transport

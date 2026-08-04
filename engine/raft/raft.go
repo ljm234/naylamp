@@ -221,6 +221,11 @@ type Raft struct {
 	matchIndex   map[cluster.NodeID]uint64
 
 	dirty bool
+
+	// rejected counts the inbound messages Step refused before looking at what
+	// they carried: misrouted, self-addressed, or sent by an id the config does
+	// not list.
+	rejected uint64
 }
 
 // New builds a follower at term 0. The rng is mandatory: the core owns no
@@ -332,6 +337,11 @@ func (r *Raft) Leader() cluster.NodeID { return r.leader }
 
 // LastIndex exposes the log tail for tests and the harness oracle.
 func (r *Raft) LastIndex() uint64 { return r.log.LastIndex() }
+
+// RejectedMessages counts what Step turned away at the door. A refusal produces
+// an empty Ready, which is also what an ordinary message produces, so the
+// counter is the only thing that tells the two apart.
+func (r *Raft) RejectedMessages() uint64 { return r.rejected }
 
 // CommittedEntries returns a copy of the committed log entries this node still
 // holds, those at or below the commit index and above the compaction base, in
@@ -514,8 +524,32 @@ func (r *Raft) Propose(data []byte) (uint64, Ready, error) {
 // answered (so a stale leader or candidate learns and steps down) or, for
 // stale responses, dropped.
 func (r *Raft) Step(m Message) Ready {
-	if m.To != r.id {
-		return r.ready(nil) // misrouted: the transport attributes, we verify
+	// Three ways in and none of them is about the message's content. Misrouted:
+	// m.To is not us. Impossible: m.From is us, and nothing in the protocol
+	// sends a node its own frame, since every broadcast walks cfg.Peers, which
+	// excludes self. And the one that matters, a sender the configuration does
+	// not list.
+	//
+	// That last check is here rather than at the edge for two reasons. This is
+	// where the configuration lives: naylamp.Host holds none at all, and the
+	// Node's copy is only what it handed New. And membership is the wrong
+	// question to ask of every frame, because client traffic legitimately
+	// arrives from an id that is a member of nothing. Only consensus traffic
+	// has to come from a peer, and this function is where consensus traffic and
+	// the member list meet.
+	//
+	// It is the half that Host.deliver's binding cannot cover. That binding
+	// asks whether a sender is honest about who it is, which a non-member
+	// answers truthfully by naming itself, and the tallies below then count it:
+	// the read round, the pre-vote and the vote all size themselves with len of
+	// a map keyed by m.From, so any id at all inflates them. The deployment
+	// hands out exactly such a credential, since the routing client holds one
+	// the cluster CA signed and belongs to no group. Neither half subsumes the
+	// other: without the binding a real member reaches these handlers under a
+	// peer's name, and without this a stranger reaches them under its own.
+	if m.To != r.id || m.From == r.id || !r.cfg.Contains(m.From) {
+		r.rejected++
+		return r.ready(nil)
 	}
 
 	// Pre-vote traffic is handled before the uniform term rules on purpose:

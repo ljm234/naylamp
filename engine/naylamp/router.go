@@ -572,6 +572,13 @@ func (r *Router) HandleMessage(data []byte) ([][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	return r.HandleEnvelope(env)
+}
+
+// HandleEnvelope handles one already decoded response envelope. The RouterHost
+// decodes to check who sent it and calls this, so the frame is parsed once
+// rather than once per layer.
+func (r *Router) HandleEnvelope(env cluster.Envelope) ([][]byte, error) {
 	if env.Kind != ClientRespKind {
 		// Only responses reach a router: it emits requests and awaits replies.
 		// A request or a consensus frame here can only be a routing bug.

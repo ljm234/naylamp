@@ -268,21 +268,31 @@ health_check() {
 	[ "$leader" -eq 1 ]
 }
 
-# mint_rogue mints an independent ca and a node-2 certificate into a separate
-# directory with the existing gencerts subcommand, then copies the node-2 pair to
+# mint_rogue mints an independent ca and a node-90 certificate into a separate
+# directory with the existing gencerts subcommand, then copies the node-90 pair to
 # host 1 under naylamp/rogue. Its ca is not the ca the cluster trusts, which is
 # the whole point: this certificate is well formed but signed by a stranger.
+#
+# The id is 90 and has to be. It was 2 until the transport gained its
+# construction guard, and the two together made this check pass without testing
+# anything: the client runs as 90, so a certificate for node 2 is now refused
+# locally before a socket is opened, the client exits 1, and exit=1 is exactly
+# what the rejection branch below reads as success. The check would have gone on
+# reporting a refusal the cluster never made. Matching the id puts the refusal
+# back where the check claims it happens, on the node's client auth, and the
+# 'tcp listen' branch below is there so that failure mode can never be silent
+# again.
 mint_rogue() {
 	if [ ! -x "${OUT_DIR}/naylamp" ]; then
 		stop "missing ${OUT_DIR}/naylamp; run build.sh first"
 	fi
 	rm -rf "${ROGUE_DIR}"
 	mkdir -p "${ROGUE_DIR}"
-	note "minting a forged ca and node-2 certificate into ${ROGUE_DIR}"
-	"${OUT_DIR}/naylamp" gencerts -dir "${ROGUE_DIR}" -ids 2 >/dev/null
+	note "minting a forged ca and node-90 certificate into ${ROGUE_DIR}"
+	"${OUT_DIR}/naylamp" gencerts -dir "${ROGUE_DIR}" -ids 90 >/dev/null
 	run_on 1 'mkdir -p naylamp/rogue'
-	copy_to 1 "${ROGUE_DIR}/node-2.pem" 'naylamp/rogue/node-2.pem'
-	copy_to 1 "${ROGUE_DIR}/node-2-key.pem" 'naylamp/rogue/node-2-key.pem'
+	copy_to 1 "${ROGUE_DIR}/node-90.pem" 'naylamp/rogue/node-90.pem'
+	copy_to 1 "${ROGUE_DIR}/node-90-key.pem" 'naylamp/rogue/node-90-key.pem'
 }
 
 # t41_peer: a forged peer is rejected by the server's client auth. The verdict is
@@ -303,12 +313,14 @@ t41_peer() {
 	fi
 	pass "T4.1 control: valid certificate served an operation (exit=0)"
 
-	note "forged peer: the node-2 certificate signed by the stranger ca, presented while trusting the real ca"
+	note "forged peer: the node-90 certificate signed by the stranger ca, presented while trusting the real ca"
 	local bad_out
-	bad_out="$(client_op_tls rogue/node-2.pem rogue/node-2-key.pem certs/ca.pem -op search -vec 1,0,0 -k 1 -deadline 10s)"
+	bad_out="$(client_op_tls rogue/node-90.pem rogue/node-90-key.pem certs/ca.pem -op search -vec 1,0,0 -k 1 -deadline 10s)"
 	printf '%s\n' "${bad_out}"
 	if printf '%s' "${bad_out}" | grep -q 'exit=0$'; then
 		fail "T4.1 the forged certificate completed an operation; the node ACCEPTED it, which is a security regression"
+	elif printf '%s' "${bad_out}" | grep -q 'tcp listen'; then
+		fail "T4.1 the client never opened a socket: exit=1 came from its own startup, so nothing about the node's client auth was exercised and this check proved nothing"
 	elif printf '%s' "${bad_out}" | grep -q 'exit=1$'; then
 		pass "T4.1 forged peer rejected: the cluster served the real certificate but refused the stranger ca certificate (exit=1, no result)"
 	else
@@ -317,7 +329,7 @@ t41_peer() {
 
 	note "best effort: an openssl probe with the forged certificate, to record the exact tls alert when the handshake timing surfaces it"
 	local probe_out
-	probe_out="$(sclient rogue/node-2.pem rogue/node-2-key.pem)"
+	probe_out="$(sclient rogue/node-90.pem rogue/node-90-key.pem)"
 	if printf '%s' "${probe_out}" | grep -Eqi "${CERT_ALERT}"; then
 		printf '%s\n' "${probe_out}" | grep -Ei "${CERT_ALERT}" | head -2
 		note "the server sent a certificate alert to the forged probe (exact tls error captured)"

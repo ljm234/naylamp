@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -736,4 +737,49 @@ func TestTCPSendBoundedWhenPeerStopsDraining(t *testing.T) {
 		}
 	}
 	t.Logf("64 sends of 512 KiB returned promptly (worst %v): the caller-latency contract holds", worst)
+}
+
+// TestTCP_AcceptsMaterialWhoseCommonNameIsTheSelfID is the positive arm of the
+// construction guard, and it runs first because everything the negative arm
+// asserts is an absence. A guard that refused every certificate would satisfy
+// "construction failed" perfectly, and this is what says it does not.
+//
+// It also pins the branch the whole test tree depends on. A certificate built in
+// memory carries DER and no parsed Leaf, so the guard has to parse it rather
+// than wave it through; if it waved a missing Leaf through instead, every
+// transport in this package would construct without the identity ever being
+// looked at, and the negative arm below would be the only thing that noticed.
+func TestTCP_AcceptsMaterialWhoseCommonNameIsTheSelfID(t *testing.T) {
+	ca := mustCA(t)
+	mat := mustMaterial(t, ca, 4)
+	if mat.Cert.Leaf != nil {
+		t.Fatalf("this test is meant to exercise the unparsed-Leaf path and the material arrived parsed")
+	}
+	tr, err := NewTCPTransport(4, "127.0.0.1:0", func(NodeID, []byte) {}, mat)
+	if err != nil {
+		t.Fatalf("well provisioned material was refused: %v", err)
+	}
+	defer func() { _ = tr.Close() }()
+}
+
+// TestTCP_RejectsMaterialWhoseCommonNameIsNotTheSelfID is the guard itself. Self
+// and the TLS material arrive as independent arguments, so a node started
+// against another node's certificate used to run: peers attributed it by the
+// name it presented and it answered to the id it thought it had, which was
+// merely strange. Once a frame is refused unless its declared sender is the
+// authenticated one, that strangeness becomes total silence, with everything the
+// node sends dropped by everyone and nothing on its own side saying why.
+//
+// The error has to name both numbers, because the whole value of failing here is
+// telling the operator which of the two is wrong.
+func TestTCP_RejectsMaterialWhoseCommonNameIsNotTheSelfID(t *testing.T) {
+	ca := mustCA(t)
+	_, err := NewTCPTransport(4, "127.0.0.1:0", func(NodeID, []byte) {}, mustMaterial(t, ca, 9))
+	if err == nil {
+		t.Fatalf("a transport claiming id 4 accepted node 9's certificate; every peer would drop what it sends")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "4") || !strings.Contains(msg, "9") {
+		t.Fatalf("the error must name both the claimed id and the certificate's, got %q", msg)
+	}
 }

@@ -109,6 +109,11 @@ type Node struct {
 	pendingSearches map[uint64]pendingSearch
 	searchQueue     []uint64
 
+	// droppedKind counts envelopes of a family this node does not serve. Zero
+	// in a healthy cluster: a nonzero value is either a peer running a version
+	// that frames something this one does not know, or somebody probing.
+	droppedKind uint64
+
 	opts NodeOptions
 }
 
@@ -196,15 +201,27 @@ func OpenNode(dir string, id cluster.NodeID, cfg cluster.Config, dim int, rng *r
 	return n, nil
 }
 
-// HandleMessage decodes one framed inbound message and dispatches it by
-// envelope kind: consensus traffic steps the core, a client request is served,
-// and anything else fails loud. The envelope is decoded exactly once here; the
-// kind is the self-describing routing bit the frame carries for this purpose.
+// HandleMessage decodes one framed inbound message and hands it to
+// HandleEnvelope. It is the entry point for a caller that holds bytes; the Host
+// holds an envelope by the time it gets here, because it had to decode one to
+// check who sent it, and calls HandleEnvelope directly rather than paying for a
+// second decode. That second decode is not free at the sizes this transport
+// allows: a catch-up append can legally carry megabytes, and DecodeMessage
+// copies the payload, so doing it twice would allocate the whole frame again to
+// throw it away.
 func (n *Node) HandleMessage(data []byte) ([][]byte, error) {
 	env, err := cluster.DecodeMessage(data)
 	if err != nil {
 		return nil, err
 	}
+	return n.HandleEnvelope(env)
+}
+
+// HandleEnvelope dispatches one already decoded envelope by kind: consensus
+// traffic steps the core, a client request is served, and any other kind is
+// dropped and counted. The kind is the self-describing routing bit the frame
+// carries for this purpose.
+func (n *Node) HandleEnvelope(env cluster.Envelope) ([][]byte, error) {
 	switch env.Kind {
 	case raft.EnvelopeKind:
 		m, err := raft.DecodeMsgEnvelope(env)
@@ -215,11 +232,26 @@ func (n *Node) HandleMessage(data []byte) ([][]byte, error) {
 	case ClientKind:
 		return n.handleClientRequest(env)
 	default:
-		// A ClientRespKind frame, or any unknown kind, is fatal here. The
-		// router of the next piece will claim responses; nothing in this layer
-		// sends requests today, so receiving a response or a foreign family
-		// can only be a routing bug or version skew, never a value to act on.
-		return nil, fmt.Errorf("naylamp: node received an unexpected envelope kind %d", env.Kind)
+		// A ClientRespKind frame, or any unknown kind, is dropped and counted.
+		// It used to be fatal, on the reasoning that a response or a foreign
+		// family here could only be a routing bug or version skew and never a
+		// value to act on. The first half of that still holds: there is still
+		// nothing to act on. What stopped holding is the "only", which was true
+		// of a closed cluster and is not true of this one. Any principal the
+		// cluster CA signed can reach this switch, and the deployment signs one
+		// that is a member of nothing, so a frame arriving here can equally be
+		// someone choosing the kind byte precisely because it is fatal. Since
+		// Host.deliver latches the error it gets back, that made one well
+		// formed frame a permanent remote kill switch for any node.
+		//
+		// Dropping is the same answer the malformed-request path below already
+		// reaches, in the same words, and for the same reason: poisoning a
+		// healthy replica over remote garbage would be a denial of service.
+		// This branch simply never caught up with it. A frame the node itself
+		// produces and cannot route is a different matter and stays fatal, in
+		// routeFrames, because that one really is our own bug.
+		n.droppedKind++
+		return nil, nil
 	}
 }
 
@@ -455,6 +487,12 @@ func (n *Node) Leader() cluster.NodeID { return n.core.Leader() }
 
 // Role returns this replica's current consensus role.
 func (n *Node) Role() raft.Role { return n.core.Role() }
+
+// DroppedKindFrames counts the envelopes HandleEnvelope turned away because they
+// belonged to a family this node does not serve. It is what makes that drop
+// assertable: the frame leaves no other trace, and "the node is still alive"
+// alone would not distinguish a drop from a frame that was never delivered.
+func (n *Node) DroppedKindFrames() uint64 { return n.droppedKind }
 
 // ConsensusState is one replica's standing in consensus: the role it plays, the
 // node it believes leads, and the term all three belong to. The three travel as
