@@ -102,7 +102,17 @@ func TestHNSW_RecallVsBruteForce(t *testing.T) {
 	recall := float64(totalHits) / float64(nQuery*k)
 	t.Logf("recall@%d over %d queries = %.3f", k, nQuery, recall)
 
-	if recall < 0.90 {
-		t.Errorf("recall = %.3f, want >= 0.90", recall)
+	// 0.95 is the recall@10-versus-brute-force floor Phase 1 claims as its
+	// central property, and until 3 de agosto de 2026 no test in the tree
+	// enforced it: this assertion read 0.90 while the two scale tests read 0.85
+	// and 0.80, so the claim rested on figures in a document rather than on a
+	// gate. Measured on this seed at the time the floor was raised, this case
+	// returns 1.000, so the margin is the whole of the approximation error the
+	// index is allowed to have here. The floor is deliberately the claimed
+	// number and not the measured one: a threshold pinned to today's output
+	// turns any change at all into a failure, while this one falsifies exactly
+	// what the phase promised.
+	if recall < 0.95 {
+		t.Errorf("recall = %.3f, want >= 0.95", recall)
 	}
 }

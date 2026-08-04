@@ -92,8 +92,18 @@ func TestHNSW_RecallAtScale(t *testing.T) {
 	recall := measureRecall(t, store, idx, dim, k, nQuery, 99)
 	t.Logf("recall@%d at scale (n=%d, dim=%d, %d queries) = %.3f", k, n, dim, nQuery, recall)
 
-	if recall < 0.85 {
-		t.Errorf("recall at scale = %.3f, want >= 0.85", recall)
+	// Same 0.95 floor as the basic case, and for the same reason: it is the
+	// number Phase 1 claims. This assertion read 0.85 until 3 de agosto de 2026.
+	// Measured at that point: 1.000 on this seed at n=5000.
+	//
+	// THIS FLOOR DOES NOT RUN IN CI, and the caveat belongs next to the number
+	// rather than in a report nobody reads. The -short skip at the top of this
+	// function is taken by `go test -short -race ./...`, which is what the CI
+	// workflow runs and what `make test` runs, so this assertion fires only
+	// under `make test-scale` or an explicit -run. The one recall floor that CI
+	// does execute is the n=500 case in hnsw_test.go, which has no -short skip.
+	if recall < 0.95 {
+		t.Errorf("recall at scale = %.3f, want >= 0.95", recall)
 	}
 }
 
@@ -117,8 +127,28 @@ func TestHNSW_RecallLargeScale(t *testing.T) {
 	recall := measureRecall(t, store, idx, dim, k, nQuery, 99)
 	t.Logf("recall@%d at LARGE scale (n=%d, dim=%d, %d queries) = %.3f", k, n, dim, nQuery, recall)
 
-	if recall < 0.80 {
-		t.Errorf("recall at large scale = %.3f, want >= 0.80", recall)
+	// This is the only 50k recall instrument in the tree, and it measures 0.994,
+	// the same figure NAYLAMP_PHASE_1.md records as "recall 99.4% a 50k" when it
+	// cites evidence for its 0.95 claim. The assertion nonetheless read 0.80
+	// until 3 de agosto de 2026, so the tree tolerated losing nineteen points of
+	// recall without turning red while the document went on claiming 0.95.
+	//
+	// Two things this comment deliberately does NOT say. It does not claim the
+	// two numbers are the same measurement: the sibling figure on that same doc
+	// line, 98.9% at 5k, does not reproduce here, since the n=5000 case above
+	// measures 1.000 under today's defaults. And it does not explain the 0.044
+	// margin by saying recall falls as the graph grows, which the project's own
+	// evidence contradicts: efSearch=300 gives 0.9990 at n=1,000,000 on real
+	// SIFT1M (sift_result_2026-07-11.txt) and 0.790 at n=1.5M on synthetic
+	// gaussian (DEFER-008). Both cannot be a size effect. What moves recall at a
+	// fixed efSearch is the data distribution, and this suite measures the
+	// synthetic-gaussian arm only. 50k is the largest regime this suite asserts
+	// on, not the largest Phase 1 sealed.
+	//
+	// Like the case above, this floor is behind the -short skip and so does not
+	// run in CI.
+	if recall < 0.95 {
+		t.Errorf("recall at large scale = %.3f, want >= 0.95", recall)
 	}
 }
 
