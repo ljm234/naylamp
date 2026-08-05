@@ -31,9 +31,16 @@ func vecFor(id uint64) []float32 {
 // coverage it exercised. The sweep aggregates the counters for its gate and the
 // replay test compares the conclusion.
 type clusterSeedOutcome struct {
-	shardHash    [2][32]byte
-	oracleSize   int
-	elections    int
+	shardHash  [2][32]byte
+	oracleSize int
+	elections  int
+	// reelections counts only the leader changes AFTER each shard's first, and
+	// exists because elections alone cannot fail: the init loop at G3 t.Fatalf's
+	// unless both shards seat a leader, so elections >= 2 per seed holds by
+	// construction before any gate reads it. A re-election is the thing the
+	// anti-Eaton clause actually means by "elecciones forzadas", and it is zero
+	// on any seed whose fault schedule never deposed anyone.
+	reelections  int
 	partitions   int
 	crashes      int
 	acked        int
@@ -154,8 +161,13 @@ func runClusterSeed(t *testing.T, seed uint64) clusterSeedOutcome {
 	}
 
 	// Schedule counters, read back for the coverage gate and the replay.
-	var elections, partitions, crashes, acked, readsChecked int
+	var elections, reelections, partitions, crashes, acked, readsChecked int
 	lastLeader := [2]cluster.NodeID{cluster.None, cluster.None}
+	// seated[sh] records that shard sh has already had one leader, so the next
+	// change is a re-election rather than the initial seating the init loop
+	// forces. See clusterSeedOutcome.reelections for why the distinction is the
+	// whole difference between a gate that can fail and one that cannot.
+	var seated [2]bool
 
 	trackElections := func() {
 		for sh := range shardIDs {
@@ -163,6 +175,10 @@ func runClusterSeed(t *testing.T, seed uint64) clusterSeedOutcome {
 			if cur != lastLeader[sh] {
 				if cur != cluster.None {
 					elections++
+					if seated[sh] {
+						reelections++
+					}
+					seated[sh] = true
 				}
 				lastLeader[sh] = cur
 			}
@@ -583,6 +599,7 @@ func runClusterSeed(t *testing.T, seed uint64) clusterSeedOutcome {
 	out := clusterSeedOutcome{
 		oracleSize:   len(oracle),
 		elections:    elections,
+		reelections:  reelections,
 		partitions:   partitions,
 		crashes:      crashes,
 		acked:        acked,
@@ -602,7 +619,27 @@ func TestClusterDST_Seeded(t *testing.T) {
 	// (TestRaft_SafetyInvariants_Seeded and its NAYLAMP_RAFT_SEEDS gate), but not
 	// its count: that sweep defaults to 300 seeds and this one to 500, both 40
 	// under -short, with NAYLAMP_CLUSTER_SEEDS overriding the count here.
-	// NAYLAMP_CLUSTER_SEED (singular) pins one seed for a replay.
+	// A replay of one pinned seed lives in TestClusterDST_SeededReplay, and this
+	// test refuses to become one.
+	//
+	// It used to accept NAYLAMP_CLUSTER_SEED itself and skip the coverage gate for
+	// that run, on the reasoning that one seed cannot carry a per-seed floor, which
+	// is true, and that printing the exemption kept the skip honest, which is FALSE
+	// and is why the shape changed. Go discards a passing test's output entirely
+	// without -v: t.Logf, os.Stdout and os.Stderr alike. gate/omnibus.sh:517 runs
+	// exactly `go test ./naylamp/ -run '^TestClusterDST_Seeded$' -count=1` with no
+	// -v and no environment sanitizing, so a NAYLAMP_CLUSTER_SEED left exported
+	// from an earlier replay would have collapsed the sealed 500-seed gate to one
+	// ungated seed and still printed nothing but `ok`. An exemption nobody can see
+	// is the illusory coverage this gate exists to refuse.
+	//
+	// So the pin is refused here rather than honored, and the replay carries its
+	// meaning in its NAME instead of in a log line that the default invocation
+	// throws away. The anchored -run pattern above does not match the replay, so
+	// the sealed gate now fails loudly on a stray pin instead of passing quietly.
+	if env := os.Getenv("NAYLAMP_CLUSTER_SEED"); env != "" {
+		t.Fatalf("NAYLAMP_CLUSTER_SEED=%q pins a single seed, which cannot carry the coverage gate: this test IS the gated sweep. Unset it here and run TestClusterDST_SeededReplay for a replay", env)
+	}
 	seeds := 500
 	if testing.Short() {
 		seeds = 40
@@ -615,19 +652,13 @@ func TestClusterDST_Seeded(t *testing.T) {
 		seeds = v
 	}
 	start, end := 1, seeds
-	if env := os.Getenv("NAYLAMP_CLUSTER_SEED"); env != "" {
-		v, err := strconv.Atoi(env)
-		if err != nil || v < 1 {
-			t.Fatalf("NAYLAMP_CLUSTER_SEED=%q invalid", env)
-		}
-		start, end = v, v
-	}
 
-	var elections, partitions, crashes, acked, readsChecked int
+	var elections, reelections, partitions, crashes, acked, readsChecked int
 	var stats cluster.SimStats
 	for s := start; s <= end; s++ {
 		oc := runClusterSeed(t, uint64(s)) //nolint:gosec // s ranges over positive seed numbers
 		elections += oc.elections
+		reelections += oc.reelections
 		partitions += oc.partitions
 		crashes += oc.crashes
 		acked += oc.acked
@@ -640,32 +671,105 @@ func TestClusterDST_Seeded(t *testing.T) {
 	}
 	nseeds := end - start + 1
 
-	// G5: coverage gate, the shape of the raft sweep's gate. A run that never
-	// elected, never crashed, acked nothing, verified no linearizable read, or
-	// whose fault schedule never dropped, duplicated or blocked a message proves
-	// nothing: the illusory-coverage trap. A sweep that did not exercise chaos
-	// does not count.
-	if elections == 0 {
-		t.Fatalf("coverage: no elections across %d seeds", nseeds)
-	}
-	if crashes == 0 {
-		t.Fatalf("coverage: no crashes across %d seeds", nseeds)
-	}
-	if partitions == 0 {
-		t.Fatalf("coverage: no partitions across %d seeds", nseeds)
-	}
-	if acked == 0 {
-		t.Fatalf("coverage: nothing acked across %d seeds", nseeds)
-	}
-	if readsChecked == 0 {
-		t.Fatalf("coverage: no linearizable reads verified across %d seeds", nseeds)
-	}
-	if stats.DroppedByFault == 0 || stats.Duplicated == 0 || stats.DroppedByPartition == 0 {
-		t.Fatalf("coverage: fault schedule idle: %+v", stats)
-	}
-	t.Logf("cluster DST: seeds=%d elections=%d partitions=%d crashes=%d acked=%d readsChecked=%d sent=%d dropped=%d dup=%d partitionDrops=%d noReceiver=%d",
-		nseeds, elections, partitions, crashes, acked, readsChecked,
+	// The summary prints BEFORE the gate so a run that trips a floor still shows
+	// every counter beside the one that tripped, which is what a diagnosis needs.
+	t.Logf("cluster DST: seeds=%d elections=%d reelections=%d partitions=%d crashes=%d acked=%d readsChecked=%d sent=%d dropped=%d dup=%d partitionDrops=%d noReceiver=%d",
+		nseeds, elections, reelections, partitions, crashes, acked, readsChecked,
 		stats.Sent, stats.DroppedByFault, stats.Duplicated, stats.DroppedByPartition, stats.DroppedNoReceiver)
+
+	// G5: coverage gate, the anti-Eaton clause NAYLAMP_PHASE_3.md:23 and :410 call
+	// "minimos por corrida". It used to be six comparisons to zero over the whole
+	// sweep, which is not a minimum per run: one seed with one ack and one dropped
+	// frame satisfied all six no matter how many seeds ran beside it. Two things
+	// changed here, and both are load-bearing.
+	//
+	// First, every floor is now a RATE PER SEED, not a count. A fixed count rots
+	// in both directions: raise the seed budget and yesterday's number stops being
+	// a floor, lower it and the number stops being reachable. A rate scales with
+	// the run by construction and needs no maintenance when the budget moves.
+	//
+	// The rates are NOT uniform against what the schedule produces, and quoting a
+	// single fraction for them would misreport the headroom in both directions.
+	// Measured over 60 seeds, floor against observed: re-elections 15/47 (3.1x
+	// margin), partitions 15/33 (2.2x), crashes 30/62 (2.1x), acked 120/337 (2.8x),
+	// reads 30/114 (3.8x), fault drops 600/3674 (6.1x), duplicates 600/3261 (5.4x),
+	// partition drops 120/852 (7.1x). The floors run between a seventh and a half
+	// of observed: the fabric counters sit furthest below because a schedule change
+	// moves them most, and the TIGHTEST is crashes, followed by partitions.
+	//
+	// The budget that decides a pull request is 40 seeds, not 60, since CI runs
+	// -short (.github/workflows/ci.yml) and testing.Short() picks 40 above. There
+	// the binding margin is tighter still: crashes 20/39 is 1.95x, partitions 10/26
+	// is 2.60x, and everything else is looser. So crashes at 40 seeds is the one
+	// number to look at first if a schedule edit ever trips this gate.
+	//
+	// The sweep is a pure function of its seeds, so all of these are exact rather
+	// than sampled: the margin is headroom against a future edit to the schedule,
+	// never against run-to-run noise, and no rerun of an unchanged tree can drift
+	// across a floor.
+	//
+	// Second, the elections floor is gone and reelections stands in its place. The
+	// old one could not fail: the init loop at G3 t.Fatalf's unless both shards
+	// seat a leader, so elections >= 2 per seed was true before the gate read it.
+	// A decorative check is worse than none, because its green reads as an
+	// attestation. Re-elections carry what the clause meant.
+	//
+	// The three fabric counters are uint64 on SimStats and the sweep's own are
+	// int; they meet here as int, which cannot overflow, since every one of them
+	// is bounded by the frames a bounded seed budget can emit.
+	floors := []struct {
+		name     string
+		got      int
+		num, den int // floor for a run of n seeds is num*n/den
+	}{
+		{"re-elections", reelections, 1, 4},
+		{"partitions", partitions, 1, 4},
+		{"crashes", crashes, 1, 2},
+		{"acked writes", acked, 2, 1},
+		{"linearizable reads verified", readsChecked, 1, 2},
+		{"frames dropped by fault", int(stats.DroppedByFault), 10, 1},        //nolint:gosec // bounded by the frames a bounded seed budget emits
+		{"frames duplicated", int(stats.Duplicated), 10, 1},                  //nolint:gosec // bounded the same way
+		{"frames dropped by partition", int(stats.DroppedByPartition), 2, 1}, //nolint:gosec // bounded the same way
+	}
+
+	for _, f := range floors {
+		want := f.num * nseeds / f.den
+		if want < 1 {
+			t.Fatalf("coverage: a sweep of %d seeds is too small to gate: the floor for %s rounds to %d, which no run can fail. Raise NAYLAMP_CLUSTER_SEEDS, or pin a seed with NAYLAMP_CLUSTER_SEED for a replay",
+				nseeds, f.name, want)
+		}
+		if f.got < want {
+			t.Fatalf("coverage: %s = %d over %d seeds, below the per-run floor of %d (%d per %d seeds)",
+				f.name, f.got, nseeds, want, f.num, f.den)
+		}
+	}
+}
+
+// TestClusterDST_SeededReplay re-runs ONE seed of the sweep, the seed named by
+// NAYLAMP_CLUSTER_SEED, and skips when that variable is unset.
+//
+// It exists so a pin can never be mistaken for the gated sweep. It runs the
+// identical scenario through the identical runClusterSeed, so every per-seed
+// invariant a failing seed violated is violated here too and reproduces exactly,
+// which is what a replay is for. What it does NOT do is gate on coverage, and it
+// cannot: a per-seed floor over one seed distinguishes nothing, since a healthy
+// seed is entitled to have partitioned zero times. That is not a hole because
+// this test's name is not the sweep's, and TestClusterDST_Seeded refuses to run
+// at all while the pin is set, so no invocation can quietly serve a one-seed
+// green where a five-hundred-seed gated green was expected.
+func TestClusterDST_SeededReplay(t *testing.T) {
+	env := os.Getenv("NAYLAMP_CLUSTER_SEED")
+	if env == "" {
+		t.Skip("NAYLAMP_CLUSTER_SEED is unset, so there is no seed to replay")
+	}
+	v, err := strconv.Atoi(env)
+	if err != nil || v < 1 {
+		t.Fatalf("NAYLAMP_CLUSTER_SEED=%q invalid", env)
+	}
+	oc := runClusterSeed(t, uint64(v)) //nolint:gosec // v is a positive seed number, checked above
+	t.Logf("cluster DST replay: seed=%d elections=%d reelections=%d partitions=%d crashes=%d acked=%d readsChecked=%d sent=%d dropped=%d dup=%d partitionDrops=%d noReceiver=%d",
+		v, oc.elections, oc.reelections, oc.partitions, oc.crashes, oc.acked, oc.readsChecked,
+		oc.stats.Sent, oc.stats.DroppedByFault, oc.stats.Duplicated, oc.stats.DroppedByPartition, oc.stats.DroppedNoReceiver)
 }
 
 // TestClusterDST_DeterministicReplay drives one fixed seed twice down the
