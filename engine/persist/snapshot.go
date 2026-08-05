@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"naylamp/engine/faultio"
 	"naylamp/engine/hnsw"
 )
 
@@ -28,6 +29,12 @@ const tempSnapshotName = "snapshot.snap.tmp"
 // needed to rebuild the index. The LSN watermark (how far the WAL is covered)
 // is recorded separately in the manifest, written after this succeeds.
 func WriteSnapshot(dir string, snap hnsw.IndexSnapshot) error {
+	return writeSnapshotWith(dir, snap, faultio.OSOpener)
+}
+
+// writeSnapshotWith takes the opener as an argument. Without it the crash model
+// would cover the WAL and quietly skip the snapshot beside it.
+func writeSnapshotWith(dir string, snap hnsw.IndexSnapshot, open faultio.Opener) error {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("persist: create snapshot dir: %w", err)
 	}
@@ -36,7 +43,7 @@ func WriteSnapshot(dir string, snap hnsw.IndexSnapshot) error {
 	finalPath := filepath.Join(dir, snapshotFileName)
 
 	// Write the snapshot to the temp file.
-	if err := writeSnapshotFile(tmpPath, snap); err != nil {
+	if err := writeSnapshotFile(tmpPath, snap, open); err != nil {
 		return err
 	}
 
@@ -51,8 +58,8 @@ func WriteSnapshot(dir string, snap hnsw.IndexSnapshot) error {
 }
 
 // writeSnapshotFile serializes the snapshot to a single file and fsyncs it.
-func writeSnapshotFile(path string, snap hnsw.IndexSnapshot) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) //nolint:gosec // path is built from a caller-provided data dir, not untrusted input
+func writeSnapshotFile(path string, snap hnsw.IndexSnapshot, open faultio.Opener) error {
+	f, err := open(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return fmt.Errorf("persist: create temp snapshot: %w", err)
 	}

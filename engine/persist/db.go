@@ -3,6 +3,7 @@ package persist
 import (
 	"fmt"
 
+	"naylamp/engine/faultio"
 	"naylamp/engine/hnsw"
 	"naylamp/engine/vector"
 )
@@ -18,6 +19,10 @@ type DB struct {
 	index  *hnsw.Index
 	wal    *WAL
 	metric vector.MetricFunc
+	// open is where every file this database writes comes from: the WAL's
+	// segments, and the snapshot and manifest a checkpoint replaces. See
+	// raft.Storage.open for why it is injectable at all.
+	open faultio.Opener
 }
 
 // Open opens a durable database rooted at dir using the default compaction
@@ -36,6 +41,13 @@ func Open(dir string, metric vector.MetricFunc, policy FsyncPolicy, seed uint64)
 // once. The metric must match the data on disk; seed is used only when there is
 // no prior snapshot to restore.
 func OpenWithPolicy(dir string, metric vector.MetricFunc, policy FsyncPolicy, seed uint64, compaction CompactionPolicy) (*DB, error) {
+	return openWith(dir, metric, policy, seed, compaction, openerFor(policy))
+}
+
+// openWith takes the opener as an argument, which is how a durability test puts
+// this database on a simulated disk that can lose power. Every production caller
+// goes through Open or OpenWithPolicy.
+func openWith(dir string, metric vector.MetricFunc, policy FsyncPolicy, seed uint64, compaction CompactionPolicy, open faultio.Opener) (*DB, error) {
 	state, err := Recover(dir, metric, seed)
 	if err != nil {
 		return nil, fmt.Errorf("persist: open recover: %w", err)
@@ -46,12 +58,12 @@ func OpenWithPolicy(dir string, metric vector.MetricFunc, policy FsyncPolicy, se
 		if lerr != nil {
 			return nil, fmt.Errorf("persist: open compaction lsn: %w", lerr)
 		}
-		if cerr := Checkpoint(dir, state.Index.Export(), lastLSN); cerr != nil {
+		if cerr := checkpointWith(dir, state.Index.Export(), lastLSN, open); cerr != nil {
 			return nil, fmt.Errorf("persist: open startup compaction: %w", cerr)
 		}
 	}
 
-	wal, err := OpenWAL(dir, policy)
+	wal, err := openWALWith(dir, policy, defaultSegmentBytes, open)
 	if err != nil {
 		return nil, fmt.Errorf("persist: open wal: %w", err)
 	}
@@ -62,6 +74,7 @@ func OpenWithPolicy(dir string, metric vector.MetricFunc, policy FsyncPolicy, se
 		index:  state.Index,
 		wal:    wal,
 		metric: metric,
+		open:   open,
 	}, nil
 }
 
@@ -143,7 +156,7 @@ func (db *DB) Len() int {
 func (db *DB) Checkpoint() error {
 	snap := db.index.Export()
 	watermark := db.wal.LastLSN()
-	if err := Checkpoint(db.dir, snap, watermark); err != nil {
+	if err := checkpointWith(db.dir, snap, watermark, db.open); err != nil {
 		return fmt.Errorf("persist: db checkpoint: %w", err)
 	}
 	return nil

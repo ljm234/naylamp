@@ -6,6 +6,7 @@ import (
 	"os"
 	"sync"
 
+	"naylamp/engine/faultio"
 	"naylamp/engine/vector"
 )
 
@@ -19,7 +20,28 @@ const (
 	// FsyncNever never fsyncs: fast, but a crash can lose recent appends. For
 	// tests and benchmarks only, never for real durability.
 	FsyncNever
+	// FsyncFull fsyncs after every append and asks the drive to flush its own
+	// write cache to the physical medium as well (F_FULLFSYNC on darwin).
+	//
+	// It exists because FsyncAlways is not the whole barrier on macOS: fsync(2)
+	// there hands the bytes to the drive and returns, and the drive may hold
+	// them in a cache a power cut erases. The durability numbers Phase 2 sealed
+	// were measured against FsyncAlways, so they were measured against a
+	// barrier that, on that hardware, stops one layer short of the medium. On a
+	// platform with no stronger barrier this behaves exactly like FsyncAlways,
+	// and faultio.FullSyncSupported is what says which one you got.
+	FsyncFull
 )
+
+// openerFor maps a policy to the file opener that implements its barrier. Both
+// fsync policies get the plain opener, which hands back the *os.File unwrapped;
+// only FsyncFull pays for the wrapper.
+func openerFor(policy FsyncPolicy) faultio.Opener {
+	if policy == FsyncFull {
+		return faultio.OSOpenerMode(faultio.SyncFull)
+	}
+	return faultio.OSOpener
+}
 
 // WAL is an append-only, segmented write-ahead log. Mutations are appended to
 // the active segment and forced to disk (per policy) before being applied to
@@ -33,8 +55,11 @@ type WAL struct {
 	dir          string
 	policy       FsyncPolicy
 	segmentBytes int64
+	// open is where segment files come from. The policy picks it, since the
+	// barrier a segment gets is decided when it is opened and not per append.
+	open faultio.Opener
 
-	f          *os.File
+	f          faultio.File
 	w          *bufio.Writer
 	activeNum  uint64
 	activeSize int64
@@ -49,9 +74,15 @@ func OpenWAL(dir string, policy FsyncPolicy) (*WAL, error) {
 	return openWAL(dir, policy, defaultSegmentBytes)
 }
 
-// openWAL is the full constructor with a configurable segment size, used by
-// tests to force rotation at small sizes.
+// openWAL is the constructor with a configurable segment size, used by tests to
+// force rotation at small sizes. Its files come from the policy's own opener.
 func openWAL(dir string, policy FsyncPolicy, segmentBytes int64) (*WAL, error) {
+	return openWALWith(dir, policy, segmentBytes, openerFor(policy))
+}
+
+// openWALWith is the full constructor. The opener is the seam a durability test
+// reaches through; every other caller wants openWAL.
+func openWALWith(dir string, policy FsyncPolicy, segmentBytes int64, open faultio.Opener) (*WAL, error) {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, fmt.Errorf("persist: create wal dir: %w", err)
 	}
@@ -65,6 +96,7 @@ func openWAL(dir string, policy FsyncPolicy, segmentBytes int64) (*WAL, error) {
 		dir:          dir,
 		policy:       policy,
 		segmentBytes: segmentBytes,
+		open:         open,
 	}
 
 	if len(nums) == 0 {
@@ -115,7 +147,7 @@ func openWAL(dir string, policy FsyncPolicy, segmentBytes int64) (*WAL, error) {
 // openActiveSegment opens the given segment number for appending and sets it as
 // the active segment starting at the given size.
 func (wal *WAL) openActiveSegment(num uint64, size int64) error {
-	f, err := os.OpenFile(segmentPath(wal.dir, num), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // path is built from a caller-provided data dir, not untrusted input
+	f, err := wal.open(segmentPath(wal.dir, num), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return fmt.Errorf("persist: open wal segment: %w", err)
 	}
@@ -153,7 +185,10 @@ func (wal *WAL) Append(op OpType, v vector.Vector) (uint64, error) {
 	if err := wal.w.Flush(); err != nil {
 		return 0, fmt.Errorf("persist: flush wal: %w", err)
 	}
-	if wal.policy == FsyncAlways {
+	// Every policy but FsyncNever forces the record to the medium before the
+	// append returns. Which barrier that is was decided when the file was
+	// opened, so FsyncFull needs no branch of its own here.
+	if wal.policy != FsyncNever {
 		if err := wal.f.Sync(); err != nil {
 			return 0, fmt.Errorf("persist: fsync wal: %w", err)
 		}

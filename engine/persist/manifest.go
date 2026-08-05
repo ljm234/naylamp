@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"naylamp/engine/faultio"
 )
 
 // manifestFileName is the name of the manifest inside the data directory. The
@@ -36,6 +38,12 @@ type Manifest struct {
 //
 // Layout, little-endian: magic uint32, then SnapshotLSN uint64.
 func WriteManifest(dir string, m Manifest) error {
+	return writeManifestWith(dir, m, faultio.OSOpener)
+}
+
+// writeManifestWith takes the opener as an argument. A crash test needs it so
+// an unsynced manifest is lost the same way an unsynced WAL record is.
+func writeManifestWith(dir string, m Manifest, open faultio.Opener) error {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("persist: create manifest dir: %w", err)
 	}
@@ -47,7 +55,7 @@ func WriteManifest(dir string, m Manifest) error {
 	binary.LittleEndian.PutUint32(buf[0:], manifestMagic)
 	binary.LittleEndian.PutUint64(buf[4:], m.SnapshotLSN)
 
-	if err := writeManifestFile(tmpPath, buf); err != nil {
+	if err := writeManifestFile(tmpPath, buf, open); err != nil {
 		return err
 	}
 	if err := os.Rename(tmpPath, finalPath); err != nil {
@@ -57,8 +65,8 @@ func WriteManifest(dir string, m Manifest) error {
 }
 
 // writeManifestFile writes the manifest bytes to a file and fsyncs it.
-func writeManifestFile(path string, buf []byte) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) //nolint:gosec // path is built from a caller-provided data dir, not untrusted input
+func writeManifestFile(path string, buf []byte, open faultio.Opener) error {
+	f, err := open(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return fmt.Errorf("persist: create temp manifest: %w", err)
 	}

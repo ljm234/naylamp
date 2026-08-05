@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"naylamp/engine/faultio"
 	"naylamp/engine/hnsw"
 )
 
@@ -21,13 +22,19 @@ import (
 // snapshotLSN is the highest WAL LSN included in the snapshot: the caller takes
 // the snapshot and reads the WAL's LastLSN under the same lock so the two agree.
 func Checkpoint(dir string, snap hnsw.IndexSnapshot, snapshotLSN uint64) error {
+	return checkpointWith(dir, snap, snapshotLSN, faultio.OSOpener)
+}
+
+// checkpointWith is Checkpoint over an explicit opener, so a crash landing
+// inside a checkpoint loses whatever the checkpoint had not fsynced yet.
+func checkpointWith(dir string, snap hnsw.IndexSnapshot, snapshotLSN uint64, open faultio.Opener) error {
 	// Step 1: snapshot to disk, atomically.
-	if err := WriteSnapshot(dir, snap); err != nil {
+	if err := writeSnapshotWith(dir, snap, open); err != nil {
 		return fmt.Errorf("persist: checkpoint snapshot: %w", err)
 	}
 
 	// Step 2: point the manifest at the snapshot's watermark, atomically.
-	if err := WriteManifest(dir, Manifest{SnapshotLSN: snapshotLSN}); err != nil {
+	if err := writeManifestWith(dir, Manifest{SnapshotLSN: snapshotLSN}, open); err != nil {
 		return fmt.Errorf("persist: checkpoint manifest: %w", err)
 	}
 

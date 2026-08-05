@@ -10,6 +10,7 @@ import (
 	"sort"
 
 	"naylamp/engine/cluster"
+	"naylamp/engine/faultio"
 	"naylamp/engine/hnsw"
 	"naylamp/engine/persist"
 	"naylamp/engine/raft"
@@ -54,6 +55,17 @@ type NodeOptions struct {
 	// ServiceHealthWindows overrides the reach signal's hysteresis window count
 	// for tuning under simulation; its zero value uses the core default.
 	ServiceHealthWindows int
+	// Opener is where this node's durable files come from. Its zero value is
+	// nil, which means the ordinary one, so leaving it alone is byte-for-byte
+	// the historical behavior.
+	//
+	// It exists for one job: putting a replica's durable state on a simulated
+	// disk that can lose power, so a test can cut the power to a whole quorum at
+	// a chosen instant and watch what comes back. That is the deterministic
+	// stand-in for a sysrq-b on real hardware, which cannot be deterministic
+	// because the outcome there is decided by the operating system's writeback
+	// and the drive's cache, both outside this process.
+	Opener faultio.Opener
 }
 
 // Node is a single replica of a vector collection: a sans-io state machine
@@ -160,7 +172,11 @@ func OpenNode(dir string, id cluster.NodeID, cfg cluster.Config, dim int, rng *r
 	if dim <= 0 {
 		return nil, fmt.Errorf("naylamp: dim must be positive, got %d", dim)
 	}
-	storage, hs, snap, entries, err := raft.OpenStorage(dir, 0)
+	open := opts.Opener
+	if open == nil {
+		open = faultio.OSOpener
+	}
+	storage, hs, snap, entries, err := raft.OpenStorageWith(dir, 0, open)
 	if err != nil {
 		return nil, err
 	}

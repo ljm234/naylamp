@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"naylamp/engine/cluster"
+	"naylamp/engine/faultio"
 	"naylamp/engine/persist"
 )
 
@@ -39,8 +40,15 @@ type Storage struct {
 	mu          sync.Mutex
 	dir         string
 	maxSegBytes int64
+	// open is where the files this node writes come from: the entry segments,
+	// and the temporaries the hard state and the snapshot are replaced through.
+	// Production passes faultio.OSOpener; a durability test passes a
+	// faultio.Disk's, which is what lets a power cut drop whatever never
+	// crossed the fsync boundary. Replay opens its own handles by path instead,
+	// because it runs after the crash and needs to read and truncate.
+	open faultio.Opener
 
-	active     *os.File
+	active     faultio.File
 	activeNum  uint64
 	activeSize int64
 
@@ -96,6 +104,15 @@ var (
 // them behind; the gap costs duplicate bytes, never data). It returns the
 // recovered pieces; the caller seeds the in-memory core with them.
 func OpenStorage(dir string, maxSegBytes int64) (*Storage, HardState, *Snapshot, []Entry, error) {
+	return OpenStorageWith(dir, maxSegBytes, faultio.OSOpener)
+}
+
+// OpenStorageWith is OpenStorage over an explicit file opener. It exists so a
+// durability test can put a node's durable state on a simulated disk that loses
+// power, which is the only way to tell a node that fsyncs before it
+// acknowledges from one that does not. Every production caller wants
+// OpenStorage.
+func OpenStorageWith(dir string, maxSegBytes int64, open faultio.Opener) (*Storage, HardState, *Snapshot, []Entry, error) {
 	if maxSegBytes <= 0 {
 		maxSegBytes = DefaultMaxSegmentBytes
 	}
@@ -115,7 +132,7 @@ func OpenStorage(dir string, maxSegBytes int64) (*Storage, HardState, *Snapshot,
 	if err != nil {
 		return nil, HardState{}, nil, nil, err
 	}
-	s := &Storage{dir: dir, maxSegBytes: maxSegBytes, segMax: make(map[uint64]uint64)}
+	s := &Storage{dir: dir, maxSegBytes: maxSegBytes, open: open, segMax: make(map[uint64]uint64)}
 	if snap != nil {
 		s.snapIndex = snap.Index
 	}
@@ -157,7 +174,7 @@ func OpenStorage(dir string, maxSegBytes int64) (*Storage, HardState, *Snapshot,
 		}
 	} else {
 		num := s.segNums[len(s.segNums)-1]
-		f, err := os.OpenFile(s.segmentPath(num), os.O_RDWR, 0o600) //nolint:gosec // path is built from a caller-provided data dir, not untrusted input
+		f, err := s.open(s.segmentPath(num), os.O_RDWR, 0o600)
 		if err != nil {
 			return nil, HardState{}, nil, nil, fmt.Errorf("raft: open active segment: %w", err)
 		}
@@ -306,7 +323,7 @@ func (s *Storage) SaveHardState(hs HardState) error {
 	binary.LittleEndian.PutUint64(payload[16:24], hs.Commit)
 
 	tmp := filepath.Join(s.dir, hardStateFile+".tmp")
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) //nolint:gosec // path is built from a caller-provided data dir, not untrusted input
+	f, err := s.open(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("raft: create hard state temp: %w", err)
 	}
@@ -348,7 +365,7 @@ func (s *Storage) SaveSnapshot(snap Snapshot) error {
 	copy(payload[snapHeader:], snap.Data)
 
 	tmp := filepath.Join(s.dir, snapshotFile+".tmp")
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) //nolint:gosec // path is built from a caller-provided data dir, not untrusted input
+	f, err := s.open(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("raft: create snapshot temp: %w", err)
 	}
@@ -436,7 +453,7 @@ func (s *Storage) rotate() error {
 // openFreshSegment creates segment num and makes it active, making the
 // directory entry durable.
 func (s *Storage) openFreshSegment(num uint64) error {
-	f, err := os.OpenFile(s.segmentPath(num), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	f, err := s.open(s.segmentPath(num), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("raft: create segment %d: %w", num, err)
 	}
