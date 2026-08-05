@@ -79,8 +79,30 @@ ci: build vet lint test vuln
 # source packages engine/cmd/naylampd and engine/naylamp would be in its way.
 # Naming the files exactly cannot reach a directory, and the -type f on the sweep
 # below cannot either.
+#
+# THE SWEEP STARTS AT THE REPOSITORY ROOT rather than at engine/, which is the
+# whole of what makes it scale. Rooting it at engine/ made the convention true of
+# one directory instead of the repository: an artifact dropped by anything under
+# services/, dashboard/, infra/ or gate/ matched the naming rule, was ignored by
+# git, and then survived every clean. .gitignore's own patterns moved with it on
+# the same day and for the same reason, spelled out there. Adding a package or a
+# benchmark now needs no edit here: name the output <something>_result.txt or
+# <something>_bench.txt and it is already ignored and already swept.
+#
+# TWO PRUNES, and the second one was missed on the first attempt. .git is pruned
+# rather than trusted to hold no matching name, by name rather than by path so a
+# nested one is covered too. gate/out/certs is pruned because the line above it
+# goes out of its way to keep that directory, and a root-anchored sweep would
+# otherwise walk straight back into it and delete by name whatever the exception
+# was protecting by directory. Nothing in there is named that way today, which is
+# exactly the kind of luck that stops holding quietly.
+#
+# The sweep uses -exec rm over -delete on purpose: -delete implies -depth, which
+# silently turns -prune into a no-op, so the two do not compose and the
+# safe-looking spelling would be the wrong one.
+PRUNE := -name .git -o -path ./gate/out/certs
 clean:
 	test ! -d gate/out || find gate/out -mindepth 1 -maxdepth 1 ! -name certs -exec rm -rf -- {} +
-	find engine -type f \( -name '*_result.txt' -o -name '*_bench.txt' \) -delete
-	find engine -type f \( -name '*.test' -o -name '*.out' \) -delete
+	find . \( $(PRUNE) \) -prune -o -type f \( -name '*_result.txt' -o -name '*_bench.txt' \) -exec rm -f -- {} +
+	find . \( $(PRUNE) \) -prune -o -type f \( -name '*.test' -o -name '*.out' \) -exec rm -f -- {} +
 	rm -f -- naylampd engine/naylampd naylamp

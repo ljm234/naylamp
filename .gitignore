@@ -53,8 +53,20 @@ naylamp-gate-key*
 # mean editing this list again; name the output <something>_result.txt,
 # <something>_bench.txt, or NAYLAMP_<NAME>_GATE<...>.txt and it is ignored already.
 # The scripts and READMEs that PRODUCE these are committed; only their output is not.
-engine/**/*_result.txt
-engine/**/*_bench.txt
+#
+# The first two lost their engine/ prefix on 4 August 2026, and the reason is the
+# one the paragraph above already claimed and did not deliver. Anchored to engine/,
+# the rule covered one directory rather than the repository, so the same convention
+# followed anywhere else (services/, dashboard/, infra/, gate/) produced a file that
+# was neither ignored nor swept by make clean, which is junk arriving without anyone
+# choosing to keep it. Unanchored, a pattern with no slash matches at any depth,
+# which is exactly the reach wanted here. The cost is stated rather than discovered
+# later: a source file someone genuinely wants tracked and genuinely wants to name
+# <something>_result.txt would now be ignored in silence. Nothing in the tree is
+# named that way, the suffixes read as output to anyone who meets them, and a
+# negation line wins over an ignore if that day ever comes.
+*_result.txt
+*_bench.txt
 /NAYLAMP_*GATE*.txt
 gate/out/
 
