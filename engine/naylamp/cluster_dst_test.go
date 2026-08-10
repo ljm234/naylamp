@@ -626,12 +626,14 @@ func TestClusterDST_Seeded(t *testing.T) {
 	// that run, on the reasoning that one seed cannot carry a per-seed floor, which
 	// is true, and that printing the exemption kept the skip honest, which is FALSE
 	// and is why the shape changed. Go discards a passing test's output entirely
-	// without -v: t.Logf, os.Stdout and os.Stderr alike. gate/omnibus.sh:517 runs
-	// exactly `go test ./naylamp/ -run '^TestClusterDST_Seeded$' -count=1` with no
-	// -v and no environment sanitizing, so a NAYLAMP_CLUSTER_SEED left exported
-	// from an earlier replay would have collapsed the sealed 500-seed gate to one
-	// ungated seed and still printed nothing but `ok`. An exemption nobody can see
-	// is the illusory coverage this gate exists to refuse.
+	// without -v: t.Logf, os.Stdout and os.Stderr alike. phase_pre in gate/omnibus.sh
+	// runs exactly `go test ./naylamp/ -run '^TestClusterDST_Seeded$' -count=1` with
+	// no -v, so a NAYLAMP_CLUSTER_SEED left exported from an earlier replay would
+	// have collapsed the sealed 500-seed gate to one ungated seed and still printed
+	// nothing but `ok`. An exemption nobody can see is the illusory coverage this
+	// gate exists to refuse. That phase sanitizes the environment now, and it names
+	// this comment as the reason; the citation is by function because it used to be
+	// by line number and the line moved the day the sanitizing went in.
 	//
 	// So the pin is refused here rather than honored, and the replay carries its
 	// meaning in its NAME instead of in a log line that the default invocation

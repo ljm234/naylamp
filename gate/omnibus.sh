@@ -506,6 +506,50 @@ phase_pre() {
 	note "OM.pre: off-cloud preconditions, before any host work is done"
 	begin_check
 
+	# THE ENVIRONMENT IS SANITIZED HERE, and the sealed sweep asked for it by name.
+	# TestClusterDST_Seeded already refuses NAYLAMP_CLUSTER_SEED with a t.Fatalf, so
+	# that one is caught either way and catching it here only names the cause in a
+	# line instead of inside a wall of test output. NAYLAMP_CLUSTER_SEEDS is the one
+	# nothing catches: it replaces the compiled budget outright, and the invocation
+	# below passes no -v, so Go throws away a passing test's output entirely,
+	# t.Logf, os.Stdout and os.Stderr alike. A forty-seed sweep prints `ok` and
+	# passes, and the artifact of a run that sealed two phases would carry no trace
+	# of the substitution.
+	#
+	# GOFLAGS IS ON THE LIST BECAUSE -short IS A SECOND WAY IN. go test honours test
+	# flags from that variable, and a probe test run under GOFLAGS=-short does see
+	# testing.Short() true, which takes the 40 of the short branch while the line
+	# below still reads 500 out of the source and states it. That is worse than a
+	# silent substitution: it is a false number in a sealed artifact, put there by
+	# the check written to prevent one. The header of this file says budgets are
+	# never trimmed to make a run finish sooner, so the refusal belongs at the start
+	# of the run and not in the prose.
+	local var
+	for var in NAYLAMP_CLUSTER_SEED NAYLAMP_CLUSTER_SEEDS GOFLAGS; do
+		if [ -n "${!var:-}" ]; then
+			stop "OM.pre: ${var} is exported as ${!var}, and it can decide the size of the sealed sweep. This gate runs the budget the code sets, never a trimmed one; unset it and re-run"
+		fi
+	done
+
+	# THE BUDGET ITSELF GOES INTO THE ARTIFACT, because the refusals above are only
+	# half an answer: they say nothing was overridden, and the number is still
+	# nowhere in the file. It is read out of the test's own source rather than
+	# restated here, so the two cannot drift apart, and it is anchored to the
+	# function rather than to a line number, because that file holds three
+	# `seeds :=` assignments and line anchors in this repository have already rotted
+	# twice. The awk clears its flag on every func line before setting it on the one
+	# it wants, so the search is bounded by the function body: delete that
+	# assignment and this reads empty and fails, rather than walking on and printing
+	# the 40 that belongs to the next test.
+	local seedsrc seedbudget
+	seedsrc="${REPO_DIR}/engine/naylamp/cluster_dst_test.go"
+	seedbudget="$(awk '/^func /{f=0} /^func TestClusterDST_Seeded\(/{f=1} f && /^[[:space:]]*seeds := [0-9]+$/{print $3; exit}' "${seedsrc}" 2>/dev/null || true)"
+	if [ -n "${seedbudget}" ]; then
+		note "OM.pre: the sealed sweep is ${seedbudget} seeds, read from the seeds assignment inside func TestClusterDST_Seeded in engine/naylamp/cluster_dst_test.go. The invocation below passes no -short and GOFLAGS was refused above, so the short budget in that same function does not apply"
+	else
+		fail "OM.pre: the seed budget could not be read out of func TestClusterDST_Seeded in engine/naylamp/cluster_dst_test.go, so this run cannot state the size of the sweep it seals"
+	fi
+
 	note "OM.pre: govulncheck over the whole engine (item 4.5.6)"
 	if ( cd "${REPO_DIR}/engine" && go run golang.org/x/vuln/cmd/govulncheck@latest ./... ); then
 		pass "OM.pre: govulncheck is clean over the engine"
@@ -1050,6 +1094,28 @@ phase_logmatch() {
 		pass "OM.logmatch: every replica carries the same command at every position of the shared prefix. Scope: this compares the decoded client command stream, not the raft log, so it falsifies a disagreement in what the replicas will apply and cannot falsify log matching in the formal sense"
 	else
 		fail "OM.logmatch: two replicas disagree inside the span they share, which lag does not explain"
+	fi
+
+	# THE VERDICT ABOVE IS THREE-WAY AND THE ARCHIVE WAS NOT. The loop pulls nodes 2
+	# and 3; node 1's cold copy is read where it lies, so compare-logs saw three
+	# replicas while gate/out/omnibus-cold held two, and phase_bench opens with a
+	# wipe that removes the third seconds after OM.election. Whoever reads the
+	# evidence later could re-derive the agreement between 2 and 3 and nothing else,
+	# which is the same shape of defect as an artifact that names no commit.
+	#
+	# TWO SEPARATE GUARANTEES KEEP THIS OFF THE VERDICT, and the run needs both. It
+	# reports through note, which does not touch CHECK_FAILED, so a failed pull
+	# cannot turn a passing check into a failing one. It also sits inside an if,
+	# which is what keeps errexit from seeing the non-zero status at all: this file
+	# runs under set -euo pipefail, so a bare call would end the run at the ninth
+	# phase of twelve over a transport error, and an archival copy is not worth the
+	# run that produced it. The if earns its place over the || form the rest of this
+	# function uses, because here both outcomes have something to report: the
+	# artifact says either that all three inputs came home or that only two did.
+	if copy_from 1 "naylamp/data.cold" "${COLD_LOCAL}/c1"; then
+		note "OM.logmatch: the cold copy of node 1 is archived beside 2 and 3, so all three inputs to the verdict above leave the hosts"
+	else
+		note "OM.logmatch: the cold copy of node 1 could not be pulled for the archive. The verdict above stands; it was computed in place on host 1. But the evidence keeps only nodes 2 and 3, and the third input dies with the next wipe"
 	fi
 
 	end_check OM.logmatch
