@@ -28,6 +28,31 @@ jobs:
         run: go vet ./...
       - name: Test
         run: go test -short -race ./...
+      # The n=50000 recall floor runs here, on its own, and WITHOUT -race. It is
+      # the largest corpus at which the tree asserts a recall floor, and that
+      # bound is not an arbitrary one: it is the cota the central property of
+      # Phase 1 declares in its clause (iii), so it has to be defended on every
+      # push rather than by whoever remembers to run the full suite by hand.
+      #
+      # WHY -race COMES OFF FOR THIS ONE, measured and not assumed. The test
+      # builds an index and queries it in a single goroutine, so there is no
+      # concurrent access for the detector to find; -race pays for itself where
+      # goroutines share memory and this is not that place. What it costs here
+      # was measured on the tree at 095946b: 195.0s for the exact command this
+      # step runs, 211.5s for the same test under -v, and with -race the test
+      # does not finish at all, dying at "FAIL naylamp/engine/hnsw 600.366s"
+      # against the toolchain's own default timeout. So folding this into the
+      # -race step above would not have made CI slower, it would have made CI red
+      # by timeout, which is the most confusing shade of red there is.
+      #
+      # The timeout below is the toolchain's default written out rather than a
+      # number picked to fit: 600s is what go test uses when nobody says
+      # otherwise, and it leaves roughly 3x over the 195.0s measured here. It is spelled
+      # out so a global -timeout added later cannot silently narrow it. If a
+      # runner ever exceeds it, the answer is to find out why this workload got
+      # slower, not to raise the ceiling.
+      - name: Recall floor at n=50000
+        run: go test -run '^TestHNSW_RecallLargeScale$' -count=1 -timeout 600s ./hnsw/
       # govulncheck fails the build on any known vulnerability in the standard
       # library or the toolchain the code compiles against. It is pinned to
       # @latest on purpose: the vulnerability database is a moving target, so the
