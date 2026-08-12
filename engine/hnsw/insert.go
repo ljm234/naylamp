@@ -76,6 +76,30 @@ func (idx *Index) Insert(id uint64) error {
 
 		maxConn := idx.maxConnections(layer)
 		for _, c := range selected {
+			// NEVER LINK A NODE TO ITSELF. The search that produced these
+			// candidates runs after this node was put in idx.nodes, so it can
+			// return the node being inserted, and selectNeighbors can never
+			// reject it, because its distance to its own data is zero and nothing
+			// is nearer. Both appends below would then land in this one list: a
+			// self link, and with it a reciprocal that should have gone to a real
+			// neighbor. The self link is inert; the lost reciprocal is not,
+			// because it was an edge by which something else would have reached
+			// this node, and a node nothing points at answers when asked directly
+			// while no search ever finds it.
+			//
+			// The repair in deleteLocked keeps edges symmetric, so a graph this
+			// package builds from empty never gives the search a way back to the
+			// node being inserted, and this guard measures zero fires on one.
+			// That is not enough to drop it: RestoreIndex copies neighbor lists
+			// verbatim, so a graph read from a snapshot written before that repair
+			// was symmetric arrives with half-edges this package never made, and
+			// one of them is all it takes. Verified by injecting a single
+			// half-edge into a graph built by this code and upserting the id that
+			// does not hold it: without this line the self links come straight
+			// back.
+			if c.id == id {
+				continue
+			}
 			nbr, ok := idx.nodes[c.id]
 			if !ok || layer > nbr.layer() {
 				continue
