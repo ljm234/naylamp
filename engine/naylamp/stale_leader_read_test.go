@@ -10,12 +10,16 @@ import (
 // This file defends the STRONG read claim of 3.5, and names which one on
 // purpose, because the choice decides what the seal above it may assert.
 //
-// The two claims are not the same. NAYLAMP_PHASE_3.md:408 promises
-// "linealizabilidad read-your-writes"; :415 and :410 promise the strong one,
-// "linealizabilidad de ReadIndex contra el log" and "toda lectura ReadIndex
-// refleja un prefijo >= su indice". checkReadYourWrite in cluster_dst_test.go
-// already carries :408, and carries it honestly: it reads the client's own write
-// back the instant that write acked. What it cannot carry is :415, and the reason
+// The two claims are not the same, and the three places that state them are
+// named rather than numbered, for the reason at the bottom of this comment.
+// The invariant scope note of Subphase 3.5 promises "linealizabilidad
+// read-your-writes"; the Validation Criteria and the Objective of that same
+// subphase promise the strong one, "linealizabilidad de ReadIndex contra el
+// log" and "toda lectura ReadIndex refleja un prefijo >= su indice". All three
+// are in NAYLAMP_PHASE_3.md. checkReadYourWrite in cluster_dst_test.go already
+// carries the scope note, and carries it honestly: it reads the client's own
+// write back the instant that write acked. What it cannot carry is the
+// Validation Criteria, and the reason
 // is structural rather than a matter of degree. Replace beginClientSearch
 // (node.go) with an immediate answer out of the leader's local index, with no
 // majority confirmation round, no applied >= R barrier and no parking, and
@@ -23,6 +27,15 @@ import (
 // already contains the write that same client just made. The seeded sweep stays
 // green over 60 seeds, 118 reads checked. The strong claim is broken and nothing
 // turns red. That gap is what this file closes.
+//
+// WHY BY NAME AND NOT BY LINE NUMBER, corrected on 17 August 2026. This comment
+// cited NAYLAMP_PHASE_3.md by line, and four of its five anchors had the
+// document name elided down to a bare ":415", which resolves to nothing at all.
+// That document LIVES OUTSIDE THIS REPOSITORY, in the workspace directory
+// beside it, so a clone does not carry it and a line number gives a reader with
+// a fresh checkout no way to look anything up. Anyone who cannot find the names
+// above is missing the workspace and not reading a broken reference. The rule,
+// with the rest of its reasoning, is in the hard rule of DEFER-035.
 //
 // The property, stated so it can fail: A LEADER THAT CANNOT CONFIRM A MAJORITY
 // MUST SERVE NO READ. The round is not a formality. At the instant it is asked

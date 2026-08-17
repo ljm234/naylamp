@@ -65,3 +65,26 @@ jobs:
         with:
           version: v2.12
           working-directory: engine
+      # gate/hygiene sits outside go.work on purpose, so no package pattern
+      # reaches it and every step above skips it. Hence the two files named one
+      # by one. Why it is outside, why the tests cannot redden this step over an
+      # artifact, and what the step is here to catch: see the OUTSIDE go.work
+      # section of the header of gate/hygiene/hygiene.go.
+      #
+      # Two details that belong here and not there. working-directory is the
+      # repository root, unlike every step above, because these paths start at
+      # gate/. And the gofmt line is wrapped in test -z because gofmt exits 0
+      # even when it lists a file, so bare it would never fail.
+      #
+      # One step and not three because they share the toolchain warm-up and the
+      # module cache; the three together stay in the low seconds on d8a2b61 with
+      # go1.26.5, measured between 0.68s and 1.64s across runs. The spread is
+      # why no single figure is quoted: go test over file arguments builds the
+      # command-line-arguments pseudo-package and does not cache its result, so
+      # the test runs again every time.
+      - name: Hygiene tool
+        working-directory: .
+        run: |
+          test -z "$(gofmt -l gate/hygiene/hygiene.go gate/hygiene/hygiene_test.go)"
+          go vet gate/hygiene/hygiene.go gate/hygiene/hygiene_test.go
+          go test gate/hygiene/hygiene.go gate/hygiene/hygiene_test.go

@@ -679,8 +679,14 @@ func TestClusterDST_Seeded(t *testing.T) {
 		nseeds, elections, reelections, partitions, crashes, acked, readsChecked,
 		stats.Sent, stats.DroppedByFault, stats.Duplicated, stats.DroppedByPartition, stats.DroppedNoReceiver)
 
-	// G5: coverage gate, the anti-Eaton clause NAYLAMP_PHASE_3.md:23 and :410 call
-	// "minimos por corrida". It used to be six comparisons to zero over the whole
+	// G5: coverage gate, what the Eaton 2024 DST trap entry of the risk list and
+	// the Objective of Subphase 3.5 call "minimos por corrida". Both are in
+	// NAYLAMP_PHASE_3.md, which lives OUTSIDE this repository, in the workspace
+	// directory beside it, so a clone does not carry it. Named and not numbered,
+	// corrected on 17 August 2026; the reasoning is in the hard rule of
+	// DEFER-035.
+	//
+	// It used to be six comparisons to zero over the whole
 	// sweep, which is not a minimum per run: one seed with one ack and one dropped
 	// frame satisfied all six no matter how many seeds ran beside it. Two things
 	// changed here, and both are load-bearing.
