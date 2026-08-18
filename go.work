@@ -1,3 +1,31 @@
-go 1.26.4
+go 1.26.6
+
+// Two lines, and which one is read depends on who is asking, so both are set
+// to the same release on purpose.
+//
+// THE TOOLCHAIN LINE is what every build of this tree uses, local and CI alike.
+// In workspace mode the go command ignores a module's toolchain line, so the
+// one in engine/go.mod does not govern here and a bump starts in this file.
+// setup-go reads this same line through go-version-file: its parseGoVersionFile
+// prefers the toolchain directive, and main.ts parses the file before it
+// exports GOTOOLCHAIN, so the directive wins. CI therefore installs the
+// toolchain named here at setup time and downloads nothing per run.
+//
+// THE GO LINE is the language floor, and it is kept level with the toolchain
+// rather than left behind, for two reasons that are both about failing loudly.
+// setup-go falls back to it whenever GOTOOLCHAIN is already local at parse
+// time, which a second setup-go step or a workflow level env would cause, and
+// that fallback is silent: with this line at 1.26.4 it would have installed a
+// release carrying GO-2026-6090 and GO-2026-5972. And with GOTOOLCHAIN=local
+// and an older toolchain on the path, this line is the only thing that errors
+// instead of building quietly against a superseded standard library:
+// "go.work requires go >= 1.26.6 (running go 1.26.5; GOTOOLCHAIN=local)".
+//
+// Downloads of a toolchain are verified against the checksum database, not just
+// against the file server: golang.org/toolchain@v0.0.1-go1.26.6.darwin-arm64
+// carries ziphash h1:bWbVug832DkhCPVPonMoyglnCu5t1R0qMSxflM2MZA8=, which is
+// what sum.golang.org publishes for it. That holds while GOSUMDB is on and
+// neither GOPRIVATE nor GONOSUMDB matches golang.org/toolchain.
+toolchain go1.26.6
 
 use ./engine

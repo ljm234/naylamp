@@ -16,12 +16,37 @@ jobs:
       - uses: actions/checkout@v6
       - name: Set up Go
         uses: actions/setup-go@v6
-        # go-version-file reads the module's minimum, including the toolchain
-        # line, so the runner always uses at least the toolchain go.mod declares,
-        # with one place to update per security patch. The runner toolcache can
-        # lag a security release, which is exactly what the gate's first run caught.
+        # NEVER RUN BEFORE. go-version-file pointed at engine/go.mod until this
+        # commit and has never once resolved from go.work on a runner, so this
+        # step is a debut, and it is the step every other step depends on. It is
+        # written down before the first run rather than after it, the way the
+        # mTLS gate arm was after 1172c28. What was verified by reading rather
+        # than by running: setup-go's parseGoVersionFile prefers the toolchain
+        # directive over the go directive, and main.ts parses the version file
+        # before it exports GOTOOLCHAIN, so the directive is what gets read.
+        # This step should install go1.26.6 at setup and download no toolchain
+        # per run. If the first run installs 1.26.6, that holds; if it installs
+        # something else, the fallback described in go.work is what fired.
+        #
+        # go-version-file points at go.work and NOT at engine/go.mod, and the
+        # difference is not cosmetic. In workspace mode the toolchain line of a
+        # module is never consulted: measured with only go1.26.5 on the path,
+        # go.work asking for 1.26.5 and engine/go.mod asking for 1.26.6 resolves
+        # to 1.26.5, and go.work asking for 1.26.6 with no line in go.mod at all
+        # resolves to 1.26.6. So go.work is what governs every local build. If
+        # this step read engine/go.mod instead, the two files could disagree and
+        # local and CI would compile with different toolchains with nothing
+        # saying so. One file decides for both. setup-go accepts a go.work here.
+        #
+        # setup-go also exports GOTOOLCHAIN=local for the steps that follow, so
+        # nothing switches toolchain mid-run: what it installs here is what the
+        # whole job uses.
+        #
+        # The runner toolcache can lag a security release, which is exactly what
+        # the gate's first run caught; see task 4.4.7 of NAYLAMP_PHASE_4.md, in
+        # the workspace outside this repository.
         with:
-          go-version-file: engine/go.mod
+          go-version-file: go.work
       - name: Build
         run: go build ./...
       - name: Vet
