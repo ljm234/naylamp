@@ -16,17 +16,40 @@ jobs:
       - uses: actions/checkout@v6
       - name: Set up Go
         uses: actions/setup-go@v6
-        # NEVER RUN BEFORE. go-version-file pointed at engine/go.mod until this
-        # commit and has never once resolved from go.work on a runner, so this
-        # step is a debut, and it is the step every other step depends on. It is
-        # written down before the first run rather than after it, the way the
-        # mTLS gate arm was after 1172c28. What was verified by reading rather
-        # than by running: setup-go's parseGoVersionFile prefers the toolchain
-        # directive over the go directive, and main.ts parses the version file
-        # before it exports GOTOOLCHAIN, so the directive is what gets read.
-        # This step should install go1.26.6 at setup and download no toolchain
-        # per run. If the first run installs 1.26.6, that holds; if it installs
-        # something else, the fallback described in go.work is what fired.
+        # DEBUT, AND IT RAN. go-version-file pointed at engine/go.mod until
+        # 3a23d76 and had never once resolved from go.work on a runner, so this
+        # was written down before the first run rather than after it, the way
+        # the mTLS gate arm was after 1172c28. Verified by reading the action
+        # rather than by running it: setup-go's parseGoVersionFile prefers the
+        # toolchain directive over the go directive, and main.ts parses the
+        # version file before it exports GOTOOLCHAIN, so the directive is what
+        # gets read.
+        #
+        # First run: 3a23d76, run 32092845684, GREEN in 6m43s. So the step
+        # resolves from go.work and the job passes end to end.
+        #
+        # ~~If the first run installs 1.26.6, that holds; if it installs
+        # something else, the fallback described in go.work is what fired.~~
+        # ~~STILL OPEN. The two lines that would settle it live in the run log,
+        # which is not reachable from the machine this was written on: no gh,
+        # and the API answers 404 on a private repository.~~ THAT WAS FALSE.
+        # gh is installed, at /opt/homebrew/bin/gh, and the log was read.
+        #
+        # What run 32092845684 says, verbatim from the Set up Go step:
+        #   Setup go version spec 1.26.6
+        #   Successfully set up Go version 1.26.6
+        #   go version go1.26.6 linux/amd64
+        # and grepping the whole job log for golang.org/toolchain returns zero,
+        # so nothing downloaded a toolchain per run. The job environment also
+        # carries GOTOOLCHAIN='local', which is setup-go pinning what it
+        # installed for every step after it, exactly as its source said.
+        #
+        # One thing this run could NOT settle, said so rather than claimed:
+        # by 3a23d76 both lines of go.work already read 1.26.6, so the log
+        # cannot show which of the two setup-go took. That the toolchain
+        # directive is preferred rests on the source reading above, and the
+        # first run that could discriminate is one where the two lines differ,
+        # which is a state this repository is meant never to be in.
         #
         # go-version-file points at go.work and NOT at engine/go.mod, and the
         # difference is not cosmetic. In workspace mode the toolchain line of a

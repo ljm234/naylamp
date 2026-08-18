@@ -389,6 +389,46 @@ func TestDeclaredPorts_ReadsThePortsTheRepoDeclares(t *testing.T) {
 	}
 }
 
+func TestCollectCandidates_SkipsThisProgramsOwnReports(t *testing.T) {
+	// The defect this guards is not hypothetical, it shipped. The archive
+	// command in the header redirects stdout, and a shell creates that file
+	// before the program starts, so the first archived run scanned its own
+	// half written output at 1327 bytes and came out BACKED by a 0.9990 it had
+	// just copied from another file's entry. An instrument cannot be its own
+	// evidence.
+	ws := t.TempDir()
+	write := func(name, body string) string {
+		p := filepath.Join(ws, name)
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	report := write("NAYLAMP_HYGIENE_2026-08-17_3a23d76.txt", "0.9990 copied out of another entry\n")
+	other := write("NAYLAMP_SOMEGATE_2026-08-17.txt", "measured 4988.87s over the run\n")
+
+	got, err := collectCandidates(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawReport, sawOther bool
+	for _, p := range got {
+		if p == report {
+			sawReport = true
+		}
+		if p == other {
+			sawOther = true
+		}
+	}
+	if sawReport {
+		t.Error("an archived hygiene report was collected as a candidate; the tool would judge its own output")
+	}
+	// The other half, so the row cannot pass by collecting nothing at all.
+	if !sawOther {
+		t.Error("an ordinary artifact was skipped; the exclusion is too wide")
+	}
+}
+
 func TestBundleOf_SeparatesLooseFromBundled(t *testing.T) {
 	ws := filepath.Join("/tmp", "ws")
 	if got := bundleOf(ws, filepath.Join(ws, "sift_run.log")); got != "" {

@@ -516,6 +516,17 @@ func collectCandidates(workspace string) ([]string, error) {
 		if !strings.HasSuffix(p, ".txt") && !strings.HasSuffix(p, ".log") {
 			return nil
 		}
+		// This program's own archived reports are not evidence, and leaving
+		// them in was a measured mistake rather than a theoretical one. The
+		// archive command in the header redirects stdout, and a shell creates
+		// that file before the program starts, so the very first archived run
+		// scanned its own half written output: 1327 bytes, and it came out
+		// BACKED by a 0.9990 it had just copied out of another file's entry.
+		// An instrument cannot be its own evidence, which is the same reason
+		// the corpus excludes this package's source.
+		if strings.HasPrefix(filepath.Base(p), "NAYLAMP_HYGIENE_") {
+			return nil
+		}
 		// A bundle runbook is prose about the evidence, not evidence. It is
 		// corpus, so it is not also a candidate.
 		if isRunbook(workspace, p) {
