@@ -111,11 +111,14 @@
 // take the whole thing. It was false the instant it shipped: 50253dd, on 17
 // August 2026, is both the commit that carried this paragraph and the commit
 // that put the directory under version control, so the sentence arrived
-// already untrue. Three commits touch the directory now: 50253dd, 0e7066f and
-// 539dd95. The old wording is replaced rather than left standing because it
-// made a claim about the present tense of the repository, which is the one
-// thing a reader can check in one command and would find false. What it was
-// arguing for survives: there is history to read now.
+// already untrue. What touches this directory now is whatever git log --
+// gate/hygiene prints, and the list is deliberately not written out here: the
+// paragraph this one replaces was falsified by the very commit that shipped
+// it, and an enumeration in a comment goes stale the next time anyone edits
+// the file it lives in. The old wording is replaced rather than left standing
+// because it made a claim about the present tense of the repository, which is
+// the one thing a reader can check in one command and would find false. What
+// it was arguing for survives: there is history to read now.
 //
 // OUTSIDE go.work, INSIDE CI. go.work lists only ./engine and every step of
 // .github/workflows/ci.yml runs with working-directory: engine, so no package
