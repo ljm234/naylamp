@@ -100,9 +100,25 @@ ci: build vet lint test vuln
 # The sweep uses -exec rm over -delete on purpose: -delete implies -depth, which
 # silently turns -prune into a no-op, so the two do not compose and the
 # safe-looking spelling would be the wrong one.
+#
+# ONE FILE THE TREE DOES NOT GENERATE, and the widening is written down rather
+# than slipped in. .DS_Store comes from the Finder, not from a build, so it sits
+# outside the sentence this target opens with. It is swept anyway, for the
+# reason the sweep exists at all: it is already ignored, so nothing will ever
+# ask about it, and one was sitting at the repository root, last written on 12
+# August, without anyone choosing to keep it. An mtime says when a file was
+# written and not how long it sat there, so the date goes in that shape. What
+# deleting one costs is that directory's Finder view state, which nothing in
+# this tree sets, so what comes back is the default. It goes through the same
+# PRUNE as the two sweeps above, so .git and the gate identities are as safe
+# from this line as from those. This is the whole of the widening: a name, not
+# a class. An editor or a tool that starts dropping state in the tree gets its
+# own line here and its own line in .gitignore, and the argument is made then
+# rather than pre-approved now.
 PRUNE := -name .git -o -path ./gate/out/certs
 clean:
 	test ! -d gate/out || find gate/out -mindepth 1 -maxdepth 1 ! -name certs -exec rm -rf -- {} +
 	find . \( $(PRUNE) \) -prune -o -type f \( -name '*_result.txt' -o -name '*_bench.txt' \) -exec rm -f -- {} +
 	find . \( $(PRUNE) \) -prune -o -type f \( -name '*.test' -o -name '*.out' \) -exec rm -f -- {} +
+	find . \( $(PRUNE) \) -prune -o -type f -name '.DS_Store' -exec rm -f -- {} +
 	rm -f -- naylampd engine/naylampd naylamp
