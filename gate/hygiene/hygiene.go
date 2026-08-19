@@ -47,11 +47,16 @@
 // them. They are cited by document name and by the name of the thing inside,
 // never by line number. Two things break a line number here that do not break
 // it in a document. A comment freezes at the commit while the document keeps
-// moving, and NAYLAMP_DEFERRED_BACKLOG.md moved its own lines seven times in
-// August. This comment said six until the day after it was written. And the
-// reader who most needs the citation is the one working from a fresh checkout,
-// who does not have the file at all: for them the name says what to go and get,
-// and a number says nothing.
+// moving, and NAYLAMP_DEFERRED_BACKLOG.md moved its own lines eight times in
+// August. This comment said six until the day after it was written, and seven
+// from late on the 18th until the small hours of the 19th. How long that was
+// exactly is NOT RECORDED: an mtime holds only the last write and this file
+// took more than one that night, so the span has a start and no end. The two
+// words are the marker DEFER-065 fixes for this, so that a figure nobody could
+// reach leaves something to grep for instead of a silence. And the reader who
+// most needs the citation is the one working from a fresh checkout, who does
+// not have the file at all: for them the name says what to go and get, and a
+// number says nothing.
 //
 // Five citations in this package were written the wrong way and were changed
 // before any of it was committed: the provenance note of DEFER-016 in
@@ -100,13 +105,17 @@
 // which artifacts would have been proposed for deletion. A rule that starts
 // dropping a class of figure is invisible without a diff.
 //
-// AND THAT ARGUMENT IS NOT YET CASHED, said here because writing it as though
-// it were would be the defect this program exists to catch. As of the day it
-// was written the directory is UNTRACKED: git ls-files gate/hygiene is empty,
-// git log over it has no commits, and a git clean would take the whole thing.
-// Until someone commits it there is no history to read and the reason above is
-// an intention. It is left standing rather than softened because the fix is one
-// command by whoever owns the commit, not a rewording here.
+// THAT ARGUMENT WAS NOT CASHED WHEN IT WAS WRITTEN, and it is now. The
+// paragraph said the directory was UNTRACKED, that git ls-files gate/hygiene
+// was empty, that git log over it had no commits, and that a git clean would
+// take the whole thing. It was false the instant it shipped: 50253dd, on 17
+// August 2026, is both the commit that carried this paragraph and the commit
+// that put the directory under version control, so the sentence arrived
+// already untrue. Three commits touch the directory now: 50253dd, 0e7066f and
+// 539dd95. The old wording is replaced rather than left standing because it
+// made a claim about the present tense of the repository, which is the one
+// thing a reader can check in one command and would find false. What it was
+// arguing for survives: there is history to read now.
 //
 // OUTSIDE go.work, INSIDE CI. go.work lists only ./engine and every step of
 // .github/workflows/ci.yml runs with working-directory: engine, so no package
