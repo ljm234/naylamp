@@ -47,11 +47,11 @@
 // them. They are cited by document name and by the name of the thing inside,
 // never by line number. Two things break a line number here that do not break
 // it in a document. A comment freezes at the commit while the document keeps
-// moving, and NAYLAMP_DEFERRED_BACKLOG.md moved its own lines six times in
-// August, the last of them on the day this was written. And the reader who most
-// needs the citation is the one working from a fresh checkout, who does not
-// have the file at all: for them the name says what to go and get, and a number
-// says nothing.
+// moving, and NAYLAMP_DEFERRED_BACKLOG.md moved its own lines seven times in
+// August. This comment said six until the day after it was written. And the
+// reader who most needs the citation is the one working from a fresh checkout,
+// who does not have the file at all: for them the name says what to go and get,
+// and a number says nothing.
 //
 // Five citations in this package were written the wrong way and were changed
 // before any of it was committed: the provenance note of DEFER-016 in
