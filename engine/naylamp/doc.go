@@ -5,7 +5,8 @@
 // Collections (New, CreateCollection, and Collection lookup); a Collection is a
 // self-contained group of vectors of one dimension that you Upsert into, Query
 // for nearest neighbors, and Delete from. It is safe for concurrent use and has
-// no consensus or durability of its own.
+// no consensus or durability of its own. It also carries one read-only audit
+// accessor, IndexIDs, which enumerates the ids its index holds.
 //
 // The replicated layer turns a collection into a fault-tolerant service. A Node,
 // opened with OpenNode, is one replica of a vector collection driven by a Raft
@@ -29,4 +30,8 @@ package naylamp
 // which the module would carry through its own tags. It starts at a first
 // stable-in-progress version, so the surface may still evolve before it reaches
 // 1.0.
+//
+// It stays at 0.1.0 through the addition of Collection.IndexIDs: an added method
+// breaks no consumer, so moving the number would report a change that did not
+// happen.
 const APIVersion = "0.1.0"

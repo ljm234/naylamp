@@ -37,6 +37,48 @@ func (c *Collection) Len() int {
 	return c.store.Len()
 }
 
+// IndexIDs returns the ids the HNSW index currently holds, in ascending order.
+// It is a read-only audit accessor built on Index.Export(), the same read-locked
+// call Node.StateHash makes, and no write path reaches it. The slice is fresh on
+// every call, so a caller that sorts it in place cannot reach the graph.
+//
+// IT READS THE INDEX, AND Len ABOVE READS THE STORE, and the whole reason this
+// method exists is that difference. On a healthy collection driven from one
+// goroutine the two objects hold the same ids always, so no sequence of Upsert,
+// Query and Delete can tell them apart; a check that read the store while
+// claiming to speak about the index would therefore pass every seed of the
+// simulation and still be pointed at the wrong object. That is the defect this
+// accessor was opened to let a checker avoid, so the difference is pinned by a
+// defender of its own, TestCollection_IndexIDsReadsTheIndexNotTheStore, which
+// says how.
+//
+// Two limits go here rather than in a note, because both bite a caller that
+// assumes otherwise. Reading this together with Len does NOT give an atomic
+// pair: Upsert writes the store and then the index with no lock across the two,
+// so a delete landing between them leaves the two answers disagreeing, and the
+// race detector says nothing because each object is locked on its own. And the
+// call grows close to quadratically over the sizes that matter, because Export
+// sorts with an insertion sort: ten times the nodes cost eighty-one times the
+// time,
+// 3.82 ms at n=5000 against 311 ms at n=50000, and the endpoints do not show
+// this: at a hundred nodes the copy dominates and not the sort.
+//
+// Every document named here lives OUTSIDE this repository, in the workspace
+// directory above it, so a clone carries none of them. What this accessor
+// serves is clause (i) of the central property of Phase 1, stated in
+// NAYLAMP_PHASE_1.md, which says the index's live set is exactly the set of ids
+// upserted and not deleted, in both directions. The item that ordered the
+// accessor is DEFER-049 and the two limits above are DEFER-058 and DEFER-063,
+// all three in NAYLAMP_DEFERRED_BACKLOG.md.
+func (c *Collection) IndexIDs() []uint64 {
+	snap := c.index.Export()
+	ids := make([]uint64, 0, len(snap.Nodes))
+	for _, n := range snap.Nodes {
+		ids = append(ids, n.ID)
+	}
+	return ids
+}
+
 // Engine is the top-level handle that owns all collections. Think of it as the
 // warehouse that holds the labeled boxes: you create collections through it and
 // look them up by name. It is safe for concurrent use.
