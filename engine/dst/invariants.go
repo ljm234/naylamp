@@ -39,33 +39,58 @@ const idSample = 10
 // defect that trips both there is no argument here for why the count is the
 // better verdict, and the test records the choice so it cannot drift unnoticed.
 func checkInvariants(col *naylamp.Collection, orc *oracle) error {
-	// Invariant 1: the counts match. The engine must hold exactly as many
-	// vectors as the oracle expects. This is the STORE's count, because
-	// Collection.Len reads the store, and it is bookkeeping about the harness
-	// rather than one of the three clauses of the central property of Phase 1.
+	if err := checkStoreCount(col, orc); err != nil {
+		return err
+	}
+	if err := checkIndexSet(col, orc); err != nil {
+		return err
+	}
+	return checkReachability(col, orc)
+}
+
+// THE THREE ARE SEPARATE FUNCTIONS SO A CALLER CAN RUN ALL THREE AND REPORT ALL
+// THREE, which the sweep above deliberately does not do. Splitting them changes
+// nothing for the sweep: checkInvariants composes them in the same order and
+// still returns on the first failure, and the messages are the same strings, so
+// the fifteen red-arm rows that quote them are untouched.
+//
+// What needed the split is the campaign in point_test.go. It runs ONE
+// collection, so first-failure would publish one clause and leave the other two
+// unrun, and the gate that consumes this splits its verdicts by clause. A test
+// that has to say something about each of the three cannot use a checker that
+// stops at the first.
+
+// checkStoreCount is invariant 1: the engine holds exactly as many vectors as
+// the oracle expects. This is the STORE's count, because Collection.Len reads
+// the store, and it is bookkeeping about the harness rather than one of the
+// three clauses of the central property of Phase 1.
+func checkStoreCount(col *naylamp.Collection, orc *oracle) error {
 	if col.Len() != orc.count() {
 		return fmt.Errorf("count mismatch: engine has %d, oracle expects %d", col.Len(), orc.count())
 	}
+	return nil
+}
 
-	// Invariant 2: the INDEX holds exactly the ids the oracle expects, as a SET
-	// and in both directions. The count above cannot see this: a compensated
-	// pair, one id lost plus one ghost, keeps the cardinal and breaks the set.
-	// And the count watches the store while this watches the index, which is the
-	// object clause (i) speaks about.
-	if err := compareIDSets(col.IndexIDs(), orc.ids()); err != nil {
-		return err
-	}
+// checkIndexSet is invariant 2: the INDEX holds exactly the ids the oracle
+// expects, as a SET and in both directions. The count cannot see this: a
+// compensated pair, one id lost plus one ghost, keeps the cardinal and breaks
+// the set. And the count watches the store while this watches the index, which
+// is the object clause (i) speaks about.
+func checkIndexSet(col *naylamp.Collection, orc *oracle) error {
+	return compareIDSets(col.IndexIDs(), orc.ids())
+}
 
-	// Invariant 3: every id the oracle expects must be findable. We query with
-	// each expected vector's own data and confirm its id comes back as the
-	// closest match (a vector is always nearest to itself).
-	//
-	// This one walks the oracle's ids in map order and returns on the first that
-	// fails, so when a state breaks several of them at once, WHICH ONE it names
-	// varies between runs of the same seed. The determinism argument on
-	// compareIDSets below applies here and is not acted on: it is open as
-	// DEFER-062 in NAYLAMP_DEFERRED_BACKLOG.md, outside this repository, and
-	// fixing it would move the literal ids that archived gate rows quote.
+// checkReachability is invariant 3: every id the oracle expects must be
+// findable. We query with each expected vector's own data and confirm its id
+// comes back as the closest match (a vector is always nearest to itself).
+//
+// This one walks the oracle's ids in map order and returns on the first that
+// fails, so when a state breaks several of them at once, WHICH ONE it names
+// varies between runs of the same seed. The determinism argument on
+// compareIDSets below applies here and is not acted on: it is open as
+// DEFER-062 in NAYLAMP_DEFERRED_BACKLOG.md, outside this repository, and
+// fixing it would move the literal ids that archived gate rows quote.
+func checkReachability(col *naylamp.Collection, orc *oracle) error {
 	for _, id := range orc.ids() {
 		data := orc.vectors[id]
 
@@ -80,7 +105,6 @@ func checkInvariants(col *naylamp.Collection, orc *oracle) error {
 			return fmt.Errorf("id %d expected as closest match, got id %d", id, results[0].ID)
 		}
 	}
-
 	return nil
 }
 
