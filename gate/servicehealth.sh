@@ -171,6 +171,27 @@ teardown() {
 	done
 }
 
+# verify_unmuted asks, three ways, what teardown cannot: whether the mute rules
+# are actually gone. teardown swallows its deletes on purpose, because a
+# missing rule is not an error, but that leaves a failed delete invisible until
+# hygiene; this probe makes it visible sooner. It prints the nodes that still
+# carry the rule or could not be read, empty when nodes 2 and 3 are both clean,
+# and returns non-zero when it prints anything.
+verify_unmuted() {
+	local n ar bad=""
+	for n in 2 3; do
+		ar=0
+		mute_installed "$n" || ar=$?
+		case "${ar}" in
+			0) bad="${bad} ${n}(rule)" ;;
+			1) ;;
+			2) bad="${bad} ${n}(unreadable)" ;;
+		esac
+	done
+	printf '%s' "${bad}"
+	[ -z "${bad}" ]
+}
+
 # cleanup runs on every exit path: it unmutes, then emits the final verdict, and
 # forces a non-zero exit whenever the run did not end all-pass, so a run that died
 # partway or left a check without a verdict can never print success.
@@ -178,6 +199,11 @@ cleanup() {
 	local rc=$?
 	set +e
 	teardown
+	local left
+	left="$(verify_unmuted || true)"
+	if [ -n "${left}" ]; then
+		echo "gate: WARNING: mute state remains or is unreadable on:${left}; the next run's start check will stop on it" >&2
+	fi
 	if ! emit_final_verdict; then
 		[ "${rc}" -eq 0 ] && rc=1
 	fi
@@ -194,10 +220,14 @@ leader_role() {
 
 # role_line_count prints how many role lines a node has logged. The daemon logs a
 # role line only on a change, so a count that does not move proves the node never
-# changed role, which is what tells a held leader apart from one that flapped.
+# changed role, which is what tells a held leader apart from one that flapped. It
+# returns 2 when the count cannot be read: the old form collapsed an unanswered
+# ssh to the empty string and the empty string to 0, and a comparison against a
+# fabricated 0 can pass, which is the DEFER-072 collapse. grep exits 1 when the
+# log has no role line yet, a valid 0; any other read failure is not.
 role_line_count() {
 	local c
-	c="$(run_on "$1" 'grep -cE "role=" naylamp/logs/node.log 2>/dev/null' 2>/dev/null || true)"
+	c="$(read_on "$1" "0 1" 'grep -cE "role=" naylamp/logs/node.log 2>/dev/null')" || return 2
 	printf '%s' "${c}" | tr -dc '0-9'
 }
 
@@ -214,13 +244,12 @@ find_leader() {
 	return 1
 }
 
-# node_alive reports whether a node's daemon process is still running, read from
-# the pidfile cluster.sh wrote. A healthy muted leader changes no role, so its log
-# is static and a crashed process leaves the same static signature; only a live pid
-# separates the two.
-node_alive() {
-	run_on "$1" 'pid=$(cat naylamp/naylampd.pid 2>/dev/null); [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null'
-}
+# Liveness is alive_on from common.sh, the three-valued form; the local
+# node_alive is gone. Its reason stands: a healthy muted leader changes no
+# role, so its log is static and a crashed process leaves the same static
+# signature; only a live pid separates the two. The old probe also returned the
+# ssh 255 of a dead transport as "dead", the same DEFER-072 collapse in the
+# closed direction, and unreadable now gets named instead of borrowed.
 
 # ceded_count prints how many role=follower leader=0 lines a node has logged. Every
 # node logs one at boot (it starts a follower with no leader), so this reads one on
@@ -230,7 +259,7 @@ node_alive() {
 # is the proof of a step-down that the lone boot line cannot fake.
 ceded_count() {
 	local c
-	c="$(run_on "$1" 'grep -cE "role=follower leader=0" naylamp/logs/node.log 2>/dev/null' 2>/dev/null || true)"
+	c="$(read_on "$1" "0 1" 'grep -cE "role=follower leader=0" naylamp/logs/node.log 2>/dev/null')" || return 2
 	printf '%s' "${c}" | tr -dc '0-9'
 }
 
@@ -240,7 +269,7 @@ ceded_count() {
 # that only led transiently during the relocation election for it.
 leader_count() {
 	local c
-	c="$(run_on "$1" 'grep -cE "role=leader" naylamp/logs/node.log 2>/dev/null' 2>/dev/null || true)"
+	c="$(read_on "$1" "0 1" 'grep -cE "role=leader" naylamp/logs/node.log 2>/dev/null')" || return 2
 	printf '%s' "${c}" | tr -dc '0-9'
 }
 
@@ -254,18 +283,23 @@ wait_for_leader() {
 	return 1
 }
 
-# mute_installed confirms the client-ack DROP rule is present on a node, so no
-# verdict is read off a mute that silently did not take.
+# mute_installed asks three ways through ask_on, so no verdict is read off a
+# mute that silently did not take, and no clean bill is read off a host that
+# would not answer: 0 rule present, 1 rule absent, 2 unreadable (DEFER-072).
 mute_installed() {
-	run_on "$1" "sudo iptables -C OUTPUT -d ${PRIV[1]} -p tcp --dport ${CLIENT_PORT} -j DROP 2>/dev/null"
+	ask_on "$1" "sudo iptables -C OUTPUT -d ${PRIV[1]} -p tcp --dport ${CLIENT_PORT} -j DROP"
 }
 
 # mute_pkts prints the packet counter of the client-ack DROP rule on a node, 0 if
 # the rule is absent. -x prints exact counts, the hardware analog of the
 # simulation's DroppedByEdge: a counter above zero proves the mute dropped real
-# frames rather than merely being installed.
+# frames rather than merely being installed. It returns 2 when the read cannot
+# be made whole (DEFER-072); the remote pipeline's own status stays awk's, so a
+# sudo failure still reads as 0 packets, the closed direction it always was.
 mute_pkts() {
-	run_on "$1" "sudo iptables -L OUTPUT -v -n -x 2>/dev/null | awk '/DROP/ && /dpt:${CLIENT_PORT}/ {print \$1; exit}'" 2>/dev/null | tr -dc '0-9'
+	local c
+	c="$(read_on "$1" 0 "sudo iptables -L OUTPUT -v -n -x 2>/dev/null | awk '/DROP/ && /dpt:${CLIENT_PORT}/ {print \$1; exit}'")" || return 2
+	printf '%s' "${c}" | tr -dc '0-9'
 }
 
 # field extracts the integer value of a key=NNN line from captured client output.
@@ -420,8 +454,13 @@ bite() {
 	{ [ -n "$L" ] && [ "$L" != 1 ]; } || stop "SH.bite: no leader on node 2 or 3 to mute"
 	note "SH.bite: leader is node ${L}; muting its ack path to the client"
 	"${GATE_DIR}/partition.sh" mute "$L" >/dev/null
-	if ! mute_installed "$L"; then
+	local ar=0
+	mute_installed "$L" || ar=$?
+	if [ "${ar}" -eq 1 ]; then
 		stop "SH.bite: the mute rule is not present on node ${L} after applying it; the instrument failed to install"
+	fi
+	if [ "${ar}" -eq 2 ]; then
+		stop "SH.bite: node ${L} could not be read after applying the mute; the instrument cannot be attested either way"
 	fi
 	note "SH.bite: mute rule confirmed on node ${L}"
 
@@ -430,7 +469,12 @@ bite() {
 	out="$(client_single "$L" "${BITE_DL}")"
 	printf '%s\n' "${out}"
 	ex="$(field exit "${out}")"
-	pkts="$(mute_pkts "$L")"
+	pkts="$(mute_pkts "$L")" || {
+		fail "SH.bite: the DROP counter on node ${L} could not be read; the bite cannot be attested either way"
+		end_check SH.bite
+		"${GATE_DIR}/partition.sh" unmute "$L" >/dev/null 2>&1 || true
+		return
+	}
 	if [ "${ex:-}" = 1 ] && [ "${pkts:-0}" -gt 0 ]; then
 		pass "SH.bite: a write to the muted leader ${L} gave exit ${ex} and the DROP rule counted ${pkts} packets, so the mute drops real client-ack traffic and a TCP re-dial does not slip past it"
 	else
@@ -453,8 +497,8 @@ negative() {
 	local L
 	L="$(find_leader || true)"
 	{ [ -n "$L" ] && [ "$L" != 1 ]; } || stop "SH.negative: no leader on node 2 or 3"
-	local rc_before
-	rc_before="$(role_line_count "$L")"
+	local rc_before counts_ok=1
+	rc_before="$(role_line_count "$L")" || counts_ok=0
 	note "SH.negative: leader is node ${L} (role lines ${rc_before:-0}); driving ${NEG_LOAD_S}s of continuous load"
 
 	begin_check
@@ -464,18 +508,26 @@ negative() {
 	ex="$(field exit "${out}")"
 	served="$(field served "${out}")"
 	attempted="$(field attempted "${out}")"
-	rc_after="$(role_line_count "$L")"
+	rc_after="$(role_line_count "$L")" || counts_ok=0
+	local alive_rc=0
+	alive_on "$L" || alive_rc=$?
 	# The load is deadline bound, so its last emitted operation is cut off before it
 	# can resolve: served is attempted or attempted minus that one truncated op, never
 	# fewer on a healthy cluster. Tolerate exactly that one, and require the rest served.
 	if [ "${ex:-}" = 0 ] &&
 		[ -n "${served}" ] && [ -n "${attempted}" ] && [ "${served}" -gt 0 ] && [ "$((attempted - served))" -le 1 ] &&
-		[ "${rc_after:-0}" = "${rc_before:-0}" ] && node_alive "$L"; then
+		[ "${counts_ok}" -eq 1 ] && [ "${rc_after:-0}" = "${rc_before:-0}" ] && [ "${alive_rc}" -eq 0 ]; then
 		pass "SH.negative: over ${NEG_LOAD_S}s the leader ${L} served every completed operation (${served}/${attempted}, at most one deadline-truncated) and never changed role (role lines held at ${rc_after}), so a healthy served leader is not unseated by the signal"
 	else
 		local alive
-		alive="$(node_alive "$L" && echo yes || echo no)"
-		fail "SH.negative: expected exit 0, served above 0 within one of attempted, and an unchanged role line count (got exit=${ex:-none} served=${served:-none} attempted=${attempted:-none} role lines ${rc_before:-0} to ${rc_after:-0} alive=${alive})"
+		case "${alive_rc}" in
+			0) alive=yes ;;
+			1) alive=no ;;
+			2) alive=unreadable ;;
+		esac
+		local counts_note=""
+		[ "${counts_ok}" -eq 1 ] || counts_note="; the role-line count could not be read, so the no-flap claim cannot be attested either way"
+		fail "SH.negative: expected exit 0, served above 0 within one of attempted, and an unchanged role line count (got exit=${ex:-none} served=${served:-none} attempted=${attempted:-none} role lines ${rc_before:-0} to ${rc_after:-0} alive=${alive})${counts_note}"
 	fi
 	end_check SH.negative
 }
@@ -492,27 +544,44 @@ attribution() {
 	local L
 	L="$(find_leader || true)"
 	{ [ -n "$L" ] && [ "$L" != 1 ]; } || stop "SH.attribution: no leader on node 2 or 3 to mute"
-	local rc_before
-	rc_before="$(role_line_count "$L")"
+	local rc_before counts_ok=1
+	rc_before="$(role_line_count "$L")" || counts_ok=0
 	note "SH.attribution: leader is node ${L} (role lines ${rc_before:-0}); muting its ack path"
 	"${GATE_DIR}/partition.sh" mute "$L" >/dev/null
-	if ! mute_installed "$L"; then
+	local ar=0
+	mute_installed "$L" || ar=$?
+	if [ "${ar}" -eq 1 ]; then
 		stop "SH.attribution: the mute rule is not present on node ${L} after applying it"
+	fi
+	if [ "${ar}" -eq 2 ]; then
+		stop "SH.attribution: node ${L} could not be read after applying the mute; the instrument cannot be attested either way"
 	fi
 
 	begin_check
 	note "SH.attribution: holding one write against the muted leader for ${RETAIN_S}s with the feature off"
-	local out ex rc_after pkts alive
+	local out ex rc_after pkts alive alive_rc=0
 	out="$(client_single "$L" "${RETAIN_S}s")"
 	printf '%s\n' "${out}"
 	ex="$(field exit "${out}")"
-	rc_after="$(role_line_count "$L")"
-	pkts="$(mute_pkts "$L")"
-	alive="$(node_alive "$L" && echo yes || echo no)"
-	if [ "${ex:-}" = 1 ] && [ "${rc_after:-0}" = "${rc_before:-0}" ] && [ "${alive}" = yes ] && [ "${pkts:-0}" -gt 0 ]; then
+	rc_after="$(role_line_count "$L")" || counts_ok=0
+	pkts="$(mute_pkts "$L")" || {
+		fail "SH.attribution: the DROP counter on node ${L} could not be read; the status quo cannot be attested either way"
+		end_check SH.attribution
+		"${GATE_DIR}/partition.sh" unmute "$L" >/dev/null 2>&1 || true
+		return
+	}
+	alive_on "$L" || alive_rc=$?
+	case "${alive_rc}" in
+		0) alive=yes ;;
+		1) alive=no ;;
+		2) alive=unreadable ;;
+	esac
+	if [ "${ex:-}" = 1 ] && [ "${counts_ok}" -eq 1 ] && [ "${rc_after:-0}" = "${rc_before:-0}" ] && [ "${alive}" = yes ] && [ "${pkts:-0}" -gt 0 ]; then
 		pass "SH.attribution: with the feature off the muted leader ${L} held office for ${RETAIN_S}s (role lines unchanged at ${rc_after}, pid alive, DROP counted ${pkts} packets) and the write was never served (exit ${ex}), the measured status quo"
 	else
-		fail "SH.attribution: expected exit 1, an unchanged role line count, a live pid, and DROP packets above 0 (got exit=${ex:-none} role lines ${rc_before:-0} to ${rc_after:-0} alive=${alive} pkts=${pkts:-0})"
+		local counts_note=""
+		[ "${counts_ok}" -eq 1 ] || counts_note="; the role-line count could not be read, so the held-office claim cannot be attested either way"
+		fail "SH.attribution: expected exit 1, an unchanged role line count, a live pid, and DROP packets above 0 (got exit=${ex:-none} role lines ${rc_before:-0} to ${rc_after:-0} alive=${alive} pkts=${pkts:-0})${counts_note}"
 	fi
 	end_check SH.attribution
 	"${GATE_DIR}/partition.sh" unmute "$L" >/dev/null 2>&1 || true
@@ -533,43 +602,70 @@ positive() {
 	local L n
 	L="$(find_leader || true)"
 	{ [ -n "$L" ] && [ "$L" != 1 ]; } || stop "SH.positive: no leader on node 2 or 3 to mute"
-	local rc_before cede_before
-	rc_before="$(role_line_count "$L")"
-	cede_before="$(ceded_count "$L")"
+	local rc_before cede_before counts_ok=1
+	rc_before="$(role_line_count "$L")" || counts_ok=0
+	cede_before="$(ceded_count "$L")" || counts_ok=0
 	# Baseline the peers' leadership so a peer that only led during the relocation
 	# election is not later mistaken for the new leader.
 	local -a lead_base
 	for n in "${NODE_IDS[@]}"; do
-		lead_base[n]="$(leader_count "$n")"
+		lead_base[n]="$(leader_count "$n")" || counts_ok=0
 	done
 	note "SH.positive: leader is node ${L} (role lines ${rc_before:-0}, cedes ${cede_before:-0}); muting its ack path, then driving up to ${SERVICE_BUDGET_S}s of continuous load"
 	"${GATE_DIR}/partition.sh" mute "$L" >/dev/null
-	if ! mute_installed "$L"; then
+	local ar=0
+	mute_installed "$L" || ar=$?
+	if [ "${ar}" -eq 1 ]; then
 		stop "SH.positive: the mute rule is not present on node ${L} after applying it"
+	fi
+	if [ "${ar}" -eq 2 ]; then
+		stop "SH.positive: node ${L} could not be read after applying the mute; the instrument cannot be attested either way"
 	fi
 
 	begin_check
-	local out ex served rc_after cede_after newl="" pkts ok=1
+	local out ex served rc_after cede_after newl="" pkts=0 pkts_ok=1 ok=1
+	if [ "${counts_ok}" -ne 1 ]; then
+		fail "SH.positive: baseline counts could not be read on ${L} and its peers; a comparison without a baseline is not a comparison, and a fabricated 0 is exactly the DEFER-072 collapse"
+		ok=0
+	fi
 	out="$(client_reach "${SERVICE_BUDGET_S}s" "${LOAD_COUNT}")"
 	printf '%s\n' "${out}"
 	ex="$(field exit "${out}")"
 	served="$(field served "${out}")"
-	rc_after="$(role_line_count "$L")"
-	cede_after="$(ceded_count "$L")"
-	pkts="$(mute_pkts "$L")"
+	rc_after="$(role_line_count "$L")" || counts_ok=0
+	cede_after="$(ceded_count "$L")" || counts_ok=0
+	pkts="$(mute_pkts "$L")" || {
+		fail "SH.positive: the DROP counter on node ${L} could not be read; the bite cannot be attested either way"
+		ok=0
+		pkts_ok=0
+	}
+	local peers_ok=1 lc
 	for n in "${NODE_IDS[@]}"; do
 		[ "$n" = "$L" ] && continue
-		if [ "$(leader_count "$n")" -gt "${lead_base[n]:-0}" ]; then
+		lc="$(leader_count "$n")" || {
+			peers_ok=0
+			continue
+		}
+		if [ "${lc:-0}" -gt "${lead_base[n]:-0}" ]; then
 			newl="$n"
 			break
 		fi
 	done
 	[ "${ex:-}" = 0 ] || { fail "SH.positive: the client was never served (exit ${ex:-none}); no operation completed within ${SERVICE_BUDGET_S}s"; ok=0; }
-	[ "${cede_after:-0}" -gt "${cede_before:-0}" ] || { fail "SH.positive: node ${L} logged no new role=follower leader=0 (cedes ${cede_before:-0} to ${cede_after:-0}); the muted leader did not step down"; ok=0; }
-	[ "${rc_after:-0}" -gt "${rc_before:-0}" ] || { fail "SH.positive: node ${L} role line count did not move (${rc_before:-0} to ${rc_after:-0}); no role change observed"; ok=0; }
-	[ -n "${newl}" ] || { fail "SH.positive: no peer other than ${L} took the term after the step-down"; ok=0; }
-	mute_installed "$L" || { fail "SH.positive: the DROP rule on ${L} was gone at ack time; the edge was healed during the verdict"; ok=0; }
-	[ "${pkts:-0}" -gt 0 ] || { fail "SH.positive: the DROP rule on ${L} counted 0 packets; the mute did not bite during the verdict"; ok=0; }
+	if [ "${counts_ok}" -eq 1 ]; then
+		[ "${cede_after:-0}" -gt "${cede_before:-0}" ] || { fail "SH.positive: node ${L} logged no new role=follower leader=0 (cedes ${cede_before:-0} to ${cede_after:-0}); the muted leader did not step down"; ok=0; }
+		[ "${rc_after:-0}" -gt "${rc_before:-0}" ] || { fail "SH.positive: node ${L} role line count did not move (${rc_before:-0} to ${rc_after:-0}); no role change observed"; ok=0; }
+	else
+		fail "SH.positive: the role and cede counts on node ${L} could not be read across the verdict; the step-down cannot be attested either way"
+		ok=0
+	fi
+	[ "${peers_ok}" -eq 1 ] || { fail "SH.positive: a peer's leader count could not be read; the takeover cannot be attested either way"; ok=0; }
+	[ "${peers_ok}" -eq 1 ] && [ -z "${newl}" ] && { fail "SH.positive: no peer other than ${L} took the term after the step-down"; ok=0; }
+	ar=0
+	mute_installed "$L" || ar=$?
+	[ "${ar}" -eq 1 ] && { fail "SH.positive: the DROP rule on ${L} was gone at ack time; the edge was healed during the verdict"; ok=0; }
+	[ "${ar}" -eq 2 ] && { fail "SH.positive: node ${L} could not be read at ack time; the never-healed claim cannot be attested either way"; ok=0; }
+	[ "${pkts_ok}" -eq 1 ] && [ "${pkts:-0}" -le 0 ] && { fail "SH.positive: the DROP rule on ${L} counted 0 packets; the mute did not bite during the verdict"; ok=0; }
 	if [ "${ok}" -eq 1 ]; then
 		pass "SH.positive: the muted leader ${L} ceded to role=follower leader=0 (cedes ${cede_before:-0} to ${cede_after:-0}), node ${newl} took the term, and the client was served (exit ${ex}, ${served}) within ${SERVICE_BUDGET_S}s while the DROP rule stayed installed and counted ${pkts} packets, the edge never healed"
 	fi
@@ -583,17 +679,29 @@ hygiene() {
 	note "SH.hygiene: rules removed, iptables clean on nodes 2 and 3, one binary across the fleet"
 	begin_check
 	teardown
-	local n clean=1 leftover=""
+	local n ar clean=1 leftover=""
 	for n in 2 3; do
-		if mute_installed "$n"; then
-			clean=0
-			leftover="${leftover} ${n}"
-		fi
+		# The probe says which of the three it is. The old form returned the ssh
+		# status raw, so a host that would not answer read as "rule absent" and
+		# passed as clean, the site DEFER-072 names for this verdict.
+		ar=0
+		mute_installed "$n" || ar=$?
+		case "${ar}" in
+			0)
+				clean=0
+				leftover="${leftover} ${n}"
+				;;
+			1) ;;
+			2)
+				clean=0
+				leftover="${leftover} ${n}(unreadable)"
+				;;
+		esac
 	done
 	if [ "${clean}" -eq 1 ] && [ "${SAME_BINARY}" = 1 ] && [ -n "${FIRST_DIGEST}" ]; then
 		pass "SH.hygiene: no client-ack DROP rule remains on nodes 2 or 3, and all three hosts ran the same naylampd (sha256 ${FIRST_DIGEST})"
 	else
-		fail "SH.hygiene: a mute rule remained on node(s)${leftover:- none}, or the fleet was not homogeneous (same_binary=${SAME_BINARY} digest=${FIRST_DIGEST:-none})"
+		fail "SH.hygiene: a mute rule remained on node(s)${leftover:- none}, or the fleet was not homogeneous (same_binary=${SAME_BINARY} digest=${FIRST_DIGEST:-none}); a node marked unreadable could not be read, which is not the same as clean"
 	fi
 	end_check SH.hygiene
 }
@@ -601,6 +709,10 @@ hygiene() {
 # ---- dispatch ---------------------------------------------------------------
 
 teardown
+left="$(verify_unmuted || true)"
+if [ -n "${left}" ]; then
+	stop "servicehealth: nodes 2 and 3 are not mute-clean at start:${left}; an old rule or an unreadable host would poison every verdict below. Check the hosts and run 'servicehealth.sh heal'"
+fi
 
 cmd="${1:-all}"
 case "$cmd" in
@@ -616,7 +728,7 @@ case "$cmd" in
 		COMPLETED=1
 		;;
 	heal)
-		note "removed any client-ack mute rule left on nodes 2 and 3"
+		note "removed any client-ack mute rule left on nodes 2 and 3; the start check confirmed both clean"
 		;;
 	*)
 		echo "usage: servicehealth.sh <all|heal>" >&2

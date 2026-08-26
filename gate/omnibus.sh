@@ -350,30 +350,58 @@ leader_role() {
 role_of() { leader_role "$1" | grep -oE 'role=(follower|candidate|leader)' | tail -1 | cut -d= -f2 || true; }
 
 find_leader() {
-	local n
+	local n ar
 	for n in "${NODE_IDS[@]}"; do
-		node_alive "$n" || continue
+		ar=0
+		alive_on "$n" || ar=$?
+		if [ "${ar}" -eq 2 ]; then
+			echo "gate: find_leader: node ${n} could not be read and is skipped, which is not the same as dead" >&2
+			continue
+		fi
+		[ "${ar}" -eq 1 ] && continue
 		case "$(leader_role "$n")" in *role=leader*) printf '%s' "$n"; return 0 ;; esac
 	done
 	return 1
 }
 
-# count_leaders prints how many nodes currently report the leader role. find_leader
-# stops at the first one, which is enough to name a leader but says nothing about
-# whether a second node also believes it leads. Reconvergence is a claim about the
-# whole cluster, so it is read from the count and not from the first match.
+# count_leaders prints two lines: how many nodes currently report the leader
+# role, then any node it could not read. It returns 2 when the second line is
+# not empty. find_leader stops at the first leader, which is enough to name one
+# but says nothing about whether a second node also believes it leads.
+# Reconvergence is a claim about the whole cluster, so it is read from the
+# count and not from the first match. A node that cannot be read is neither
+# skipped nor counted as dead, because a leader nobody could read is exactly
+# the second leader this count exists to catch (DEFER-072).
 count_leaders() {
-	local n c=0
+	local n c=0 ar log role unreadable=""
 	for n in "${NODE_IDS[@]}"; do
 		# Liveness first. The log is appended to, so a node whose relaunch failed
 		# keeps its last role line forever, and if that line said leader it would
 		# be counted as a second one. That would report a two-leader consensus
 		# violation that never happened, on a cluster whose real fault is a daemon
 		# that did not come up. A dead node holds no office.
-		node_alive "$n" || continue
-		[ "$(role_of "$n")" = leader ] && c=$((c + 1))
+		ar=0
+		alive_on "$n" || ar=$?
+		if [ "${ar}" -eq 2 ]; then
+			unreadable="${unreadable} ${n}(liveness)"
+			continue
+		fi
+		[ "${ar}" -eq 1 ] && continue
+		if log="$(read_on "$n" 0 'cat naylamp/logs/node.log')"; then
+			role="$(printf '%s' "${log}" | grep -oE 'role=(follower|candidate|leader)' | tail -1 | cut -d= -f2 || true)"
+			[ "${role}" = leader ] && c=$((c + 1))
+		else
+			unreadable="${unreadable} ${n}(log)"
+		fi
 	done
-	printf '%s' "${c}"
+	# The count goes over stdout because the caller captures it in a subshell,
+	# and a variable set inside a subshell dies with it; the unreadable list
+	# rides the second line.
+	printf '%s\n%s\n' "${c}" "${unreadable}"
+	if [ -n "${unreadable}" ]; then
+		return 2
+	fi
+	return 0
 }
 
 wait_for_leader() {
@@ -386,9 +414,9 @@ wait_for_leader() {
 	return 1
 }
 
-node_alive() {
-	run_on "$1" 'if [ -f naylamp/naylampd.pid ] && kill -0 "$(cat naylamp/naylampd.pid)" 2>/dev/null; then echo yes; fi' 2>/dev/null | grep -q yes
-}
+# node_alive is gone: liveness is alive_on from common.sh, the three-valued
+# form. The old two-valued probe read an unanswered ssh as a dead node, which
+# is the collapse DEFER-072 counts for OM.kill and OM.partition.
 
 # ---- client wrappers ---------------------------------------------------------
 
@@ -683,8 +711,15 @@ phase_kill() {
 	note "OM.kill: leader before the kill is node ${L}"
 
 	run_on "${L}" 'kill -9 "$(cat naylamp/naylampd.pid)" 2>/dev/null; echo killed' || true
-	if node_alive "${L}"; then
+	local alive_rc=0
+	alive_on "${L}" || alive_rc=$?
+	if [ "${alive_rc}" -eq 0 ]; then
 		fail "OM.kill: node ${L} is still running after the kill; the failure was not injected"
+		end_check OM.kill
+		return
+	fi
+	if [ "${alive_rc}" -eq 2 ]; then
+		fail "OM.kill: node ${L} could not be read after the kill, so the kill cannot be attested either way; an unreadable node is not a dead one"
 		end_check OM.kill
 		return
 	fi
@@ -785,9 +820,15 @@ phase_partition() {
 	# never settled, and two means the healed node never accepted that it had lost
 	# the term, which is the failure this arm exists to catch and which naming only
 	# the first leader would hide.
-	local lead_after n_leaders
+	local lead_after n_leaders cl_out cl_rc=0
 	lead_after="$(find_leader || true)"
-	n_leaders="$(count_leaders)"
+	cl_out="$(count_leaders)" || cl_rc=$?
+	n_leaders="$(printf '%s\n' "${cl_out}" | sed -n '1p')"
+	if [ "${cl_rc}" -eq 2 ]; then
+		fail "OM.partition: the leader count cannot be attested; unreadable:$(printf '%s\n' "${cl_out}" | sed -n '2p'); a leader nobody could read is not counted and is not absent"
+		end_check OM.partition
+		return
+	fi
 	if [ "${n_leaders}" -eq 1 ] && [ -n "${lead_after}" ]; then
 		pass "OM.partition: the partition was inherited while the rules were installed, and after the heal exactly one node reports the leader role, node ${lead_after}"
 	elif [ "${n_leaders}" -eq 0 ]; then
@@ -979,22 +1020,25 @@ phase_readindex() {
 }
 
 # rules_left prints the node pairs that still carry a partition DROP rule, empty
-# when none does. It asks with the same iptables -C phase_hygiene uses, but it
-# reports THREE outcomes rather than two: a bare non-zero status cannot tell a rule
-# that is absent from a host that would not answer, and reading the second as the
-# first is how a swallowed heal stays invisible. So the remote command says which
-# it is and a reply that is neither is reported as unreadable, which is a finding
-# and not a clean bill.
+# when none does. It asks through ask_on, so the answer carries THREE outcomes
+# rather than two: a bare non-zero status cannot tell a rule that is absent
+# from a host that would not answer, and reading the second as the first is how
+# a swallowed heal stays invisible. A rule present is a finding, an unreadable
+# probe is a finding and not a clean bill. This function carried the first
+# three-valued probe in the tree, written inline; since 25 August 2026 the
+# discrimination lives in one place, in common.sh, and phase_hygiene asks the
+# same way.
 rules_left() {
-	local n x out found=""
+	local n x ar found=""
 	for n in "${NODE_IDS[@]}"; do
 		for x in "${NODE_IDS[@]}"; do
 			[ "$x" = "$n" ] && continue
-			out="$(run_on "$n" "if sudo iptables -C INPUT -s ${PRIV[$x]} -j DROP 2>/dev/null || sudo iptables -C OUTPUT -d ${PRIV[$x]} -j DROP 2>/dev/null; then echo present; else echo absent; fi" 2>/dev/null || true)"
-			case "${out}" in
-				*present*) found="${found} ${n}-x-${x}" ;;
-				*absent*)  ;;
-				*)         found="${found} ${n}-x-${x}(unreadable)" ;;
+			ar=0
+			ask_on "$n" "sudo iptables -C INPUT -s ${PRIV[$x]} -j DROP || sudo iptables -C OUTPUT -d ${PRIV[$x]} -j DROP" || ar=$?
+			case "${ar}" in
+				0) found="${found} ${n}-x-${x}" ;;
+				1) ;;
+				2) found="${found} ${n}-x-${x}(unreadable)" ;;
 			esac
 		done
 	done
@@ -1129,7 +1173,18 @@ phase_election() {
 	mkdir -p "${LOGS_LOCAL}"
 	local n
 	for n in "${NODE_IDS[@]}"; do
-		run_on_ok "$n" "cd naylamp && cat logs/node.log 2>/dev/null" > "${LOGS_LOCAL}/node${n}.txt"
+		# The pull must arrive WHOLE or not at all. The old run_on_ok swallowed
+		# the status, so a node that never answered left an empty file
+		# indistinguishable from a node that never led, and an ssh cut mid-cat
+		# left a truncated one that passes any non-empty check: the two shapes
+		# DEFER-072 names for this verdict. read_on proves the stream completed
+		# and accepts only a clean cat; anything else is unreadable, and two
+		# logs out of three is not the cluster.
+		if ! read_on "$n" 0 'cat naylamp/logs/node.log' > "${LOGS_LOCAL}/node${n}.txt"; then
+			fail "OM.election: node ${n} log could not be read whole; a partial or missing log cannot defend a no-duplicate-term verdict"
+			end_check OM.election
+			return
+		fi
 	done
 
 	# One line per (node, term) the node claimed office at. The node log is
@@ -1255,18 +1310,39 @@ phase_hygiene() {
 	note "OM.hygiene: nothing left behind on the hosts"
 	begin_check
 
-	local n x left=0
+	local n x ar left=0
 	for n in "${NODE_IDS[@]}"; do
 		for x in "${NODE_IDS[@]}"; do
 			[ "$x" = "$n" ] && continue
-			if run_on "$n" "sudo iptables -C INPUT -s ${PRIV[$x]} -j DROP" >/dev/null 2>&1; then
-				fail "OM.hygiene: node ${n} still drops input from node ${x}"
-				left=1
-			fi
-			if run_on "$n" "sudo iptables -C OUTPUT -d ${PRIV[$x]} -j DROP" >/dev/null 2>&1; then
-				fail "OM.hygiene: node ${n} still drops output to node ${x}"
-				left=1
-			fi
+			# The probe says which of the three it is, through ask_on. The old
+			# two-valued form read an ssh failure as "rule absent" and declared
+			# the host clean over it, the site DEFER-072 names for this verdict.
+			ar=0
+			ask_on "$n" "sudo iptables -C INPUT -s ${PRIV[$x]} -j DROP" || ar=$?
+			case "${ar}" in
+				0)
+					fail "OM.hygiene: node ${n} still drops input from node ${x}"
+					left=1
+					;;
+				1) ;;
+				2)
+					fail "OM.hygiene: node ${n} could not be read on the input probe for node ${x}; an unreadable host is not a clean one"
+					left=1
+					;;
+			esac
+			ar=0
+			ask_on "$n" "sudo iptables -C OUTPUT -d ${PRIV[$x]} -j DROP" || ar=$?
+			case "${ar}" in
+				0)
+					fail "OM.hygiene: node ${n} still drops output to node ${x}"
+					left=1
+					;;
+				1) ;;
+				2)
+					fail "OM.hygiene: node ${n} could not be read on the output probe for node ${x}; an unreadable host is not a clean one"
+					left=1
+					;;
+			esac
 		done
 	done
 

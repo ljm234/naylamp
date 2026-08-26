@@ -201,21 +201,23 @@ role_of() { leader_role "$1" | grep -oE 'role=(follower|candidate|leader)' | tai
 
 # readindex_count prints how many readindex lines a node has logged, reduced to
 # digits so ssh noise cannot masquerade as a count. A count that rises across a
-# read means a majority round confirmed; a count that holds means none did.
+# read means a majority round confirmed; a count that holds means none did. It
+# returns 2 when the count cannot be read, because a baseline nobody read is
+# not a baseline of 0: the old form collapsed an unanswered ssh to the empty
+# string and the empty string to 0 (DEFER-072). grep exits 1 when the log has
+# no readindex line yet, which is a valid 0; any other read failure is not.
 readindex_count() {
 	local c
-	c="$(run_on "$1" 'grep -cE "readindex " naylamp/logs/node.log 2>/dev/null' 2>/dev/null || true)"
+	c="$(read_on "$1" "0 1" 'grep -cE "readindex " naylamp/logs/node.log 2>/dev/null')" || return 2
 	printf '%s' "${c}" | tr -dc '0-9'
 }
 
-# node_alive reports whether a node's daemon is actually running, read from the
-# pidfile the launcher writes. It is the same probe omnibus.sh carries, and it is
-# here for the same reason: the node log is APPENDED to across restarts, so a node
-# that was stopped keeps its last role line forever, and if that line said leader a
-# reader would go on believing it holds office.
-node_alive() {
-	run_on "$1" 'if [ -f naylamp/naylampd.pid ] && kill -0 "$(cat naylamp/naylampd.pid)" 2>/dev/null; then echo yes; fi' 2>/dev/null | grep -q yes
-}
+# Liveness is alive_on from common.sh, the three-valued form; the local
+# node_alive is gone. The reason the probe exists is unchanged: the node log is
+# APPENDED to across restarts, so a node that was stopped keeps its last role
+# line forever, and if that line said leader a reader would go on believing it
+# holds office. The old probe read an unanswered ssh as a dead node, which is
+# the collapse DEFER-072 counts.
 
 # find_leader prints the id of the node whose last role line reports leader, empty
 # if none.
@@ -228,9 +230,15 @@ node_alive() {
 # comes back refused and no readindex line appears, and the red PASSES having
 # tested a dead process instead of an isolated leader. A dead node holds no office.
 find_leader() {
-	local n
+	local n ar
 	for n in "${NODE_IDS[@]}"; do
-		node_alive "$n" || continue
+		ar=0
+		alive_on "$n" || ar=$?
+		if [ "${ar}" -eq 2 ]; then
+			echo "gate: find_leader: node ${n} could not be read and is skipped, which is not the same as dead" >&2
+			continue
+		fi
+		[ "${ar}" -eq 1 ] && continue
 		case "$(leader_role "$n")" in *role=leader*) printf '%s' "$n"; return 0 ;; esac
 	done
 	return 1
@@ -345,11 +353,19 @@ green() {
 	note "RI.green: with the majority intact, a linearizable read is served and a new readindex line appears, so the majority round confirmed before the answer"
 	begin_check
 	local ri_before ri_after out
-	ri_before="$(readindex_count 1)"
+	ri_before="$(readindex_count 1)" || {
+		fail "RI.green: the readindex count on node 1 could not be read before the read; a baseline nobody read is not a baseline of 0"
+		end_check RI.green
+		return
+	}
 	out="$(client_op -op search -vec "${SEED_VEC}" -k 1 -deadline "${READ_DEADLINE}")"
 	printf '%s\n' "${out}"
 	sleep "${SETTLE_S}"
-	ri_after="$(readindex_count 1)"
+	ri_after="$(readindex_count 1)" || {
+		fail "RI.green: the readindex count on node 1 could not be read after the read; the majority round cannot be attested either way"
+		end_check RI.green
+		return
+	}
 	if served "${out}" && returned "${out}" && [ "${ri_after:-0}" -gt "${ri_before:-0}" ]; then
 		pass "RI.green: the read was served with id=${SEED_ID} in the answer and node 1 logged a new readindex line (${ri_before} -> ${ri_after}); the majority read-index round confirmed and only then was the read answered"
 	elif ! served "${out}"; then
@@ -377,12 +393,22 @@ red() {
 	local before after ri_before ri_after out
 	before="$(role_of 1)"
 	"${GATE_DIR}/partition.sh" apply 1
-	ri_before="$(readindex_count 1)"
+	ri_before="$(readindex_count 1)" || {
+		fail "RI.red: the readindex count on node 1 could not be read after the cut; the red would be grading a comparison with no baseline"
+		heal_node1
+		end_check RI.red
+		return
+	}
 	note "RI.red: node 1 isolated from nodes 2 and 3; issuing the read while it still holds office (demote bound about ${DEMOTE_BOUND_MS}ms)"
 	out="$(client_op -op search -vec "${SEED_VEC}" -k 1 -deadline "${READ_DEADLINE}")"
 	printf '%s\n' "${out}"
 	sleep "${SETTLE_S}"
-	ri_after="$(readindex_count 1)"
+	ri_after="$(readindex_count 1)" || {
+		fail "RI.red: the readindex count on node 1 could not be read after the wait; the withholding cannot be attested either way, and 0 equals 0 is not a pass"
+		heal_node1
+		end_check RI.red
+		return
+	}
 	after="$(role_of 1)"
 	if refused "${out}" && [ "${ri_after:-0}" -eq "${ri_before:-0}" ]; then
 		pass "RI.red: the read was withheld (exit=1) and node 1 logged NO new readindex line (${ri_before} -> ${ri_after}), so the read-index round never confirmed. Node 1 role before=${before}, after=${after}: the absence of a confirmed round is the verdict, independent of whether the node has demoted"
@@ -406,11 +432,24 @@ negative() {
 	sleep "${SETTLE_S}"
 	local ri_before ri_after out lead
 	lead="$(find_leader || true)"
-	ri_before="$(readindex_count "${lead}")"
+	if [ -z "${lead}" ]; then
+		fail "RI.negative: no leader could be named after the heal; the cluster cannot serve the read this arm expects"
+		end_check RI.negative
+		return
+	fi
+	ri_before="$(readindex_count "${lead}")" || {
+		fail "RI.negative: the readindex count on node ${lead} could not be read before the read; a baseline nobody read is not a baseline of 0"
+		end_check RI.negative
+		return
+	}
 	out="$(client_op -op search -vec "${SEED_VEC}" -k 1 -deadline "${READ_DEADLINE}")"
 	printf '%s\n' "${out}"
 	sleep "${SETTLE_S}"
-	ri_after="$(readindex_count "${lead}")"
+	ri_after="$(readindex_count "${lead}")" || {
+		fail "RI.negative: the readindex count on node ${lead} could not be read after the read; the recovered round cannot be attested either way"
+		end_check RI.negative
+		return
+	}
 	if served "${out}" && returned "${out}" && [ "${ri_after:-0}" -gt "${ri_before:-0}" ]; then
 		pass "RI.negative: the healed cluster served the read again with id=${SEED_ID} in the answer and leader node ${lead} logged a new readindex line (${ri_before} -> ${ri_after}); the withholding was the partition, not the instrument"
 	else

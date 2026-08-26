@@ -167,9 +167,13 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# leader_role prints a node's last role line, empty if none yet.
+# leader_role prints a node's last role line, empty if none yet. It returns 2
+# when the read cannot be made whole; polls ignore that and treat it as "not
+# yet", which costs them a timeout at worst, while verdicts check the status.
 leader_role() {
-	run_on "$1" 'grep -E "role=" naylamp/logs/node.log 2>/dev/null | tail -1' 2>/dev/null || true
+	local out
+	out="$(read_on "$1" "0 1" 'grep -E "role=" naylamp/logs/node.log 2>/dev/null | tail -1')" || return 2
+	printf '%s' "${out}"
 }
 
 # role_of prints the role word (follower, candidate, or leader) of a node's last
@@ -181,10 +185,14 @@ leaderfield_of() { leader_role "$1" | grep -oE 'leader=[0-9]+' | tail -1 | cut -
 # role_line_count prints how many role lines a node has logged. The daemon logs a
 # role line only on a change, so a count that does not move across the wait proves
 # the node never changed role. That is what rules out a leadership flap (leader
-# lost and regained), not just a final still-leader.
+# lost and regained), not just a final still-leader. It returns 2 when the count
+# cannot be read: the old form collapsed an unanswered ssh to the empty string,
+# and two empty strings compare equal, which passed the no-flap check on data
+# nobody read (DEFER-072). grep exits 1 when the log has no role line yet, a
+# valid 0; any other read failure is not.
 role_line_count() {
 	local c
-	c="$(run_on "$1" 'grep -cE "role=" naylamp/logs/node.log 2>/dev/null' 2>/dev/null || true)"
+	c="$(read_on "$1" "0 1" 'grep -cE "role=" naylamp/logs/node.log 2>/dev/null')" || return 2
 	printf '%s' "${c}" | tr -dc '0-9'
 }
 
@@ -198,14 +206,12 @@ find_leader() {
 	return 1
 }
 
-# node_alive reports whether a node's daemon process is still running, read from
-# the pidfile cluster.sh wrote. This is what tells a mute leader apart from a
-# crash: a healthy mute leader changes no role, so its log is static and its
-# role-line count does not move, and a crashed process leaves that same static
-# signature; only a live pid separates the two.
-node_alive() {
-	run_on "$1" 'pid=$(cat naylamp/naylampd.pid 2>/dev/null); [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null'
-}
+# Liveness is alive_on from common.sh, the three-valued form; the local
+# node_alive is gone. Its reason stands: this is what tells a mute leader apart
+# from a crash, because a healthy mute leader changes no role and a crashed
+# process leaves the same static signature; only a live pid separates the two.
+# The old probe also returned the ssh 255 of a dead transport as "dead", the
+# DEFER-072 collapse in the closed direction, and unreadable now gets named.
 
 # partition_installed confirms the DROP rules toward BOTH peers are present on a
 # node in BOTH directions, so a red or a demote is never read off an apply that
@@ -265,22 +271,36 @@ wait_role_leader() {
 
 # assert_stays_leader waits over a settle window and passes only if the node is
 # still leader with no new role line, the shared no-degrade check of red and the
-# negative control.
+# negative control. Every read it makes is three-valued now: an unread count, an
+# unread role or an unreadable host is named as unreadable, and none of them can
+# pass, because two empty strings comparing equal is the DEFER-072 collapse and
+# not evidence of a quiet leader.
 assert_stays_leader() {
-	local node="$1" seconds="$2" id="$3" why="$4" before after
-	before="$(role_line_count "${node}")"
+	local node="$1" seconds="$2" id="$3" why="$4" before after counts_ok=1
+	before="$(role_line_count "${node}")" || counts_ok=0
 	note "waiting ${seconds}s (at least 3x the ~${BOUND_MS}ms bound) to watch node ${node} for a degradation"
 	sleep "${seconds}"
-	after="$(role_line_count "${node}")"
-	note "node ${node} last role line: $(leader_role "${node}")"
-	note "node ${node} role-line count before=${before} after=${after}"
+	after="$(role_line_count "${node}")" || counts_ok=0
+	local roleline role="" role_ok=1
+	roleline="$(leader_role "${node}")" || role_ok=0
+	role="$(printf '%s' "${roleline}" | grep -oE 'role=(follower|candidate|leader)' | tail -1 | cut -d= -f2 || true)"
+	note "node ${node} last role line: ${roleline}"
+	note "node ${node} role-line count before=${before:-unread} after=${after:-unread}"
 	begin_check
-	if ! node_alive "${node}"; then
+	local alive_rc=0
+	alive_on "${node}" || alive_rc=$?
+	if [ "${counts_ok}" -ne 1 ]; then
+		fail "${id}: the role-line count on node ${node} could not be read; a no-degradation claim cannot be attested on an unread count"
+	elif [ "${alive_rc}" -eq 2 ]; then
+		fail "${id}: liveness on node ${node} could not be read; a node nobody can reach is not the phenomenon and is not a pass"
+	elif [ "${alive_rc}" -eq 1 ]; then
 		fail "${id}: the daemon on node ${node} is not running; a crashed process leaves the same static role log as a mute leader, so liveness is checked explicitly and a dead node is not the phenomenon"
-	elif [ "$(role_of "${node}")" = leader ] && [ "${after}" = "${before}" ]; then
+	elif [ "${role_ok}" -ne 1 ]; then
+		fail "${id}: the role of node ${node} could not be read; a still-leader claim cannot be attested either way"
+	elif [ "${role}" = leader ] && [ "${after}" = "${before}" ]; then
 		pass "${id}: ${why}"
 	else
-		fail "${id}: node ${node} changed role or emitted new role lines (role=$(role_of "${node}"), count ${before} -> ${after})"
+		fail "${id}: node ${node} changed role or emitted new role lines (role=${role:-none}, count ${before} -> ${after})"
 	fi
 	end_check "${id}"
 }
@@ -302,13 +322,20 @@ precondition() {
 		# daemon failed to come up still carries the role line of an earlier run
 		# and would satisfy a check that only asks whether a line exists. Reading
 		# the pid says whether the process is there now.
-		node_alive "$n" || stop "F0: node ${n} is not running; run cluster.sh start and wait until cluster.sh status shows a leader"
+		local alive_rc=0
+		alive_on "$n" || alive_rc=$?
+		if [ "${alive_rc}" -eq 2 ]; then
+			stop "F0: node ${n} could not be read; an unreadable node is not a dead one, and the run stops here either way"
+		fi
+		if [ "${alive_rc}" -eq 1 ]; then
+			stop "F0: node ${n} is not running; run cluster.sh start and wait until cluster.sh status shows a leader"
+		fi
 		[ -n "$(role_of "$n")" ] || stop "F0: node ${n} has no role line yet; run cluster.sh start and wait until cluster.sh status shows a leader"
 	done
 	wait_converged "${CONVERGE_TIMEOUT_S}" || stop "F0: cluster did not converge on a single leader within ${CONVERGE_TIMEOUT_S}s"
 	LEADER="$(find_leader || true)"
 	[ -n "${LEADER}" ] || stop "F0: no leader found after convergence"
-	BASE_COUNT="$(role_line_count "${LEADER}")"
+	BASE_COUNT="$(role_line_count "${LEADER}")" || stop "F0: the role-line count on the leader could not be read; the baseline cannot be taken"
 	note "F0: leader is node ${LEADER}; baseline role-line count on the leader is ${BASE_COUNT}"
 	note "F0: no verdict here reads a term field; a term is printed only by a daemon at dca7e2b or later, and only at a role or leader transition, so term equality and growth are read from the transitions themselves, which grades an old binary and a new one alike, see the header"
 }

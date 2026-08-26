@@ -170,9 +170,14 @@ trap cleanup EXIT INT TERM
 # require_tools stops the run, with a report and no install, if a host is missing
 # any tool the checks need.
 require_tools() {
-	local host="$1" missing="" t
+	local host="$1" missing="" t ar
 	for t in tcpdump openssl nc od timeout; do
-		if ! run_on "${host}" "command -v ${t} >/dev/null 2>&1"; then
+		ar=0
+		ask_on "${host}" "command -v ${t}" || ar=$?
+		if [ "${ar}" -eq 2 ]; then
+			stop "host ${host} could not be read while checking for ${t}; an unreadable host is not a host missing tools, and the run stops here either way"
+		fi
+		if [ "${ar}" -eq 1 ]; then
 			missing="${missing} ${t}"
 		fi
 	done
@@ -219,7 +224,7 @@ pcap_packets() {
 # the three outcomes rather than routing it through run_on_ok.
 pcap_has_hex() {
 	local pcap="$1" hex="$2" rc=0
-	run_on "${CAPTURE_HOST}" "sudo od -An -v -tx1 ${pcap} 2>/dev/null | tr -dc '0-9a-f' | grep -qi '${hex}'" || rc=$?
+	run_on "${CAPTURE_HOST}" "sudo od -An -v -tx1 ${pcap} 2>/dev/null | tr -dc '0-9a-f' | grep -i '${hex}' >/dev/null" || rc=$?
 	case "${rc}" in
 		0) return 0 ;;
 		1) return 1 ;;
@@ -377,7 +382,7 @@ t42_t43_encrypt() {
 	begin_check
 	# choose the nc listen syntax that matches the host's nc: openbsd takes a bare
 	# port, traditional takes -p. the sender form is the same for both.
-	run_on "${CAPTURE_HOST}" "nohup sh -c 'if nc -h 2>&1 | grep -qi openbsd; then timeout 10 nc -l ${CTRL_PORT} > /tmp/t4-control-recv.bin; else timeout 10 nc -l -p ${CTRL_PORT} > /tmp/t4-control-recv.bin; fi' >/dev/null 2>&1 < /dev/null & sleep 1; echo control listener up"
+	run_on "${CAPTURE_HOST}" "nohup sh -c 'if nc -h 2>&1 | grep -i openbsd >/dev/null; then timeout 10 nc -l ${CTRL_PORT} > /tmp/t4-control-recv.bin; else timeout 10 nc -l -p ${CTRL_PORT} > /tmp/t4-control-recv.bin; fi' >/dev/null 2>&1 < /dev/null & sleep 1; echo control listener up"
 	capture_start "${PCAP_CTRL}" "${CTRL_PORT}" "control"
 	# the framing magic bytes 50 4c 59 4e are the ascii PLYN and the id marker
 	# bytes 4e 41 59 4c 41 4d 50 21 are the ascii NAYLAMP!, so the same two byte
