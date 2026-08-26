@@ -354,20 +354,22 @@ printf 'red-arm fake naylampd, same build everywhere\n' > "${RED}/home/3/naylamp
 #
 # The alarm judges NOTHING. The sweep has no exclusions, not comments and not
 # this file, and its output must equal gate/common_red_pins.txt byte for byte.
-# The pins are the known-benign hits with file, line and text fixed: two
-# comments that name the idiom to explain it (common.sh, p1.sh), this file's
-# class row (A5) and its two staged fixtures below. A sixth hit, a moved pin
-# or a reworded one all break the equality and come out red with nobody
-# reading anything. Re-pinning is a deliberate act: run the sweep, look at
-# the diff, rewrite the pins file. The pins live outside the *.sh glob so the
-# pinned text itself is never swept.
+# A pin is file plus EXACT TEXT, never a line number: three of the five pins
+# live in files edited every day, and a line anchor there fires on any edit
+# above the pin, the false-alarm class this project's register already
+# retired once. The text is the identity: a new hit, a touched text, a
+# deleted pin or a duplicated one all break the equality and come out red
+# with nobody reading anything, while an edit that merely moves a pin inside
+# its file does not, because a place is not a class event. Re-pinning is a
+# deliberate act: run the sweep, look at the diff, rewrite the pins file. The
+# pins live outside the *.sh glob so the pinned text itself is never swept.
 BANNED_RE='\b(if|while|until)[[:space:]]+!?[[:space:]]*run_on[[:space:]]|run_on.*\|[[:space:]]*grep -q'
 PINS="${GATE_DIR}/common_red_pins.txt"
 sweep() {
 	local f
 	for f in $(cd "${GATE_DIR}" && printf '%s\n' *.sh | LC_ALL=C sort); do
-		(cd "${GATE_DIR}" && grep -nHE "${BANNED_RE}" -- "${f}" || true)
-	done
+		(cd "${GATE_DIR}" && grep -HE "${BANNED_RE}" -- "${f}" || true)
+	done | LC_ALL=C sort
 }
 hits="$(sweep)"
 if [ "${hits}" = "$(cat "${PINS}")" ]; then
