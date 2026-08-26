@@ -24,6 +24,12 @@
 # no network, no client, no naylampd and no quorum to form, so it needs neither
 # gate/build.sh nor the certificates the other gates mint. It needs ssh and scp,
 # and nothing else off this machine.
+#
+# NAYLAMP_P1_LOCAL=1 runs the REHEARSAL instead: the hosts must be loopback,
+# three directories on this machine play the fleet, the binaries are native, and
+# the run banners both streams and names its artifact p1-local-<run id>, so its
+# output can never read as gate evidence. Its job is to debug this script before
+# the script costs VM time; the iron run is what seals, and this is never it.
 set -euo pipefail
 
 GATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -63,6 +69,70 @@ HNSW_BIN="${OUT_DIR}/p1-hnsw.test"
 # cross compiled pair cannot answer on this machine. Same source, same phase.
 DST_NATIVE="${OUT_DIR}/p1-dst.native.test"
 HNSW_NATIVE="${OUT_DIR}/p1-hnsw.native.test"
+
+# ---- the localhost rehearsal, NAYLAMP_P1_LOCAL=1 -------------------------------
+#
+# THE REHEARSAL IS NOT THE GATE, and it is built so its output can never read as
+# the gate's evidence, the same question the red arm of common.sh answers for a
+# stub ssh. Three layers, and none of them asks anyone to remember anything:
+#
+#   1. The artifact's hosts line can never name the fleet: local mode refuses to
+#      run unless all three addresses are loopback.
+#   2. A banner on BOTH streams says what the run is, because stdout is the
+#      artifact stream and stderr is the console.
+#   3. The artifact directory names itself: p1-local-<run id>, never p1-<run id>.
+#
+# And a fourth by construction: the transport below never execs an ssh, so the
+# real fleet cannot be touched by this run at all.
+#
+# What plays the host is three per-node directories under gate/out, each used as
+# HOME for its node, so the three-host structure (the upload, the sha256
+# comparison, the per-node outputs, hygiene's probes) runs the same code path as
+# iron. The binaries are the NATIVE build, because the cross pair cannot exec on
+# this machine. And the tree may be dirty: the rehearsal exists to debug the
+# script BEFORE it costs VM time, uncommitted work included, so P1.provenance
+# notes the dirty tree instead of failing it. The banner is what keeps that
+# relaxation from ever reading as a seal.
+if [ "${NAYLAMP_P1_LOCAL:-}" = 1 ]; then
+	for _n in "${NODE_IDS[@]}"; do
+		case "${HOSTS[$_n]}" in
+			127.0.0.1|localhost|::1) ;;
+			*) echo "gate: NAYLAMP_P1_LOCAL=1 refuses to run with a non-loopback address (node ${_n} is ${HOSTS[$_n]}): a rehearsal's hosts line can never name the fleet" >&2; exit 2 ;;
+		esac
+	done
+	local_paths() {
+		LOCAL_FLEET="${OUT_DIR}/p1-local-fleet-${RUN_ID}"
+		OUT_LOCAL="${OUT_DIR}/p1-local-${RUN_ID}"
+	}
+	local_paths
+	rehearsal_setup() {
+		mkdir -p "${LOCAL_FLEET}/bin"
+		local _n
+		for _n in "${NODE_IDS[@]}"; do mkdir -p "${LOCAL_FLEET}/${_n}"; done
+		if [ ! -x "${LOCAL_FLEET}/bin/sha256sum" ]; then
+			cat > "${LOCAL_FLEET}/bin/sha256sum" <<'SHIM'
+#!/usr/bin/env bash
+exec shasum -a 256 "$@"
+SHIM
+			chmod +x "${LOCAL_FLEET}/bin/sha256sum"
+		fi
+	}
+	# The transport. Each node's HOME is its directory, so "~" lands inside the
+	# fleet; the shim dir rides on PATH because sha256sum does not exist here.
+	run_on() {
+		local n="$1"
+		shift
+		( export HOME="${LOCAL_FLEET}/${n}"; cd "${LOCAL_FLEET}/${n}" && PATH="${LOCAL_FLEET}/bin:${PATH}" bash -c "$*" )
+	}
+	copy_to() {
+		local n="$1" src="$2" dst="$3"
+		cp "${src}" "${LOCAL_FLEET}/${n}/${dst}"
+	}
+	echo "gate: REHEARSAL RUN (NAYLAMP_P1_LOCAL=1): the hosts are directories on this machine and the binaries are native; nothing this run prints is gate evidence" >&2
+	echo "gate: REHEARSAL RUN (NAYLAMP_P1_LOCAL=1): the hosts are directories on this machine and the binaries are native; nothing this run prints is gate evidence"
+	echo "gate: rehearsal note, written BEFORE any figure and not after: this machine has 64 GB and 10 cores, and the fleet is Standard_B2pls_v2, 2 vCPU and 4 GiB, burstable. No wall-clock or memory figure of this run predicts the iron session, and the campaign's 226.3 MB of process, invisible here, is within budget there. Do not size the iron session from this artifact" >&2
+	echo "gate: rehearsal note, written BEFORE any figure and not after: this machine has 64 GB and 10 cores, and the fleet is Standard_B2pls_v2, 2 vCPU and 4 GiB, burstable. No wall-clock or memory figure of this run predicts the iron session, and the campaign's 226.3 MB of process, invisible here, is within budget there. Do not size the iron session from this artifact"
+fi
 
 # ---- budgets, and every one of them is a CEILING and not an estimate ---------
 #
@@ -223,6 +293,9 @@ cleanup() {
 		# lands on the home directory.
 		echo "gate: remove it by hand with: for h in \$(echo \${NAYLAMP_GATE_HOSTS} | tr , ' '); do ssh -i \${NAYLAMP_GATE_KEY} \${NAYLAMP_GATE_USER:-ubuntu}@\$h 'rm -rf ~/naylamp-p1-${RUN_ID}'; done" >&2
 		echo "gate: and on this machine: rm -rf ${TMPDIR:-/tmp}/naylamp-p1-mut-${RUN_ID}" >&2
+		if [ "${NAYLAMP_P1_LOCAL:-}" = 1 ]; then
+			echo "gate: and the rehearsal fleet: rm -rf ${OUT_DIR}/p1-local-fleet-${RUN_ID}" >&2
+		fi
 	elif [ "${RUN_STARTED}" -eq 1 ] && [ "${HOSTS_REACHABLE}" -eq 0 ]; then
 		echo "gate: no host was ever confirmed reachable, so nothing was uploaded and there is nothing to remove" >&2
 	fi
@@ -236,10 +309,15 @@ trap cleanup EXIT INT TERM
 # ---- host helpers ------------------------------------------------------------
 
 require_hosts_reachable() {
-	local n unreachable=""
+	local n rc=0 unreachable=""
 	for n in "${NODE_IDS[@]}"; do
-		if ssh -o BatchMode=yes -o ConnectTimeout=10 "${SSH_OPTS[@]}" \
-			"${NAYLAMP_GATE_USER}@${HOSTS[$n]}" true >/dev/null 2>&1; then
+		if [ "${NAYLAMP_P1_LOCAL:-}" = 1 ]; then
+			run_on "$n" true >/dev/null 2>&1 && rc=0 || rc=$?
+		else
+			ssh -o BatchMode=yes -o ConnectTimeout=10 "${SSH_OPTS[@]}" \
+				"${NAYLAMP_GATE_USER}@${HOSTS[$n]}" true >/dev/null 2>&1 && rc=0 || rc=$?
+		fi
+		if [ "${rc}" -eq 0 ]; then
 			note "reach: node ${n} (${HOSTS[$n]}) answers"
 		else
 			unreachable="${unreachable} ${n}(${HOSTS[$n]})"
@@ -575,7 +653,11 @@ phase_provenance() {
 	note "P1.provenance: working tree entries not committed: ${dirty}"
 	note "P1.provenance: run id ${RUN_ID}, started $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 	if [ "${dirty}" != 0 ]; then
-		fail "P1.provenance: the working tree carries ${dirty} uncommitted entries, so the binaries this run uploads do not correspond to any commit"
+		if [ "${NAYLAMP_P1_LOCAL:-}" = 1 ]; then
+			note "P1.provenance: the working tree carries ${dirty} uncommitted entries, and the rehearsal runs it ON PURPOSE: its job is to debug the script before it costs VM time, uncommitted work included. The banner is what keeps this from ever reading as a seal"
+		else
+			fail "P1.provenance: the working tree carries ${dirty} uncommitted entries, so the binaries this run uploads do not correspond to any commit"
+		fi
 	else
 		pass "P1.provenance: the tree is clean at ${sha}"
 	fi
@@ -702,9 +784,14 @@ phase_sweep() {
 	# a false green of the exact kind this gate exists to retire. not_run records
 	# none; appending a pass behind it MASKS it under the old precedence, and the
 	# artifact would publish as green a check the gate had just printed as NOT RUN.
+	# THE GUARD CANNOT ASK verdict_of, and the first rehearsal of this phase, the
+	# first time it ever ran, showed why: verdict_of answers none for TWO different
+	# states, never recorded and recorded as unrun, so the guard skipped every
+	# verdict here and a fully green sweep published three none. The registry is
+	# read raw instead, where none exists only when not_run wrote it.
 	local id v
 	for id in P1.exact P1.ledger P1.reach; do
-		[ "$(verdict_of "${id}")" = none ] && continue
+		case "${VERDICTS}" in *" ${id}=none "*) continue ;; esac
 		case "${id}" in
 			P1.exact)  v="${ok_exact}" ;;
 			P1.ledger) v="${ok_ledger}" ;;
@@ -849,8 +936,16 @@ phase_point() {
 		for id in ${ids}; do record_verdict "${id}" pass; done
 		pass "P1.point.*: the five verdicts are green on all three hosts"
 	else
+		# THE SAME COLLAPSE AS THE SWEEP GUARD, mirror image: a clause red with no
+		# abort leaves all five unrecorded, and verdict_of answers none for an
+		# unrecorded verdict too, so asking it recorded nothing and a real red
+		# published five none. The registry is read raw, where none exists only
+		# when not_run wrote it: those stay none and the rest record their fail.
 		for id in ${ids}; do
-			[ "$(verdict_of "${id}")" = none ] || record_verdict "${id}" fail
+			case "${VERDICTS}" in
+				*" ${id}=none "*) ;;
+				*) record_verdict "${id}" fail ;;
+			esac
 		done
 	fi
 }
@@ -935,7 +1030,11 @@ build_mutant() {
 	# mutation did not apply, which is a target that has moved, and 2 means the
 	# mutated tree did not compile.
 	mutate "${root}/engine" "${mut}" || return 3
-	( cd "${root}" && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -c -o "${out}" "./engine/${pkg}/" ) || return 2
+	if [ "${NAYLAMP_P1_LOCAL:-}" = 1 ]; then
+		( cd "${root}" && go test -c -o "${out}" "./engine/${pkg}/" ) || return 2
+	else
+		( cd "${root}" && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -c -o "${out}" "./engine/${pkg}/" ) || return 2
+	fi
 	return 0
 }
 
@@ -1184,6 +1283,21 @@ phase_hygiene() {
 		fi
 	fi
 
+	# AND THE REHEARSAL'S OWN FLEET, which is three directories under gate/out and
+	# leaves nothing behind either. Literal prefix with the run id appended inline,
+	# the same shape as the host side.
+	if [ "${NAYLAMP_P1_LOCAL:-}" = 1 ]; then
+		if [ -d "${OUT_DIR}/p1-local-fleet-${RUN_ID}" ]; then
+			rm -rf "${OUT_DIR}/p1-local-fleet-${RUN_ID}"
+			if [ -d "${OUT_DIR}/p1-local-fleet-${RUN_ID}" ]; then
+				fail "P1.hygiene: the rehearsal fleet is still under gate/out"
+				left=1
+			else
+				note "P1.hygiene: the rehearsal fleet is gone from gate/out"
+			fi
+		fi
+	fi
+
 	if [ "${left}" -eq 0 ]; then
 		pass "P1.hygiene: the working directory is gone from all three hosts, the mutated copies are gone from this machine, and nothing else was written"
 		# ONLY HERE. The first version cleared this unconditionally, so a removal
@@ -1197,21 +1311,37 @@ phase_hygiene() {
 # ---- build -------------------------------------------------------------------
 
 phase_build() {
-	note "cross compiling the two test binaries to linux/arm64, static"
 	mkdir -p "${OUT_DIR}" "${OUT_LOCAL}"
-	( cd "${REPO_DIR}/engine" && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -c -o "${DST_BIN}" ./dst/ ) \
-		|| stop "the dst test binary did not cross compile"
-	( cd "${REPO_DIR}/engine" && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -c -o "${HNSW_BIN}" ./hnsw/ ) \
-		|| stop "the hnsw test binary did not cross compile"
-	# And the native pair, whose only job is to answer -test.list on this machine.
-	# The cross compiled pair cannot: it is an ELF and the control host is not
-	# Linux. Same source, same command, same phase, so the two cannot drift.
-	( cd "${REPO_DIR}/engine" && go test -c -o "${DST_NATIVE}" ./dst/ ) \
-		|| stop "the native dst test binary did not build, so P1.pre cannot list its selectors"
-	( cd "${REPO_DIR}/engine" && go test -c -o "${HNSW_NATIVE}" ./hnsw/ ) \
-		|| stop "the native hnsw test binary did not build, so P1.pre cannot list its selectors"
+	if [ "${NAYLAMP_P1_LOCAL:-}" = 1 ]; then
+		note "rehearsal: building the two test binaries NATIVE, because the cross pair cannot exec on this machine; on iron this build is linux/arm64 static"
+		( cd "${REPO_DIR}/engine" && go test -c -o "${DST_BIN}" ./dst/ ) \
+			|| stop "the dst test binary did not build"
+		( cd "${REPO_DIR}/engine" && go test -c -o "${HNSW_BIN}" ./hnsw/ ) \
+			|| stop "the hnsw test binary did not build"
+		# The native pair is byte identical to the upload pair here, so the
+		# rehearsal cannot drift the two builds apart: one build, two names.
+		cp "${DST_BIN}" "${DST_NATIVE}"
+		cp "${HNSW_BIN}" "${HNSW_NATIVE}"
+	else
+		note "cross compiling the two test binaries to linux/arm64, static"
+		( cd "${REPO_DIR}/engine" && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -c -o "${DST_BIN}" ./dst/ ) \
+			|| stop "the dst test binary did not cross compile"
+		( cd "${REPO_DIR}/engine" && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -c -o "${HNSW_BIN}" ./hnsw/ ) \
+			|| stop "the hnsw test binary did not cross compile"
+		# And the native pair, whose only job is to answer -test.list on this machine.
+		# The cross compiled pair cannot: it is an ELF and the control host is not
+		# Linux. Same source, same command, same phase, so the two cannot drift.
+		( cd "${REPO_DIR}/engine" && go test -c -o "${DST_NATIVE}" ./dst/ ) \
+			|| stop "the native dst test binary did not build, so P1.pre cannot list its selectors"
+		( cd "${REPO_DIR}/engine" && go test -c -o "${HNSW_NATIVE}" ./hnsw/ ) \
+			|| stop "the native hnsw test binary did not build, so P1.pre cannot list its selectors"
+	fi
 	note "built $(basename "${DST_BIN}") $(stat -f%z "${DST_BIN}" 2>/dev/null || stat -c%s "${DST_BIN}") bytes and $(basename "${HNSW_BIN}") $(stat -f%z "${HNSW_BIN}" 2>/dev/null || stat -c%s "${HNSW_BIN}") bytes"
-	note "no -race: CGO_ENABLED=0 forbids it, so on the concurrency axis this gate is WEAKER than CI, which keeps that duty whole"
+	if [ "${NAYLAMP_P1_LOCAL:-}" = 1 ]; then
+		note "no -race in the rehearsal either: the binaries build exactly as P1.pre's native pair, and on the concurrency axis this gate stays WEAKER than CI"
+	else
+		note "no -race: CGO_ENABLED=0 forbids it, so on the concurrency axis this gate is WEAKER than CI, which keeps that duty whole"
+	fi
 }
 
 # ---- dispatch ----------------------------------------------------------------
@@ -1250,6 +1380,12 @@ the hosts clean with a mutant still on them.
 pre is the one subcommand that needs no host, so it is the one that can run with
 the machines deallocated.
 
+NAYLAMP_P1_LOCAL=1 runs the REHEARSAL: the three hosts must be loopback, the
+transport is three directories on this machine and the binaries native, and the
+run banners both streams and names its artifact p1-local-<run id>, so nothing it
+prints can later read as gate evidence. It exists to debug this script before
+the script costs VM time.
+
 BEFORE A SEALING RUN, take the full-length probe on one host. The per-VM budgets
 in this file are a house rule of 3 to 5 times the laptop and not a measurement,
 and the SKU is a burst VM: a short probe on a host with credits underestimates.
@@ -1272,6 +1408,13 @@ case "${cmd}" in
 	*) usage; exit 2 ;;
 esac
 RUN_STARTED=1
+
+# The rehearsal's fleet is set up only once the run id is final: a standalone
+# hygiene rewrites it from its argument, and the fleet and the artifact must
+# follow that id and not the one this invocation minted.
+if [ "${NAYLAMP_P1_LOCAL:-}" = 1 ]; then
+	rehearsal_setup
+fi
 
 echo "=== NAYLAMP PHASE 1 IRON GATE, $(date -u) ==="
 echo "subcommand: ${cmd}"
