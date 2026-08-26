@@ -1399,7 +1399,13 @@ cmd="${1:-}"
 # which anyone invokes it by itself.
 if [ "${cmd}" = hygiene ] && [ -n "${2:-}" ]; then
 	case "$2" in
-		[0-9]*Z-[0-9]*) RUN_ID="$2"; REMOTE_DIR="naylamp-p1-${RUN_ID}"; OUT_LOCAL="${OUT_DIR}/p1-${RUN_ID}" ;;
+		[0-9]*Z-[0-9]*) RUN_ID="$2"; REMOTE_DIR="naylamp-p1-${RUN_ID}"
+			# The local shapes must follow the overridden id too. Setting OUT_LOCAL's
+			# iron shape unconditionally made a standalone rehearsal hygiene write an
+			# artifact directory named p1-<run id>, the one name the rehearsal guard
+			# swears never to create, and rehearsal_setup built a fleet under this
+			# invocation's own minted id that the cleaning then never retired.
+			if [ "${NAYLAMP_P1_LOCAL:-}" = 1 ]; then local_paths; else OUT_LOCAL="${OUT_DIR}/p1-${RUN_ID}"; fi ;;
 		*) echo "gate: ${2} is not the shape of a run id this script writes" >&2; exit 2 ;;
 	esac
 fi
