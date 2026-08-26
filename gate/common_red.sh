@@ -350,30 +350,41 @@ printf 'red-arm fake naylampd, same build everywhere\n' > "${RED}/home/3/naylamp
 # local grep -q, the two forms the fifteen sites used to collapse. A grep
 # cannot parse nested quoting, so pipes inside the remote string (which run on
 # the host, like the -test.list count in p1.sh) are out of its reach by
-# construction; the item declares that limit. Comments are excluded because
-# common.sh names the idiom to explain it, and this file is excluded because
-# the patterns and the class row live here by construction, the same
-# self-exclusion DEFER-071 gives its patterns file.
-banned_sites() {
-	grep -vE '^[[:space:]]*#' "$@" \
-		| grep -nE '\b(if|while|until)[[:space:]]+!?[[:space:]]*run_on[[:space:]]' || true
-	grep -vE '^[[:space:]]*#' "$@" \
-		| grep -nE 'run_on.*\|[[:space:]]*grep -q' || true
+# construction; the item declares that limit.
+#
+# The alarm judges NOTHING. The sweep has no exclusions, not comments and not
+# this file, and its output must equal gate/common_red_pins.txt byte for byte.
+# The pins are the known-benign hits with file, line and text fixed: two
+# comments that name the idiom to explain it (common.sh, p1.sh), this file's
+# class row (A5) and its two staged fixtures below. A sixth hit, a moved pin
+# or a reworded one all break the equality and come out red with nobody
+# reading anything. Re-pinning is a deliberate act: run the sweep, look at
+# the diff, rewrite the pins file. The pins live outside the *.sh glob so the
+# pinned text itself is never swept.
+BANNED_RE='\b(if|while|until)[[:space:]]+!?[[:space:]]*run_on[[:space:]]|run_on.*\|[[:space:]]*grep -q'
+PINS="${GATE_DIR}/common_red_pins.txt"
+sweep() {
+	local f
+	for f in $(cd "${GATE_DIR}" && printf '%s\n' *.sh | LC_ALL=C sort); do
+		(cd "${GATE_DIR}" && grep -nHE "${BANNED_RE}" -- "${f}" || true)
+	done
 }
-tripwire() {
-	banned_sites "${GATE_DIR}"/*.sh | grep -vE 'common_red\.sh:' || true
-}
-hits="$(tripwire)"
-row "T1" "" "${hits}" "tripwire: no gate script asks a two-valued question through run_on"
+hits="$(sweep)"
+if [ "${hits}" = "$(cat "${PINS}")" ]; then
+	eq=equal
+else
+	eq="MISMATCH: $(diff <(printf '%s\n' "${hits}") "${PINS}" | head -n 4 | tr '\n' ';')"
+fi
+row "T1" "equal" "${eq}" "tripwire: the sweep over the gates equals the pinned set byte for byte, nobody judges a hit"
 
 staged="${RED}/state/tripwire-stage.sh"
 printf 'if run_on 1 "test -e x"; then :; fi\nrun_on 1 "cat f" 2>/dev/null | grep -q yes\n' > "${staged}"
-hits="$(banned_sites "${staged}" | wc -l | tr -d ' ')"
+hits="$(grep -cE "${BANNED_RE}" "${staged}" || true)"
 row "T2" "2" "${hits}" "tripwire, red of the tripwire: the two banned shapes are caught when staged"
 
 printf '# if run_on 1 "test -e x"; then :; fi\n' > "${staged}"
-hits="$(banned_sites "${staged}" | wc -l | tr -d ' ')"
-row "T3" "0" "${hits}" "tripwire: a comment naming the idiom does not fire it"
+hits="$(grep -cE "${BANNED_RE}" "${staged}" || true)"
+row "T3" "1" "${hits}" "tripwire: a comment naming the idiom shows in the sweep like any other line, so it can only live as a pin, never as a judgment call"
 
 # ---- verdict ------------------------------------------------------------------
 

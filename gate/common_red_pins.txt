@@ -1,0 +1,5 @@
+common.sh:103:# the same channel as the probe's exit code, so "if run_on node test -e X"
+common_red.sh:264:if run_on 2 "test -e naylamp/never-there"; then old=present; else old=absent; fi
+common_red.sh:381:printf 'if run_on 1 "test -e x"; then :; fi\nrun_on 1 "cat f" 2>/dev/null | grep -q yes\n' > "${staged}"
+common_red.sh:385:printf '# if run_on 1 "test -e x"; then :; fi\n' > "${staged}"
+p1.sh:1124:	# "if run_on ... test -e", so an ssh that failed made the condition false and
