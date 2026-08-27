@@ -8,6 +8,20 @@
 // no consensus or durability of its own. It also carries one read-only audit
 // accessor, IndexIDs, which enumerates the ids its index holds.
 //
+// What "safe for concurrent use" costs, declared where the promise lives so it
+// does not have to be rediscovered: since the fix of DEFER-058 every Collection
+// operation that touches state is atomic against the others through a
+// sync.RWMutex, and a running Query holds the read lock for the whole search,
+// delaying any Upsert or Delete.
+//
+// A query is usually fast, but the degenerate rung of the gate's campaign
+// (k = live + 1 over 50000 live) measured 0.109s on the Apple M1 Max laptop on
+// 2026-08-24 and 0.28s on a Standard_B2pls_v2 node on 2026-08-26, so a write
+// can wait on the order of a tenth of a second behind one query at that size.
+// The index already delays its own writers during a search; the collection lock
+// extends that to the whole API surface. Correctness over throughput was the
+// decision; the number goes here because the promise does.
+//
 // The replicated layer turns a collection into a fault-tolerant service. A Node,
 // opened with OpenNode, is one replica of a vector collection driven by a Raft
 // core: it accepts Upsert, Delete and Search, serves a linearizable read through

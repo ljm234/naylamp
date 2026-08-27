@@ -14,12 +14,24 @@ import (
 // (say, medical documents) live in one collection, separate from another kind
 // (say, images) in a different collection. Inserting into a Collection writes
 // to both the store (ground-truth data) and the HNSW index (fast search).
+//
+// The mutex makes every operation that touches state atomic against the others:
+// Upsert and Delete take it for writing, Query, Len and IndexIDs for reading, so
+// no caller can observe the half-written state of another call. Outside it, on
+// purpose, are Name and Dim and each operation's own argument checking, which
+// read nothing but fields fixed at construction. That is what the
+// package's "safe for concurrent use" promise rests on, and it is the fix for
+// DEFER-058: before it, a Delete landing between the two writes of an Upsert
+// left the id in the index and out of the store, with the race detector silent
+// because each object was locked on its own. The price, declared in doc.go: a
+// running query holds the read lock and delays any writer.
 type Collection struct {
 	name   string
 	dim    int
 	store  *vector.Store
 	index  *hnsw.Index
 	metric vector.MetricFunc
+	mu     sync.RWMutex
 }
 
 // Name returns the collection's name.
@@ -34,6 +46,8 @@ func (c *Collection) Dim() int {
 
 // Len returns how many vectors the collection currently holds.
 func (c *Collection) Len() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.store.Len()
 }
 
@@ -54,12 +68,14 @@ func (c *Collection) Len() int {
 //
 // Two limits go here rather than in a note, because both bite a caller that
 // assumes otherwise. Reading this together with Len does NOT give an atomic
-// pair: Upsert writes the store and then the index with no lock across the two,
-// so a delete landing between them leaves the two answers disagreeing, and the
-// race detector says nothing because each object is locked on its own. And the
-// call grows close to quadratically over the sizes that matter, because Export
-// sorts with an insertion sort: ten times the nodes cost eighty-one times the
-// time,
+// pair: each of the two calls takes the collection's read lock on its own, so
+// an Upsert or Delete landing BETWEEN the two calls leaves the two answers
+// disagreeing. That is a statement about pairs of calls, not about one
+// operation: since the fix of DEFER-058 every operation is atomic, and no single
+// call can be caught half-written the way an Upsert once could be when a Delete
+// landed between its two writes. And the call grows close to quadratically over
+// the sizes that matter, because Export sorts with an insertion sort: ten
+// times the nodes cost eighty-one times the time,
 // 3.82 ms at n=5000 against 311 ms at n=50000, and the endpoints do not show
 // this: at a hundred nodes the copy dominates and not the sort.
 //
@@ -68,9 +84,12 @@ func (c *Collection) Len() int {
 // serves is clause (i) of the central property of Phase 1, stated in
 // NAYLAMP_PHASE_1.md, which says the index's live set is exactly the set of ids
 // upserted and not deleted, in both directions. The item that ordered the
-// accessor is DEFER-049 and the two limits above are DEFER-058 and DEFER-063,
-// all three in NAYLAMP_DEFERRED_BACKLOG.md.
+// accessor is DEFER-049, the quadratic cost above is DEFER-063, and the
+// atomicity defect the pair note refers to was DEFER-058, fixed by the
+// collection lock, all three in NAYLAMP_DEFERRED_BACKLOG.md.
 func (c *Collection) IndexIDs() []uint64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	snap := c.index.Export()
 	ids := make([]uint64, 0, len(snap.Nodes))
 	for _, n := range snap.Nodes {
