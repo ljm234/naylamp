@@ -1428,12 +1428,26 @@ echo "run id: ${RUN_ID}"
 echo "hosts (pub): ${NAYLAMP_GATE_HOSTS}"
 echo "red arm host: node ${RED_NODE}"
 echo "budgets: sweep=${SWEEP_TIMEOUT} recall=${RECALL_TIMEOUT} point=${POINT_TIMEOUT}, all three ceilings and none of them estimates"
-# The list is the twenty three live exclusions of G3, counted against that
-# section and not summarised: 1 to 12, 15, 16 and 18 to 26. Thirteen, fourteen and
-# seventeen are struck there and are not repeated here. Clause (d) forbids raising
-# a phase without naming what is not verified, so a short version of this line
-# would be the one thing the gate cannot afford to abbreviate.
-echo "not claimed (23, the live exclusions of G3): 1 result order; 2 speed, latency and throughput; 3 durability; 4 concurrency, where this gate is WEAKER than CI; 5 the corpus/efSearch axis; 6 that the result is THE exact one; 7 the API surface 1.4 promised; 8 isolation between collections; 9 memory and index size; 10 build determinism under seed; 11 every metric but cosine; 12 degenerate vectors and ties; 15 coverage of the dim interval, which is sampled at two values; 16 that the recall floor is a sample over fixed query seeds and not a bound; 18 that the red arm attests ONE VM and not three; 19 that this is a deployed service; 20 ARM64 arithmetic as a contribution, which measurement retired; 21 what the three-host agreement can see, which is little by construction; 22 the reupsert regime above the layer-0 cap; 23 the concurrent falsifier of clause (i); 24 that the degenerate rung runs with layer 0 unpruned; 25 that reachability at the top of the point has no red arm; 26 that no row of this red arm can notice its own metric has stopped measuring"
+# The list is the twenty two live exclusions of G3, counted against that section
+# and not summarised: 1 to 12, 15, 16, 18 to 22 and 24 to 26. Thirteen, fourteen,
+# seventeen and TWENTY THREE are struck there and are not repeated here.
+#
+# TWENTY THREE FELL ON 2026-08-27 AND IT IS THE FIRST OF THEM THAT FELL TO A FIX
+# AND NOT TO A MEASUREMENT. It named the concurrent falsifier of clause (i),
+# DEFER-058, and 09dd312 closed it: a sync.RWMutex on Collection makes every
+# operation that touches state atomic against the others, so the counterexample
+# it described no longer exists in this tree.
+#
+# AND FOUR IS WIDER THAN IT WAS, because dropping twenty three would otherwise
+# have dropped half of what it said. Four used to say only that the static binary
+# carries no -race. The other half, that this gate exercises no interleaving at
+# all, lived inside twenty three, and twenty three itself spelled out that four
+# did not cover it. Letting it fall with the counterexample would have retired an
+# exclusion nobody decided to retire, so it moves here instead. Clause (d)
+# forbids raising a phase without naming what is not verified, so a short
+# version of this line would be the one thing the gate cannot afford to
+# abbreviate.
+echo "not claimed (22, the live exclusions of G3): 1 result order; 2 speed, latency and throughput; 3 durability; 4 concurrency, where this gate is WEAKER than CI on two counts: no -race, and no interleaving exercised at all, the second half inherited from the struck 23; 5 the corpus/efSearch axis; 6 that the result is THE exact one; 7 the API surface 1.4 promised; 8 isolation between collections; 9 memory and index size; 10 build determinism under seed; 11 every metric but cosine; 12 degenerate vectors and ties; 15 coverage of the dim interval, which is sampled at two values; 16 that the recall floor is a sample over fixed query seeds and not a bound; 18 that the red arm attests ONE VM and not three; 19 that this is a deployed service; 20 ARM64 arithmetic as a contribution, which measurement retired; 21 what the three-host agreement can see, which is little by construction; 22 the reupsert regime above the layer-0 cap; 24 that the degenerate rung runs with layer 0 unpruned; 25 that reachability at the top of the point has no red arm; 26 that no row of this red arm can notice its own metric has stopped measuring"
 
 mkdir -p "${OUT_LOCAL}"
 
