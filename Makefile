@@ -115,9 +115,67 @@ ci: build vet lint test vuln
 # a class. An editor or a tool that starts dropping state in the tree gets its
 # own line here and its own line in .gitignore, and the argument is made then
 # rather than pre-approved now.
-PRUNE := -name .git -o -path ./gate/out/certs
+#
+# gate/out holds two kinds of thing and only one of them is disposable. The
+# disposable kind is what a run regenerates: the cross-compiled test binaries,
+# the mutant copies, and the directories a run creates and often leaves empty.
+# The other kind is evidence that a sealed claim cites, and it is not
+# regenerable in any useful sense, because the run that produced it cost VM
+# hours that nobody is going to pay twice. Deleting that to save disk is the one
+# mistake this target must not make, and until this change it did: the line below
+# used to take everything except certs, which included the iron run of Phase 1 and
+# the rehearsal whose figures are the denominator of the sizing factor.
+#
+# The rule is explicit rather than clever, so that it scales without a list
+# somebody has to remember to update. A TOP-LEVEL directory under gate/out
+# survives clean if it carries a file named SEALED, and that file says who cites
+# the directory and why it is kept; the sweep only looks one level down, so a
+# marker any deeper saves nothing. Top-level logs survive by extension, because a
+# console log is what the register cites by name. Everything else goes. This
+# target reads the seal and never writes one: gate/p1.sh writes its own at the
+# end of a run, and the two that predate this change were written by hand with
+# the reason inside. What survives a clean is the run's own claim, not a guess
+# this target gets to make.
+PRUNE := -name .git -o -path ./gate/out/certs -o \( -type d -exec test -e {}/SEALED \; \)
+#
+# AND IT REFUSES BEFORE IT SWEEPS. Keeping what carries a seal is only half the
+# defence: the other half was that nothing wrote the seal by itself, so the first
+# artifact born without one went silently. The guard below lists the iron
+# artifacts (p1-<run id>, never the rehearsal's p1-local-) that hold something and
+# carry no SEALED, and stops with a non-zero status without removing anything,
+# which turns a silent loss into a stop. Overriding is explicit and named, never
+# the default:
+#
+#   make clean UNSEALED_OK=1
+#
+# THE EMPTY ONES ARE NOT CAUGHT, and the first version of this guard did catch
+# them and left no way out. A p1-<run id> that a phase created and never wrote to
+# has nothing to keep, and gate/p1.sh refuses to seal an empty directory for that
+# reason, so catching it here meant a directory that could be neither sealed nor
+# cleaned. The sweep below takes it, which is what should happen to it, and the
+# predicate here now matches the one gate/p1.sh uses. The two asking different
+# questions was the defect.
+#
+# gate/p1.sh seals asks the same question without needing this target, so
+# reaching this guard means something went wrong rather than that somebody
+# forgot.
+UNSEALED_OK ?=
 clean:
-	test ! -d gate/out || find gate/out -mindepth 1 -maxdepth 1 ! -name certs -exec rm -rf -- {} +
+	@test ! -d gate/out || { \
+		u=$$(find gate/out -mindepth 1 -maxdepth 1 -type d -name 'p1-*' ! -name 'p1-local-*' \
+			! -exec test -e {}/SEALED \; \
+			-exec sh -c 'test -n "$$(ls -A "$$1")"' _ {} \; -print | sed 's#.*/##' | tr '\n' ' '); \
+		if [ -n "$$u" ] && [ -z "$(UNSEALED_OK)" ]; then \
+			echo "make: refusing to clean: iron artifacts with no SEALED file: $$u" >&2; \
+			echo "make: seal one by writing gate/out/<name>/SEALED with who cites it and why it is kept," >&2; \
+			echo "make: or run: make clean UNSEALED_OK=1" >&2; \
+			exit 1; \
+		fi; \
+	}
+	test ! -d gate/out || find gate/out -mindepth 1 -maxdepth 1 \
+		! -name certs ! -name '*.log' \
+		! -exec test -e {}/SEALED \; \
+		-exec rm -rf -- {} +
 	find . \( $(PRUNE) \) -prune -o -type f \( -name '*_result.txt' -o -name '*_bench.txt' \) -exec rm -f -- {} +
 	find . \( $(PRUNE) \) -prune -o -type f \( -name '*.test' -o -name '*.out' \) -exec rm -f -- {} +
 	find . \( $(PRUNE) \) -prune -o -type f -name '.DS_Store' -exec rm -f -- {} +

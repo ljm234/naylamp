@@ -214,6 +214,16 @@ REFUSED_VARS="NAYLAMP_DST_SEEDS NAYLAMP_CLUSTER_SEED NAYLAMP_CLUSTER_SEEDS GOFLA
 VERDICTS=" "
 EXPECTED=""
 COMPLETED=0
+# WHAT THE SEAL NEEDS AND MUST NOT FETCH FOR ITSELF. phase_provenance already
+# reads the anchor and the uploaded pair. It kept them in locals, which would have
+# made the seal run git a second time and ask the hosts again, and a seal that
+# re-derives its own facts can disagree with the artifact it sits in. The globals
+# below hold them where the seal can read them.
+PROV_HEAD=""
+PROV_DIRTY=""
+PROV_SHAS=""
+RUN_STARTED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+SEALED_THIS_RUN=0
 CHECK_FAILED=0
 RUN_STARTED=0
 HOSTS_REACHABLE=0
@@ -282,6 +292,95 @@ not_run() {
 	done
 }
 
+# ---- the seal, DEFER-074 -----------------------------------------------------
+#
+# WHY THIS EXISTS. make clean keeps a directory under gate/out that carries a
+# file named SEALED, and until this change the only two seals in the tree were
+# written by hand. A defence that depends on somebody remembering is the same
+# shape as the alarm DEFER-073 has open: it holds until the first time nobody
+# remembers, and the loss is silent until someone goes to cite the artifact.
+# An iron artifact is the one material here that money cannot rebuild, because a
+# second run measures a different tree and answers a different question.
+#
+# THE PREDICATE IS NOT NEW. This script already separates an iron artifact,
+# p1-<run id>, from a rehearsal's, p1-local-<run id>, and the rehearsal guard
+# above swears never to create the first name. Everything below rests on that
+# and invents nothing.
+is_iron_artifact() {
+	# $1 is a basename. Iron is p1-<stamp>-<pid>; the rehearsal's p1-local- prefix
+	# is excluded FIRST and on purpose. A seal must never be able to appear inside
+	# a rehearsal's output: the three layers above exist so a rehearsal can never
+	# read as gate evidence, and a seal is exactly the mark that says "keep this,
+	# it is evidence". Giving one to p1-local- would undo those layers from the
+	# inside, which is why the exclusion is a case arm and not a note.
+	case "$1" in
+		p1-local-*) return 1 ;;
+		p1-[0-9]*Z-[0-9]*) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+# Idempotent by design. A standalone hygiene re-enters the directory of another
+# run with that run's id, and overwriting there would swap a full seal for a thin
+# one written by an invocation that never saw the phases.
+seal_artifact() {
+	[ "${NAYLAMP_P1_LOCAL:-}" = 1 ] && return 0
+	[ "${RUN_STARTED}" -eq 1 ] || return 0
+	is_iron_artifact "$(basename "${OUT_LOCAL}")" || return 0
+	[ -d "${OUT_LOCAL}" ] || return 0
+	# EMPTY MEANS NO SEAL, and this line is why. The nine directories the
+	# cleanup of 2026-08-27 swept by hand were empty: phases that write no raw
+	# output still mkdir their artifact. Sealing an empty directory would keep it
+	# forever and rebuild that pile with a marker on top.
+	[ -n "$(ls -A "${OUT_LOCAL}" 2>/dev/null)" ] || return 0
+	[ -e "${OUT_LOCAL}/SEALED" ] && { SEALED_THIS_RUN=1; return 0; }
+	{
+		echo "Phase 1 iron gate artifact, sealed by gate/p1.sh."
+		echo
+		echo "run id:      ${RUN_ID}"
+		echo "subcommand:  ${SEAL_CMD:-unknown}"
+		echo "started:     ${RUN_STARTED_AT}"
+		echo "sealed:      $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+		echo "HEAD:        ${PROV_HEAD:-not recorded}"
+		echo "uncommitted: ${PROV_DIRTY:-not recorded}"
+		echo "hosts:       ${NAYLAMP_GATE_HOSTS:-not recorded}"
+		echo "red arm on:  node ${RED_NODE}"
+		echo "binaries:    ${PROV_SHAS:-not recorded}"
+		echo "expected:    ${EXPECTED:-not recorded}"
+		echo "verdicts:    ${VERDICTS# }"
+		echo
+		echo "This file is what keeps make clean from taking the directory. It is"
+		echo "written on RED as well as on green, because a red run is evidence and"
+		echo "this house archives the output of a red arm. Remove it when the run"
+		echo "stops being cited, which is a decision for a person. A newer sealed run"
+		echo "whose expected set is the SAME string as this one's supersedes it."
+		echo "The seals subcommand of gate/p1.sh says so, and it only proposes:"
+		echo "it never retires anything."
+	} > "${OUT_LOCAL}/SEALED"
+	SEALED_THIS_RUN=1
+	note "sealed the artifact: ${OUT_LOCAL}/SEALED"
+}
+
+# The half of the hygiene claim that faces THIS machine. phase_hygiene already
+# asserts that nothing was left on the hosts; without this, nothing asserts that
+# what the run produced here survives the next make clean. It runs after the
+# seal, so a run checks its OWN seal: break seal_artifact and the run goes red
+# here, in the same invocation, instead of the evidence going missing months
+# later when somebody reaches for it.
+unsealed_iron_artifacts() {
+	local d b out=""
+	[ -d "${OUT_DIR}" ] || return 0
+	for d in "${OUT_DIR}"/*; do
+		[ -d "${d}" ] || continue
+		b="$(basename "${d}")"
+		is_iron_artifact "${b}" || continue
+		[ -n "$(ls -A "${d}" 2>/dev/null)" ] || continue
+		[ -e "${d}/SEALED" ] && continue
+		out="${out} ${b}"
+	done
+	printf '%s' "${out# }"
+}
+
 cleanup() {
 	local rc=$?
 	set +e
@@ -299,6 +398,12 @@ cleanup() {
 	elif [ "${RUN_STARTED}" -eq 1 ] && [ "${HOSTS_REACHABLE}" -eq 0 ]; then
 		echo "gate: no host was ever confirmed reachable, so nothing was uploaded and there is nothing to remove" >&2
 	fi
+	# THE FALLBACK SEAL, and it is a fallback and not the place the seal belongs.
+	# phase_hygiene seals first, so that the run can check its own seal while it
+	# is still alive and can go red. This catches the runs that never reach
+	# hygiene: every subcommand other than all and hygiene, plus any abort. Sealing
+	# here too is why a run that dies mid-phase keeps what it managed to write.
+	seal_artifact
 	if ! emit_final_verdict; then
 		[ "${rc}" -eq 0 ] && rc=1
 	fi
@@ -649,6 +754,8 @@ phase_provenance() {
 	local sha dirty
 	sha="$(cd "${REPO_DIR}" && git rev-parse HEAD)"
 	dirty="$(cd "${REPO_DIR}" && git status --porcelain | wc -l | tr -d ' ')"
+	PROV_HEAD="${sha}"
+	PROV_DIRTY="${dirty}"
 	note "P1.provenance: HEAD ${sha}"
 	note "P1.provenance: working tree entries not committed: ${dirty}"
 	note "P1.provenance: run id ${RUN_ID}, started $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
@@ -687,6 +794,7 @@ phase_provenance() {
 		note "P1.provenance: node ${n} carries ${d}"
 		if [ -z "${first}" ]; then first="${d}"; elif [ "${d}" != "${first}" ]; then same=0; fi
 	done
+	PROV_SHAS="${first}"
 	# And the selectors are asked again, of the binaries that are actually going to
 	# run. P1.pre asked a native build that shares the source; this asks the
 	# uploaded object, so the anchoring claim covers what the gate runs and not
@@ -1298,8 +1406,32 @@ phase_hygiene() {
 		fi
 	fi
 
+	# AND THE SEAL, which is the half of this claim that faces THIS machine. The
+	# order matters and is the whole point: seal first, then sweep, so the sweep
+	# includes the artifact this very run just wrote. A run that fails to seal
+	# itself reddens here and now.
+	seal_artifact
+	# THE CONDITION ASKS WHETHER THERE WAS ANYTHING TO SEAL, and the first version
+	# did not. It fired on SEALED_THIS_RUN alone, so a standalone hygiene over a run
+	# that died before writing a raw file reddened saying "this run wrote an
+	# artifact", which it had not. An empty artifact is the one case where not
+	# sealing is correct.
+	if [ "${NAYLAMP_P1_LOCAL:-}" != 1 ] && [ "${SEALED_THIS_RUN}" -eq 0 ] \
+		&& [ -d "${OUT_LOCAL}" ] && [ -n "$(ls -A "${OUT_LOCAL}" 2>/dev/null)" ]; then
+		fail "P1.hygiene: this run wrote an artifact and did not seal it, so the next make clean would take it"
+		left=1
+	fi
+	local unsealed
+	unsealed="$(unsealed_iron_artifacts)"
+	if [ -n "${unsealed}" ]; then
+		fail "P1.hygiene: iron artifacts under gate/out with no SEALED file, which make clean would take:${unsealed}"
+		left=1
+	else
+		note "P1.hygiene: every iron artifact under gate/out carries its seal"
+	fi
+
 	if [ "${left}" -eq 0 ]; then
-		pass "P1.hygiene: the working directory is gone from all three hosts, the mutated copies are gone from this machine, and nothing else was written"
+		pass "P1.hygiene: the working directory is gone from all three hosts, the mutated copies are gone from this machine, no iron artifact is left unsealed, and nothing else was written"
 		# ONLY HERE. The first version cleared this unconditionally, so a removal
 		# that failed on a node suppressed the trap's warning and its by-hand
 		# command in exactly the case they were written for.
@@ -1353,7 +1485,7 @@ phase_build() {
 
 usage() {
 	cat >&2 <<'USAGE'
-usage: p1.sh <all|pre|provenance|sweep|recall|point|red|hygiene>
+usage: p1.sh <all|pre|provenance|sweep|recall|point|red|hygiene|seals>
 
   all         every phase below, in the only order in which they mean something
   pre         the door. Refuses the sweep variables, reads the declared budget
@@ -1372,13 +1504,27 @@ usage: p1.sh <all|pre|provenance|sweep|recall|point|red|hygiene>
               optional run id: without one it cleans THIS invocation's directory,
               which is what "all" wants and which on its own would clean nothing,
               since every invocation mints a new id
+  seals       the seals under gate/out: which iron artifacts would not survive a
+              make clean, and which the newest sealed run supersedes. Opens no
+              socket, writes nothing, proposes and never retires
 
 ORDER MATTERS AND ONLY IN ONE DIRECTION. hygiene runs AFTER red and never before:
 red is what uploads mutated binaries, and a hygiene that ran first would declare
 the hosts clean with a mutant still on them.
 
 pre is the one subcommand that needs no host, so it is the one that can run with
-the machines deallocated.
+the machines deallocated. seals opens no socket either and writes nothing: it says
+which iron artifacts under gate/out would not survive a make clean, and which are
+superseded by a newer run with the same verdict set. It proposes and never
+retires. Run it before a sealing run, not after.
+
+seals still needs the three environment variables set, and the honest reason is
+that common.sh demands them the moment this script sources it, before any
+subcommand is read. Their VALUES are not used by seals, which only reads
+directories under gate/out, so anything well formed will do. Defaulting them
+here for one subcommand would be adjusting the code so a precondition goes quiet,
+which is not a reason; the same line is already written in the header of this
+script about NAYLAMP_GATE_PRIVATE, which this gate requires and never uses.
 
 NAYLAMP_P1_LOCAL=1 runs the REHEARSAL: the three hosts must be loopback, the
 transport is three directories on this machine and the binaries native, and the
@@ -1410,9 +1556,56 @@ if [ "${cmd}" = hygiene ] && [ -n "${2:-}" ]; then
 	esac
 fi
 case "${cmd}" in
-	pre|provenance|sweep|recall|point|red|hygiene|all) ;;
+	pre|provenance|sweep|recall|point|red|hygiene|all|seals) ;;
 	*) usage; exit 2 ;;
 esac
+SEAL_CMD="${cmd}"
+
+# seals NEEDS NO HOST AND WRITES NOTHING, like pre, so it runs with the fleet
+# deallocated and before a sealing run rather than after. It answers two
+# questions and acts on neither: which iron artifacts would not
+# survive a make clean, and which are superseded and could be retired by hand.
+# The second one PROPOSES. Retiring on its own would have taken the run of
+# 2026-08-26 the moment the next one landed, and that is the artifact the level
+# decision rests on.
+if [ "${cmd}" = seals ]; then
+	echo "=== NAYLAMP PHASE 1 GATE, seals under ${OUT_DIR} ==="
+	rc=0
+	unsealed="$(unsealed_iron_artifacts)"
+	if [ -n "${unsealed}" ]; then
+		echo "gate: UNSEALED, and make clean would take these:${unsealed}" >&2
+		echo "gate: seal one by writing gate/out/<name>/SEALED with who cites it and why it is kept" >&2
+		rc=1
+	else
+		echo "gate: every iron artifact under gate/out carries its seal"
+	fi
+	newest=""
+	for d in "${OUT_DIR}"/*; do
+		[ -d "${d}" ] || continue
+		b="$(basename "${d}")"
+		is_iron_artifact "${b}" || continue
+		[ -e "${d}/SEALED" ] || continue
+		echo "gate: sealed  ${b}"
+		[ "${b}" \> "${newest}" ] && newest="${b}"
+	done
+	for d in "${OUT_DIR}"/*; do
+		[ -d "${d}" ] || continue
+		b="$(basename "${d}")"
+		is_iron_artifact "${b}" || continue
+		[ -e "${d}/SEALED" ] || continue
+		[ "${b}" = "${newest}" ] && continue
+		# The proposal is by verdict set and not by date alone: a newer run that
+		# carried fewer verdicts covers less, so it does not supersede.
+		if [ -n "$(grep -m1 '^expected:' "${OUT_DIR}/${newest}/SEALED" 2>/dev/null)" ] \
+			&& [ "$(grep -m1 '^expected:' "${d}/SEALED" 2>/dev/null)" = "$(grep -m1 '^expected:' "${OUT_DIR}/${newest}/SEALED" 2>/dev/null)" ]; then
+			echo "gate: PROPOSED for retirement, superseded by ${newest} with the same verdict set: ${b}"
+			proposed=1
+		fi
+	done
+	[ "${proposed:-0}" -eq 1 ] && echo "gate: nothing is removed by this subcommand. Retiring is a decision for a person."
+
+	exit "${rc}"
+fi
 RUN_STARTED=1
 
 # The rehearsal's fleet is set up only once the run id is final: a standalone
