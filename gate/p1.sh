@@ -1163,6 +1163,32 @@ build_mutant() {
 #         its own line. Absence of the failure text under a label whose line IS
 #         present is a genuine green, and the anchor is what proves it ran.
 #   none  nothing declared for the other side.
+# A red row concludes SURVIVED from the ABSENCE of the expected red pattern.
+# Until 2026-08-29 it ruled out only two ways of not-running: a host that
+# refuses because a sweep variable is set in its own environment, and a test
+# that dies on its own clock. It did not rule out a run that was CUT, so a
+# truncated output fell through to the survival branch and the gate printed
+# "The mutation ran and the check ... did not go red", both halves of which are
+# false when the run never finished. It happened for real: the laptop that
+# launched the iron run of 2026-08-29 went to sleep, the ssh sessions live on
+# the laptop, and red-relleno.txt stops at "upserted 30000 / 60009" followed by
+# "client_loop: send disconnect: Broken pipe".
+#
+# The predicate below is not a guess. Over the eighteen red raws of the two
+# iron runs, 2026-08-26 and 2026-08-29, seventeen carry the closing line of the
+# go test binary and one does not, which is the cut one. The alternative
+# candidate, demanding a "--- FAIL:" or "--- PASS:" line, separates the same
+# evidence just as well; the closing line is preferred because it marks that
+# the BINARY finished and not merely that a test finished.
+#
+# The same guard already existed for the recall rows, in words: "A test that
+# never ran and a test that passed produce the same status, so the line is the
+# guard". This is that lesson applied where it was missing.
+finished_cleanly() {
+	# Last non-blank line is go test's own closing line.
+	awk 'NF{last=$0} END{exit !(last=="PASS" || last=="FAIL" || last ~ /^ok[ \t]/)}' "$1"
+}
+
 red_row() {
 	local id="$1" mut="$2" pkg="$3" sel="$4" tmo="$5" want="$6" gmode="$7" green="${8:-}" ganchor="${9:-}"
 	local bin="${OUT_LOCAL}/${mut}.test" remote="p1-${mut}.test" out="${OUT_LOCAL}/red-${mut}.txt"
@@ -1193,8 +1219,19 @@ red_row() {
 		end_check "${id}"
 		return
 	fi
+	# Before EITHER conclusion, and not only before the survival one. A run cut
+	# AFTER the red pattern printed would pass today, but this row also attests
+	# isolation against the other side, and with the output truncated that second
+	# half cannot be checked. So a red with a truncated output is not a whole red
+	# either. That makes this stricter than the minimum needed to close the
+	# defect, which is a choice and is written down as one.
+	if ! finished_cleanly "${out}"; then
+		fail "${id}: NOT RUN. The output has no closing line from go test, so it was cut and this row attests nothing, neither survival nor red. Last line: $(tail -n1 "${out}" | sed 's/^[[:space:]]*//')"
+		end_check "${id}"
+		return
+	fi
 	if ! grep -qE "${want}" "${out}"; then
-		fail "${id}: SURVIVED. The mutation ran and the check that claims to defend this clause did not go red, so it defends nothing"
+		fail "${id}: SURVIVED. The mutation ran to its end and the check that claims to defend this clause did not go red, so it defends nothing"
 		end_check "${id}"
 		return
 	fi
