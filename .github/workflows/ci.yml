@@ -74,8 +74,40 @@ jobs:
         run: go build ./...
       - name: Vet
         run: go vet ./...
+      # WHAT THIS STEP DOES NOT RUN, said here because -short is one word and it
+      # decides a lot. Several suites read testing.Short() and shrink: the one
+      # that matters most is TestClusterDST_Seeded, which sweeps 500 seeds by
+      # default and 40 under -short. So the 500-seed regime is not defended by
+      # this step, is not defended by any scheduled job, and runs only when
+      # somebody runs it by hand. The green here is real and covers what it
+      # covers; it is not the full suite.
+      #
+      # AND THE COMMAND THAT ACTUALLY WORKS, because saying the above without it
+      # walks the reader into a trap. Measured on 2026-08-31 on a MacBook Pro
+      # M1 Max, 64 GB, 10 cores, go1.26.6 darwin/arm64: the naylamp package
+      # without -short takes 809s and 812s on two runs, and go test's own
+      # default timeout is 600s. So `go test ./naylamp/` bare does not come back
+      # red on a property, it comes back cut on the clock. Use:
+      #
+      #   go test ./naylamp/ -count=1 -timeout 30m
+      #
+      # 30m is not a number picked to fit either: it leaves about 2.2x over the
+      # 812s measured above, on that machine and with that load. On a slower
+      # box, measure again rather than assume the margin survives.
+      #
+      # THE TIMEOUT BELOW is the toolchain's default written out, for the same
+      # reason the recall step below writes out its own: 600s is what go test
+      # uses when nobody says otherwise, and spelling it here means a global
+      # -timeout added later cannot silently narrow it. It applies PER PACKAGE
+      # BINARY, not to the step, so the number to clear is the slowest package
+      # and not the wall clock. Measured on 2026-08-31 running this step's exact
+      # command, timeout included, on the machine named above: 216s of wall
+      # clock, because packages run in parallel, and the slowest single package
+      # is engine/persist at 215.6s with engine/naylamp second at 159.7s. That
+      # leaves about 2.8x over the slowest one. If a runner ever exceeds it,
+      # find out why that package got slower rather than raise the ceiling.
       - name: Test
-        run: go test -short -race ./...
+        run: go test -short -race -timeout 600s ./...
       # The n=50000 recall floor runs here, on its own, and WITHOUT -race. It is
       # the largest corpus at which the tree asserts a recall floor, and that
       # bound is not an arbitrary one: it is the cota the central property of
