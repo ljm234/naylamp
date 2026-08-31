@@ -32,6 +32,23 @@ import (
 // directions: every id the index holds is in the store, every id the store is
 // expected to hold is in the index, and the deleted id is in neither.
 //
+// WHAT THIS TEST DOES NOT COVER, and it took a census of this tree's red arms
+// on 2026-08-29 to find out. It parks execution inside vectorData, which
+// hnsw.Insert calls, and asks whether the mutex is held THERE. That catches a
+// lock let go too early. It cannot catch a lock taken too LATE, because by the
+// time vectorData runs the lock is held again in that variant and the final
+// state still comes out consistent: moving c.mu.Lock() in Upsert to sit after
+// store.Insert leaves this test green twenty runs out of twenty, while opening
+// a stretch where the store holds the id and the index does not, which Query,
+// IndexIDs and Len all enter under RLock.
+//
+// That end is pinned by TestCollection_NoReaderCanSeeTheStoreAheadOfTheIndex in
+// collection_window_test.go, which asserts on the observable effect through the
+// public entry point instead of on what a function returns. The two are not
+// substitutes and neither is redundant: that one is green with no lock at all,
+// which is the mutation this one catches hardest. Whoever changes either of
+// them changes this comment in both files.
+//
 // The red arm is a reversion: dropping the Lock/RLock calls from operations.go
 // turns this test RED, and the failing state is the counterexample the register
 // archived on 2026-08-18: the index keeps id 7 while the store has already let
