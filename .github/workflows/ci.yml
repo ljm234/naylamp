@@ -190,6 +190,42 @@ jobs:
       # none exists yet: the first one is whatever the next run of this workflow
       # prints. Where the older range was measured is not written above either,
       # so do not read it as a runner figure just because it sits in a workflow.
+      # THE SHELL GUARD, and this step exists because of what its absence
+      # produced. gate/ carries a defender written as a test script, with its red
+      # arm inside, and until 1 September 2026 NOBODY RAN IT: it fired when
+      # somebody remembered. A check that depends on somebody remembering is what
+      # DEFER-073 in the register is about, and it had grown here without anyone
+      # choosing it.
+      #
+      # clean-guard-test.sh lands the day it is written, and it is the third of
+      # the seven arms of DEFER-077. It proves that make clean refuses an unsealed
+      # iron artifact, preserves a sealed one, and keeps its two other exceptions,
+      # certs and the top level logs, with one red row per piece of the Makefile.
+      #
+      # WHY gate/redrow-guard-test.sh IS NOT HERE, and this is the part worth
+      # reading. A first draft of this step ran it too, on the grounds that it was
+      # green and unexercised. It cannot be: its fixtures are the raw outputs of
+      # two iron runs under gate/out, and gate/out is ignored, so a clone has none
+      # of them. Measured on a fresh clone of this repository: it reports its own
+      # rows VACIO, "solo encontre 0 crudos enteros y hacen falta al menos 17",
+      # and exits non-zero. It was never absent from CI by carelessness. It is
+      # absent because it reads evidence the repository deliberately does not
+      # carry, and that is a property of the arm and not of this file. DEFER-077
+      # holds it as the SIXTH of the arms left open, and whoever closes it owns
+      # the fixture question first.
+      #
+      # working-directory is the repository root, like the hygiene step and for
+      # the same reason: this path starts at gate/. The script builds its own box
+      # under the system temp directory and never touches the tree; it checks that
+      # before it runs, because it invokes a recipe that deletes. Cost, three runs
+      # on a MacBook Pro M1 Max at load average 5.00 4.63 4.26: 0.66s to 0.67s.
+      # The raw is naylamp-sealed-guard-20260901T201142Z.txt in the runs directory
+      # of the register. An earlier draft quoted 0.71s, which came from a terminal
+      # and from no archived run at all, in the same file that says two steps
+      # above why that is not done here. No runner figure exists yet.
+      - name: Shell guard
+        working-directory: .
+        run: ./gate/clean-guard-test.sh
       - name: Hygiene tool
         working-directory: .
         run: |
