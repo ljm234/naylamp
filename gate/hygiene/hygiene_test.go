@@ -4,9 +4,49 @@
 // defect it guards and the real line from this workspace that exposed it.
 //
 // WHAT IS NOT COVERED, so nobody reads the file as a wall it is not. There is
-// no row for the corpus excluding this program's own directory, none for the
-// corpus excluding _test.go, and none for the order of the classification
-// switch. Those three are guarded only by a person reading the diff.
+// no row for the corpus excluding this program's own directory and none for
+// the corpus excluding _test.go. Those two are guarded only by a person
+// reading the diff.
+//
+// That paragraph used to say THREE and named the order of the classification
+// switch as the third. The old count is named here rather than swapped in
+// silence, which is what the hard rule of DEFER-064 asks of a comment. That
+// rule gives as its reason that a Go comment does not take a strike, and the
+// header of hygiene.go breaks it in one place and is right to: a whole false
+// SENTENCE reads better struck than paraphrased. A count does not. A struck
+// THREE beside a live TWO is two numbers where the reader needs one.
+// The switch order is covered now, by the last row of this
+// file: its workspace holds a raw that is BOTH absolute by shape AND
+// decisively backed, which is the only shape that can tell the two leading
+// cases apart, and swapping them moves that raw out of the section the row
+// reads. Measured and not argued, and the tense matters: BEFORE this row
+// existed, swapping the two cases left the step green on all three of its
+// commands. It does not any more, which is the point: swapped, this row goes
+// red and every other row here still passes.
+//
+// WHICH END EACH ROW PINS, which clause 12 of the protocol at the end of
+// NAYLAMP_DEFERRED_BACKLOG.md asks every red arm of this house to say out
+// loud, on the grounds that an arm which does not say what it misses gets read
+// as covering everything.
+//
+// Every row but the last asks a function what it returns, so it pins the
+// PREDICATE and leaves the SITE loose. These are the ways of retiring the
+// keptByShape call from report that leave all of them green: consuming treeSrc,
+// keeping the call and throwing both answers away, writing it inside a branch
+// that never runs, and moving it behind the switch it feeds. Deleting the line
+// outright is the only form that does not compile, and it fails on treeSrc
+// going unused rather than on anything this file checks.
+//
+// The last row runs the program and reads its report, so it pins the SITE and
+// leaves the predicate loose: remove a guard from inside keptByShape and it
+// stays green while the row above that owns that guard goes red. One row, not
+// three, and the distinction is worth keeping because each of those rows owns
+// a different half of the predicate. Neither kind replaces the other, and the
+// split is not a claim: it is the table of
+// naylamp-hygiene-cierre-20260831T222748Z.txt, in the runs directory of the
+// workspace, which is the run anchored to this file as it stands. The table of
+// the run named sitio-antes is the other half, what the fifteen rows saw
+// before this one existed.
 //
 // AND SEVERAL RULES OVERLAP, which limits what a single row can prove. On
 // "2026/08/10" the year rule, the date rule and the path rule all fire, so
@@ -14,13 +54,21 @@
 // OUTCOME, that the token is gone, and not that one named rule removed it.
 //
 // This package is outside go.work on purpose (see the header of hygiene.go), so
-// CI does not run these. They run by naming the files:
+// no package pattern reaches these. They run by being named:
 //
 //	go test gate/hygiene/hygiene.go gate/hygiene/hygiene_test.go
+//
+// That line used to read "so CI does not run these", and it was corrected on
+// 31 August 2026 after standing false for long enough that the sibling header
+// grew a section called OUTSIDE go.work, INSIDE CI to say the opposite.
+// ci.yml has a step that names both files and runs exactly the command above.
+// What is true is the first half: no pattern reaches them, so they run where
+// somebody wrote the names down.
 package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -294,6 +342,10 @@ func TestBlank_RunsTheSameRulesOnACorpusLine(t *testing.T) {
 // shapeFixture builds the smallest inputs keptByShape needs, so the class the
 // clause gained on 17 August 2026 has rows of its own. Before these, seven
 // destructive mutations of that function left the whole suite green.
+//
+// The three rows it serves pin the PREDICATE and say nothing about the SITE,
+// because they call keptByShape themselves. What pins the site is the last row
+// of this file, which does not call it at all.
 func shapeFixture(t *testing.T) (ws string, corpus map[string][]string, tree []string) {
 	t.Helper()
 	ws = filepath.Join("/tmp", "ws")
@@ -437,5 +489,179 @@ func TestBundleOf_SeparatesLooseFromBundled(t *testing.T) {
 	want := "NAYLAMP_DEFER053_REPRO"
 	if got := bundleOf(ws, filepath.Join(ws, want, "evidencia", "min2_raw.txt")); got != want {
 		t.Errorf("bundleOf(bundled file) = %q, want %q", got, want)
+	}
+}
+
+// --- The wiring row. It is the only one here that runs the program.
+
+// hygieneBinary compiles the command from the source these tests sit beside and
+// returns the binary. The source path is relative to the test's own directory on
+// purpose: a mutation copy of this package then measures the mutated source and
+// not the tree's, which is the whole point of a copy.
+//
+// The toolchain is found with exec.LookPath and not with runtime.GOROOT, which
+// is deprecated and whose own note says to use the system path instead. LookPath
+// is enough even when go is absent from the PATH of the shell that invoked the
+// tests, because the go command puts GOROOT/bin on the PATH of the binary it
+// runs; measured both ways on 31 August 2026, once with go on the PATH and once
+// with an emptied environment and go called by its full path.
+//
+// Not finding it is a Fatal and not a Skip, which is the opposite of what
+// repoRoot does at the top of this file, and the difference is the reason and
+// not the taste. The first version of this sentence said "forty lines up" and
+// the distance was 429; it was a positional anchor written in the same pass
+// that added a protocol clause against positional anchors, which is why the
+// name is here and the number is gone. repoRoot skips because these two files legitimately travel outside the
+// repository, and a mutation copy is exactly that trip. A missing toolchain is
+// never a legitimate state for a test that the toolchain just built. Said
+// plainly so nobody reads more into it: this row DOES still skip through
+// repoRoot, so what a Fatal pins here is narrow, that a reachable toolchain is
+// never silently absent.
+func hygieneBinary(t *testing.T, root string) string {
+	t.Helper()
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatalf("no go toolchain reachable, and this row cannot build the program without one: %v", err)
+	}
+	bin := filepath.Join(t.TempDir(), "hygiene")
+	src := filepath.Join(root, "gate", "hygiene", "hygiene.go")
+	if out, err := exec.Command(goBin, "build", "-o", bin, src).CombinedOutput(); err != nil {
+		t.Fatalf("go build %s: %v\n%s", src, err, out)
+	}
+	return bin
+}
+
+// shapeWorkspace writes the smallest workspace that puts one raw in each class
+// the shape verdict decides, plus one that has to stay out of every one of them.
+//
+// The repository is a SIBLING of the workspace and not a child, and that is not
+// tidiness: the program walks the workspace collecting candidates, so a
+// repository underneath it would be judged as evidence and the fixture would
+// stop describing what it says it describes.
+func shapeWorkspace(t *testing.T) (ws, repo string) {
+	t.Helper()
+	base := t.TempDir()
+	ws = filepath.Join(base, "ws")
+	repo = filepath.Join(base, "repo")
+	write := func(dir, name, body string) {
+		p := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The citing document. It names two of the raws, and it carries the decisive
+	// figure of one of them, which is what turns that one into a check of the
+	// order of the classification switch and not only of the call.
+	write(ws, "NAYLAMP_NOTA_FORMA.md", "# Nota de la forma\n\n"+
+		"La corrida dejo sus veredictos en veredictos.txt, que es el crudo que esta nota nombra.\n"+
+		"El paquete tardo 4988.87s, y la unica copia de esa fuente esta en fuente-citada.txt.\n")
+
+	// FORM 1: verdicts inside, named from outside its bundle, no decisive figure
+	// of its own. Loose in the workspace root, so it belongs to no bundle.
+	write(ws, "veredictos.txt", "gate: PASS T4 forged peer rejected\n"+
+		"gate: PASS T5 quorum held\nexit=0\n")
+
+	// FORM 2: Go test source that is not in the tree. Absolute by its own comment.
+	write(ws, "fuente.txt", "func TestPruebaQueNoViveEnElArbol(t *testing.T) {\n"+
+		"\tt.Fatal(\"copia unica de esta fuente\")\n}\n")
+
+	// FORM 2 again, and this one also carries a decisive figure the document
+	// cites. It is the only shape that separates the first two cases of the
+	// classification switch, because it satisfies both of them.
+	write(ws, "fuente-citada.txt", "func TestOtraQueNoViveEnElArbol(t *testing.T) {\n"+
+		"\tt.Fatal(\"copia unica, y ademas cita una cifra decisiva\")\n}\n"+
+		"ok  \tnaylamp/engine/hnsw\t4988.87s\n")
+
+	// Neither verdicts nor source nor a cited figure. It must NOT be kept by
+	// shape, and without it the row would pass just as well if everything landed
+	// in that section.
+	write(ws, "ninguno.txt", "notas sueltas sin veredicto y sin fuente ninguna\n")
+
+	// The repository the program reads for the tree source and the declared
+	// ports. A Test function that DOES exist, so form 2 has something to be
+	// absent from, and one port declaration so the run resembles a real one.
+	write(repo, "arbol.go", "package arbol\n\nfunc TestQueSiViveEnElArbol(t *testing.T) {}\n")
+	write(repo, filepath.Join("gate", "common.sh"), "CLIENT_PORT=9490\n")
+	return ws, repo
+}
+
+// shapeSection returns the KEPT BY SHAPE block of a report. A missing header
+// yields the empty string, which fails every assertion below rather than
+// quietly matching nothing.
+func shapeSection(report string) string {
+	const abre, cierra = "KEPT BY SHAPE (", "WEAK LEAD ONLY ("
+	i := strings.Index(report, abre)
+	if i < 0 {
+		return ""
+	}
+	rest := report[i:]
+	if j := strings.Index(rest, cierra); j >= 0 {
+		return rest[:j]
+	}
+	return rest
+}
+
+func TestReport_ShapeVerdictReachesTheReportAndOutranksBacked(t *testing.T) {
+	// THE DEFECT, and it was measured before this row was written rather than
+	// feared. The census of DEFER-077 in NAYLAMP_DEFERRED_BACKLOG.md found this
+	// file among the red arms that exercise the primitive and leave the call
+	// site untouched: retire the keptByShape call from report and the whole
+	// hygiene step of CI stays green, gofmt clean, vet at zero, every row above
+	// passing. Four different ways of retiring it do that. Nothing in this file
+	// noticed, because nothing in this file ran the program.
+	//
+	// So this row does not call keptByShape at all. It builds the command, runs
+	// it the way the header of hygiene.go tells an operator to run it, and reads
+	// which section each raw landed in. The program reports and stops, so what it
+	// prints IS its observable effect, and the effect cannot appear unless the
+	// execution went through the call.
+	ws, repo := shapeWorkspace(t)
+	bin := hygieneBinary(t, repoRoot(t))
+
+	out, err := exec.Command(bin, "-workspace", ws, "-repo", repo).Output()
+	if err != nil {
+		t.Fatalf("the program did not complete: %v", err)
+	}
+	report := string(out)
+	shape := shapeSection(report)
+	if shape == "" {
+		t.Fatal("the report has no KEPT BY SHAPE section at all")
+	}
+
+	// Form 1 and form 2, the two shapes clause 5 took on 17 August 2026, each
+	// named by the reason the report prints beside it. Asserting the reason and
+	// not only the file name is what keeps a raw from satisfying this row by
+	// arriving in that section for some other cause.
+	for _, c := range []struct{ file, form string }{
+		{"veredictos.txt", "FORM 1"},
+		{"fuente.txt", "FORM 2"},
+	} {
+		if !strings.Contains(shape, c.file) {
+			t.Errorf("%s is not in KEPT BY SHAPE; the shape verdict is not reaching the report", c.file)
+			continue
+		}
+		if !strings.Contains(shape, c.form) {
+			t.Errorf("%s is kept, but the report never names %s as the reason", c.file, c.form)
+		}
+	}
+
+	// The order of the classification switch. This raw satisfies the first two
+	// cases at once, so it is the only one that can tell them apart: form 2 is
+	// absolute and has to win, and if the backed case is moved in front of it
+	// the raw leaves this section for BACKED. Nothing else in this file sees
+	// that swap.
+	if !strings.Contains(shape, "fuente-citada.txt") {
+		t.Error("fuente-citada.txt left KEPT BY SHAPE; a decisively backed raw is outranking the absolute form")
+	}
+
+	// And the half that stops the row from passing on an empty predicate: a raw
+	// with no verdict, no absent source and no cited figure must stay out. Without
+	// this, everything landing in the section would read as success.
+	if strings.Contains(shape, "ninguno.txt") {
+		t.Error("ninguno.txt is kept by shape, so the section is keeping files it has no reason to keep")
 	}
 }

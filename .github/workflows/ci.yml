@@ -162,6 +162,34 @@ jobs:
       # why no single figure is quoted: go test over file arguments builds the
       # command-line-arguments pseudo-package and does not cache its result, so
       # the test runs again every time.
+      #
+      # Since 31 August 2026 there is a SECOND and larger cost, and the range
+      # above predates it, so do not read it as current. The last row of
+      # hygiene_test.go pins the call site of keptByShape, and the only form this
+      # house has found that pins one runs from outside: it shells out to go
+      # build, compiles the program and runs it over a workspace it writes
+      # itself. The cheaper form, a static check that the call is written, is
+      # described in DEFER-077 and is worth less than it looks: it sees neither
+      # reachability nor consequence.
+      #
+      # What that costs, measured rather than guessed, because the first version
+      # of this comment called the build "the bigger half of the step" and it is
+      # not. It also quoted figures that were in no archived run at all, which
+      # is the clause this house wrote the same week: warm, the build alone is
+      # 0.06s in four runs of five and the whole step is 1.04s to 1.46s, load
+      # average 6.13 to 6.51, in naylamp-hygiene-build-20260901T001022Z.txt in
+      # the runs directory of the workspace. The build is a few per cent. What
+      # the row actually spends is the first execution of a binary just written
+      # to disk, and that split is NOT in that run: it came from instrumenting
+      # the row, so it is a direction here and not a figure.
+      # Locally on an Apple M1 Max with go1.26.6 the
+      # whole step went from a 0.55s to 1.09s band to a 1.01s to 1.45s one, five
+      # runs each side, cache warm, load average from 1.91 to 2.34; the raw is
+      # naylamp-hygiene-coste-20260831T215618Z.txt in the runs directory of the
+      # workspace. No figure is quoted for the new shape from a runner, because
+      # none exists yet: the first one is whatever the next run of this workflow
+      # prints. Where the older range was measured is not written above either,
+      # so do not read it as a runner figure just because it sits in a workflow.
       - name: Hygiene tool
         working-directory: .
         run: |

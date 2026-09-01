@@ -136,19 +136,39 @@
 // ~~Keeping it outside CI is what stops a reporting tool from being able to
 // turn the pipeline red over an artifact nobody has read yet.~~ THAT REASON
 // WAS FALSE and the correction is kept beside it because it explains why the
-// exclusion looked right. Nothing in the test suite reads the workspace: its
-// only disk access is under gate/ in this repository, the shell scripts that
-// declare the ports, and the ws paths in the tests are synthetic strings under
-// /tmp that are never opened. Artifacts are
-// read in main alone, and CI never runs main. So the step cannot go red over
-// an artifact, and it earns its place by what a person had to catch by hand
-// twice on the day this was written, comment width and format drift.
+// exclusion looked right. The step cannot go red over an artifact of the
+// operator's workspace, and it earns its place by what a person had to catch by
+// hand twice on the day this was written, comment width and format drift.
+//
+// THE REASON FOR THAT LAST SENTENCE CHANGED ON 31 AUGUST 2026, and this is the
+// second paragraph of this header to outlive its own argument. It is quoted and
+// corrected because it is now false in two places. It read: "Nothing in the test suite reads the workspace: its only
+// disk access is under gate/ in this repository, the shell scripts that declare
+// the ports, and the ws paths in the tests are synthetic strings under /tmp
+// that are never opened. Artifacts are read in main alone, and CI never runs
+// main." Both halves were true when written and neither is now. The last row of
+// hygiene_test.go builds this program and runs it, so CI runs main; and it
+// writes raw files and reads them back, so a test does touch a workspace.
+//
+// The conclusion holds, on different ground than the one it was built on. That workspace is not the operator's: the row writes it under the
+// test's own temporary directory, five files it authored itself, four raws
+// and the document that cites them, and points
+// -workspace and -repo at them. It never sees NAYLAMP_ anything of the real
+// tree. So the step still cannot go red over an artifact nobody has read, and
+// the argument now rests on where the workspace comes from instead of on there
+// being no workspace at all.
 //
 // hygiene_test.go carries one row per defect this file shipped with, and the
 // rows were mutation checked on the day they were written: reverting the
 // trailing word boundary, the hex guard, the raw line token count and the
 // single letter label each put a named row in red, and the unmutated tree came
-// back green. Anyone who moves this into the module owns making CI green too.
+// back green. The row added on 31 August 2026 was mutation checked the same
+// way and over more states, because it guards a call site rather than a rule:
+// nine states of this file. Five of them retire the keptByShape call from
+// report; four of those five used to leave the whole step green, and the
+// fifth, deleting the line outright, does not compile. A sixth inverts the two
+// leading cases of the classification switch and was green too.
+// Anyone who moves this into the module owns making CI green too.
 package main
 
 import (
