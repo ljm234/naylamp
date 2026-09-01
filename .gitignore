@@ -73,5 +73,3 @@ gate/out/
 # Benchmark datasets, which live outside the repo
 *.fvecs
 *.ivecs
-
-.claude/
