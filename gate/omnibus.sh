@@ -212,8 +212,38 @@ end_check() {
 	fi
 }
 
+# THE EMPTY LIST RETURNS FAILURE ONCE THE RUN HAS BEGUN, and the polarity is the
+# whole point. This guard used to return 0 for an empty EXPECTED, which is right
+# for a usage error (a rejected subcommand has no verdicts and must not print
+# NOT A SUCCESS) and wrong for everything else: EXPECTED is empty from the
+# registry block at the top of this file until the dispatch assigns it, and the
+# banner and require_hosts_reachable run in between. A trapped signal landing in
+# that window entered cleanup with an empty list, this line returned 0, and the
+# gate exited 0 having run no phase at all.
+#
+# Measured on this file, unmodified, with a stub ssh and a TERM to the script's
+# own pid: rc=0, not one "verdict" line, neither "all checks passed" nor "NOT A
+# SUCCESS". A signal to the process GROUP came out non-zero because ssh dies
+# with it, which is why the hole stayed invisible; a supervisor that signals the
+# pid alone does not.
+#
+# RUN_STARTED is exactly the distinction this needs and it already existed for
+# it: the comment that declares it says it separates a usage error from a run
+# that began and then stopped. What this adds is a count against a length like
+# any other, only here the length is zero and the loop below is the one that
+# never runs.
+#
+# It also closes the maintenance road the dispatch guard cannot. That guard
+# validates the subcommand name against two lists so an unknown name exits 2
+# rather than falling through "with an empty verdict set and reporting success",
+# in its own words; but nothing obliges a KNOWN arm to assign EXPECTED, and a
+# new arm that forgets lands right here.
 emit_final_verdict() {
-	[ -z "${EXPECTED}" ] && return 0
+	if [ -z "${EXPECTED}" ]; then
+		[ "${RUN_STARTED}" -eq 0 ] && return 0
+		echo "gate: NOT A SUCCESS; the run began and ended with no verdict set, so nothing was checked and nothing can be attested" >&2
+		return 1
+	fi
 	local id v bad=""
 	for id in ${EXPECTED}; do
 		v="$(verdict_of "${id}")"

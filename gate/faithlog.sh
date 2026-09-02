@@ -236,11 +236,25 @@ declare -a ORIG_CK
 # only registers a verdict once the checksums were captured (after the stop); an
 # earlier exit leaves FL.guard unregistered, which the completion check catches on
 # its own.
+#
+# CHECKED IS A COUNT AND NOT A FLAG, and the difference is a verdict. It was a
+# flag, set to 1 by the first node that had a captured checksum, so a run where
+# stop_and_copy died partway left ORIG_CK holding one node, compared that one,
+# and registered FL.guard pass under a line claiming all three directories were
+# byte-identical. Measured on the lines of this file with ORIG_CK[1] alone set:
+# the pass was recorded and the line printed. The count against the length of
+# NODE_IDS is what separates "all of them are unchanged" from "the ones I could
+# read are unchanged", and only the first of those is what FL.guard means.
+#
+# The three outcomes are kept apart on purpose. Nothing captured is the early
+# exit the paragraph above describes and stays unregistered. Some captured is a
+# FAILURE and not a pass, because the verdict quantifies over the fleet. All
+# captured is the only road to a pass.
 guard_originals() {
-	local n now changed=0 checked=0
+	local n now changed=0 checked=0 want="${#NODE_IDS[@]}"
 	for n in "${NODE_IDS[@]}"; do
 		[ -n "${ORIG_CK[$n]:-}" ] || continue
-		checked=1
+		checked=$((checked + 1))
 		now="$(data_checksum "$n")"
 		if [ "${now}" != "${ORIG_CK[$n]}" ]; then
 			echo "gate: FAIL guard: node ${n} original data changed during the run (before=${ORIG_CK[$n]} after=${now}); a tool touched the original, not a copy" >&2
@@ -248,9 +262,12 @@ guard_originals() {
 		fi
 	done
 	[ "${checked}" -eq 0 ] && return 0
-	if [ "${changed}" -eq 0 ]; then
+	if [ "${checked}" -ne "${want}" ]; then
+		record_verdict FL.guard fail
+		echo "gate: FAIL guard: only ${checked} of ${want} original data directories had a checksum captured, so this verdict cannot say the originals are untouched; it can only say that the ${checked} it could read are" >&2
+	elif [ "${changed}" -eq 0 ]; then
 		record_verdict FL.guard pass
-		echo "gate: guard: the three original data directories are byte-identical before and after; every tool touched only copies" >&2
+		echo "gate: guard: all ${want} original data directories are byte-identical before and after, one by one; every tool touched only copies" >&2
 	else
 		record_verdict FL.guard fail
 	fi

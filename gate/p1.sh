@@ -257,8 +257,32 @@ end_check() {
 	fi
 }
 
+# THE EMPTY LIST RETURNS FAILURE ONCE THE RUN HAS BEGUN, and the polarity is
+# the whole point. This guard used to return 0 for an empty EXPECTED, which is
+# right for a usage error and for the seals subcommand (neither has verdicts,
+# and neither must print NOT A SUCCESS) and wrong for everything else: EXPECTED
+# stays empty from the registry block above until the dispatch assigns it, and
+# mkdir, the exclusion banner and require_hosts_reachable all run in between. A
+# trapped signal landing in that window enters cleanup with an empty list, this
+# line returned 0, and the gate exited 0 having run no phase and sealed nothing.
+#
+# Measured on the twin in gate/omnibus.sh, whose registry block is the same
+# shape, with a stub ssh and a TERM to the script's own pid: rc=0, not one
+# "verdict" line, neither "all checks passed" nor "NOT A SUCCESS". A signal to
+# the process GROUP came out non-zero because ssh dies with it, which is why the
+# hole stayed invisible; a supervisor that signals the pid alone does not.
+#
+# RUN_STARTED is the distinction this needs and it already existed for it: the
+# seal and the teardown notice both consult it to tell a usage error from a run
+# that began. It is set after the seals subcommand has exited, so seals keeps
+# its silent zero. What this adds is a count against a length like any other,
+# only here the length is zero and the loop below is the one that never runs.
 emit_final_verdict() {
-	[ -z "${EXPECTED}" ] && return 0
+	if [ -z "${EXPECTED}" ]; then
+		[ "${RUN_STARTED}" -eq 0 ] && return 0
+		echo "gate: NOT A SUCCESS; the run began and ended with no verdict set, so no clause was checked and this run attests nothing" >&2
+		return 1
+	fi
 	local id v bad=""
 	for id in ${EXPECTED}; do
 		v="$(verdict_of "${id}")"
@@ -367,18 +391,36 @@ seal_artifact() {
 # seal, so a run checks its OWN seal: break seal_artifact and the run goes red
 # here, in the same invocation, instead of the evidence going missing months
 # later when somebody reaches for it.
+#
+# IT PRINTS THE COUNT OF IRON ARTIFACTS IT VISITED, then the unsealed ones, and
+# the count is not decoration. Without it both callers said "every iron artifact
+# under gate/out carries its seal" after visiting NONE, which is an exhaustive
+# claim over the empty set that reads exactly like the real one. Seen live: this
+# gate's own seals subcommand over an empty gate/out printed that line. It comes
+# back through the output and not through a global because both callers read it
+# in a command substitution, which runs in a subshell where a global assignment
+# would not survive.
+#
+# The callers turn the count into a sentence, because zero means a different
+# thing to each: for the seals subcommand it is a clean tree with nothing to
+# say, and inside P1.hygiene it is a phase that must not claim what it did not
+# look at. Neither treats it as a failure. A local rehearsal writes p1-local-*
+# directories, which is_iron_artifact excludes on purpose, so zero is the normal
+# and correct answer there.
 unsealed_iron_artifacts() {
-	local d b out=""
-	[ -d "${OUT_DIR}" ] || return 0
-	for d in "${OUT_DIR}"/*; do
-		[ -d "${d}" ] || continue
-		b="$(basename "${d}")"
-		is_iron_artifact "${b}" || continue
-		[ -n "$(ls -A "${d}" 2>/dev/null)" ] || continue
-		[ -e "${d}/SEALED" ] && continue
-		out="${out} ${b}"
-	done
-	printf '%s' "${out# }"
+	local d b out="" seen=0
+	if [ -d "${OUT_DIR}" ]; then
+		for d in "${OUT_DIR}"/*; do
+			[ -d "${d}" ] || continue
+			b="$(basename "${d}")"
+			is_iron_artifact "${b}" || continue
+			[ -n "$(ls -A "${d}" 2>/dev/null)" ] || continue
+			seen=$((seen + 1))
+			[ -e "${d}/SEALED" ] && continue
+			out="${out} ${b}"
+		done
+	fi
+	printf '%s%s' "${seen}" "${out}"
 }
 
 cleanup() {
@@ -1458,13 +1500,17 @@ phase_hygiene() {
 		fail "P1.hygiene: this run wrote an artifact and did not seal it, so the next make clean would take it"
 		left=1
 	fi
-	local unsealed
+	local unsealed iron_seen
 	unsealed="$(unsealed_iron_artifacts)"
+	iron_seen="${unsealed%% *}"
+	unsealed="${unsealed#"${iron_seen}"}"
 	if [ -n "${unsealed}" ]; then
 		fail "P1.hygiene: iron artifacts under gate/out with no SEALED file, which make clean would take:${unsealed}"
 		left=1
+	elif [ "${iron_seen}" -eq 0 ]; then
+		note "P1.hygiene: there is no iron artifact under gate/out, so this phase attests nothing about seals. A local rehearsal writes p1-local-* and this is its normal answer"
 	else
-		note "P1.hygiene: every iron artifact under gate/out carries its seal"
+		note "P1.hygiene: all ${iron_seen} iron artifacts under gate/out carry their seal, counted one by one"
 	fi
 
 	if [ "${left}" -eq 0 ]; then
@@ -1609,12 +1655,16 @@ if [ "${cmd}" = seals ]; then
 	echo "=== NAYLAMP PHASE 1 GATE, seals under ${OUT_DIR} ==="
 	rc=0
 	unsealed="$(unsealed_iron_artifacts)"
+	iron_seen="${unsealed%% *}"
+	unsealed="${unsealed#"${iron_seen}"}"
 	if [ -n "${unsealed}" ]; then
 		echo "gate: UNSEALED, and make clean would take these:${unsealed}" >&2
 		echo "gate: seal one by writing gate/out/<name>/SEALED with who cites it and why it is kept" >&2
 		rc=1
+	elif [ "${iron_seen}" -eq 0 ]; then
+		echo "gate: there is no iron artifact under gate/out, so there is no seal to report on"
 	else
-		echo "gate: every iron artifact under gate/out carries its seal"
+		echo "gate: all ${iron_seen} iron artifacts under gate/out carry their seal, counted one by one"
 	fi
 	newest=""
 	for d in "${OUT_DIR}"/*; do
