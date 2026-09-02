@@ -364,6 +364,57 @@ esac
 row "D4" "fail-digest" "${got}" "the digest half, which already failed closed, still does"
 printf 'red-arm fake naylampd, same build everywhere\n' > "${RED}/home/3/naylamp/bin/naylampd"
 
+# ---- E: tls.sh health_check, the seventh and last of the run_on questions -----
+#
+# THE FUNCTION IS EXTRACTED FROM tls.sh BY TEXT and evaluated here, so these rows
+# run the real body and cannot drift from a copy of it. tls.sh is not run end to
+# end the way omnibus.sh hygiene is above, and the reason is declared rather than
+# hidden: its four checks need tcpdump, openssl, a capture host and minted
+# certificates, so the largest unit this stub can drive is the function itself.
+#
+# The extraction carries its own anti-vacuity guard, which is the class the hook
+# guard already writes down: an awk that stopped matching would define nothing,
+# the rows below would call whatever else answered to that name, and the arm
+# would go green having tested nothing at all.
+hc_src="$(awk '/^health_check\(\) \{/{f=1} f{print} f&&/^\}$/{exit}' "${GATE_DIR}/tls.sh")"
+hc_lines="$(printf '%s\n' "${hc_src}" | grep -c . || true)"
+case "${hc_src}" in *read_on*) hc_form=si ;; *) hc_form=no ;; esac
+if [ "${hc_lines}" -lt 10 ] || [ "${hc_form}" != si ]; then
+	echo "common_red: health_check did not come whole out of tls.sh (${hc_lines} lines, read_on ${hc_form})" >&2
+	echo "common_red: the E rows would call something else or nothing, so this is a failure and not a skip" >&2
+	exit 1
+fi
+eval "${hc_src}"
+
+# E1 is the control, and without it a function that answered 2 to everything
+# would score exactly as well as the fixed one.
+out="$(health_check 2>&1)" && rc=0 || rc=$?
+row "E1" "0" "${rc}" "health_check: three readable nodes with a leader among them answer 0"
+
+# E2 and E3 are one state read twice, the VALUE and the LINE, because the
+# collapse was in both at once: the caller got an empty string and the operator
+# got a sentence claiming the node had no role line.
+printf 'nolog' > "${RED}/state/2.mode"
+out="$(health_check 2>&1)" && rc=0 || rc=$?
+row "E2" "0" "${rc}" "health_check: a leader was found, so an unreadable third host does not change the answer"
+said="$(printf '%s\n' "${out}" | grep -c 'node 2: role line COULD NOT BE READ' || true)"
+lied="$(printf '%s\n' "${out}" | grep -c 'node 2: no role line yet' || true)"
+row "E3" "1/0" "${said}/${lied}" "health_check: the unreadable node is NAMED unreadable, and no longer reported as having no role line"
+
+# E4 carries the whole point. Node 1 is the only leader in the canned logs, so it
+# is rewritten to a follower for these two rows and put back byte for byte after.
+cp "${RED}/home/1/naylamp/logs/node.log" "${RED}/state/node1.log.kept"
+printf '2026-08-25T00:00:01Z role=follower leader=0 term=0\n2026-08-25T00:00:13Z role=follower leader=1 term=1\n' > "${RED}/home/1/naylamp/logs/node.log"
+out="$(health_check 2>&1)" && rc=0 || rc=$?
+row "E4" "2" "${rc}" "health_check: no leader found AND a host unreadable answers 2, which is not the same as a fleet that has no leader"
+
+# E5 is what stops the third value from swallowing the second: with every host
+# readable and still no leader, the answer has to be 1 and not 2.
+printf '' > "${RED}/state/2.mode"
+out="$(health_check 2>&1)" && rc=0 || rc=$?
+row "E5" "1" "${rc}" "health_check: no leader with every host readable is still a plain no, and answers 1"
+cp "${RED}/state/node1.log.kept" "${RED}/home/1/naylamp/logs/node.log"
+
 # ---- T: the tripwire, DEFER-073's instrument ----------------------------------
 #
 # The two banned shapes are run_on in a condition and run_on piped into a

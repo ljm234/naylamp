@@ -261,16 +261,41 @@ sclient() {
 	run_on 1 "cd naylamp && echo probe | timeout 15 openssl s_client -connect ${PRIV[${PROBE_TARGET}]}:${NODE_PORT} -cert ${cert} -key ${key} -CAfile certs/ca.pem -tls1_3 2>&1 || true"
 }
 
-# health_check prints each node's last role line and returns 0 if a leader is
-# present, the same signal cluster.sh status reads.
+# health_check prints each node's last role line and answers with THREE values,
+# which is the shape the other five gates already carry in leader_role: 0 a
+# leader is present, 1 no leader is present, and 2 the question could not be
+# answered because a host could not be read.
+#
+# THE THIRD VALUE IS THE POINT, and this was the last site of DEFER-072 in this
+# family. Written as a bare substitution with a trailing || true, an unreadable
+# host came back as the EMPTY STRING and printed as "no role line yet", which
+# tells the operator the node has no role line when in truth nobody could read
+# it; and then the same empty string fell into the case as "not leader". The
+# collapse was in the line a human reads and in the value the caller gets, at
+# once.
+#
+# A leader that WAS found is a leader whatever else could not be read, so an
+# unreadable host only decides the answer when no leader was found anywhere:
+# that is the difference between "there is no leader" and "one of the three
+# could not be looked at", and the caller can no longer confuse them.
 health_check() {
-	local n line leader=0
+	local n line leader=0 unread=0
 	for n in "${NODE_IDS[@]}"; do
-		line="$(run_on "$n" 'grep -E "role=" naylamp/logs/node.log 2>/dev/null | tail -1' 2>/dev/null || true)"
+		if ! line="$(read_on "$n" "0 1" 'grep -E "role=" naylamp/logs/node.log 2>/dev/null | tail -1')"; then
+			printf 'gate: node %s: role line COULD NOT BE READ, which is not the same as having none\n' "$n"
+			unread=1
+			continue
+		fi
 		printf 'gate: node %s: %s\n' "$n" "${line:-no role line yet}"
 		case "$line" in *role=leader*) leader=1 ;; esac
 	done
-	[ "$leader" -eq 1 ]
+	if [ "${leader}" -eq 1 ]; then
+		return 0
+	fi
+	if [ "${unread}" -eq 1 ]; then
+		return 2
+	fi
+	return 1
 }
 
 # mint_rogue mints an independent ca and a node-90 certificate into a separate
@@ -343,10 +368,17 @@ t41_peer() {
 	fi
 
 	note "cluster health after the forged attempt"
-	if health_check; then
+	# AND THE THIRD VALUE IS READ HERE TOO, because catching it upstairs and
+	# flattening it here would move the collapse one line instead of closing it.
+	# A health that could not be established is not a cluster without a leader.
+	local hc=0
+	health_check || hc=$?
+	if [ "${hc}" -eq 0 ]; then
 		pass "T4.1 cluster still has a leader after the forged attempt"
-	else
+	elif [ "${hc}" -eq 1 ]; then
 		fail "T4.1 no leader after the forged attempt"
+	else
+		fail "T4.1 the cluster's health after the forged attempt could not be established: a host's role line could not be read, the notes above name which, and no leader being found is not the same as there being none"
 	fi
 
 	end_check T4.1
