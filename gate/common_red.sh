@@ -375,7 +375,36 @@ hits="$(sweep)"
 if [ "${hits}" = "$(cat "${PINS}")" ]; then
 	eq=equal
 else
-	eq="MISMATCH: $(diff <(printf '%s\n' "${hits}") "${PINS}" | head -n 4 | tr '\n' ';')"
+	# THE ONLY FIRING THIS TRIPWIRE CAN GIVE WAS THE ONE NOBODY COULD READ, and
+	# the cause was one line. diff exits 1 when the files differ, which is the
+	# only branch this code runs in; under set -o pipefail that 1 became the
+	# pipeline's status, an assignment takes the status of its command
+	# substitution, and set -e killed the script right here. The row below was
+	# never printed, the diff just computed was thrown away, and the exit trap
+	# announced "0 failing rows or an abort" because FAILURES was still zero.
+	# Measured on a minimal copy of these lines: rc=1, nothing printed after.
+	#
+	# And the status is kept rather than swallowed with a bare || true, because
+	# diff answers THREE things and not two. 0 and 1 are answers about the files;
+	# 2 is diff saying it could not compare them, which under a blanket || true
+	# would print an empty MISMATCH indistinguishable from a one-line difference.
+	# That is the collapse DEFER-072 names, in the instrument this time.
+	diff_out="$(diff <(printf '%s\n' "${hits}") "${PINS}" 2>&1)" && diff_rc=0 || diff_rc=$?
+	# THE TRIM NEEDS ITS OWN GUARD, and this is the same defect one floor down.
+	# The first fix pulled diff out of the pipeline and left printf | head inside
+	# a command substitution: head exits after its lines, printf takes EPIPE, and
+	# with pipefail that 141 becomes the substitution's status, so set -e kills
+	# the script here again and the row goes unprinted a second time. Not
+	# reachable with the five pins of today and reachable the day that file grows:
+	# measured on these lines with a diff of 170889 bytes, rc=141, nothing after.
+	# A bare || true is right HERE and wrong one floor up, and the difference is
+	# what the status means: diff's status is an answer about the files, head's is
+	# an accident of how much got trimmed.
+	if [ "${diff_rc}" -gt 1 ]; then
+		eq="UNREADABLE: diff could not compare the sweep against ${PINS} (status ${diff_rc}): $(printf '%s' "${diff_out}" | head -n 1 || true)"
+	else
+		eq="MISMATCH: $(printf '%s\n' "${diff_out}" | head -n 4 | tr '\n' ';' || true)"
+	fi
 fi
 row "T1" "equal" "${eq}" "tripwire: the sweep over the gates equals the pinned set byte for byte, nobody judges a hit"
 
