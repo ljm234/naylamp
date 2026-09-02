@@ -41,7 +41,7 @@ func isolateLeader(h *harness, leadID cluster.NodeID) {
 // window, aligned to a window boundary, then heals. The leader keeps
 // heartbeating outbound, so every follower's lease stays fresh and none of them
 // challenges: the only thing that can move is the leader's own quorum check.
-// This reproduces the transient false positive the hysteresis must absorb — a
+// This reproduces the transient false positive the hysteresis must absorb: a
 // one-window latency spike that starves the leader of acks while the cluster is
 // perfectly healthy.
 func stallLeaderOneWindow(t *testing.T, h *harness, leadID cluster.NodeID) {
@@ -192,8 +192,8 @@ func TestRaft_CheckQuorum_HealthyLeaderHolds(t *testing.T) {
 
 // TestRaft_CheckQuorum_MinorityLossNoDemotion covers reintegration: losing a
 // single follower (a minority) must never demote the leader. The white-box
-// check that failedWindows stays zero makes this exercise quorumActive itself —
-// a miscount that treated the surviving majority as quorumless would climb the
+// check that failedWindows stays zero makes this exercise quorumActive itself,
+// since a miscount that treated the surviving majority as quorumless would climb the
 // counter here even though the leader has not (yet) stepped down. The follower
 // then rejoins cleanly on heal.
 func TestRaft_CheckQuorum_MinorityLossNoDemotion(t *testing.T) {
