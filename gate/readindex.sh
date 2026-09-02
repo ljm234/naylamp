@@ -193,9 +193,13 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# leader_role prints a node's last role line, empty if none yet.
+# leader_role prints a node's last role line, empty if none yet. It returns 2
+# when the host could not be read, which is not the same as having no role line:
+# the read goes through read_on so a cut stream cannot pass for a whole answer.
 leader_role() {
-	run_on "$1" 'grep -E "role=" naylamp/logs/node.log 2>/dev/null | tail -1' 2>/dev/null || true
+	local out
+	out="$(read_on "$1" "0 1" 'grep -E "role=" naylamp/logs/node.log 2>/dev/null | tail -1')" || return 2
+	printf '%s' "${out}"
 }
 role_of() { leader_role "$1" | grep -oE 'role=(follower|candidate|leader)' | tail -1 | cut -d= -f2 || true; }
 
@@ -230,7 +234,7 @@ readindex_count() {
 # comes back refused and no readindex line appears, and the red PASSES having
 # tested a dead process instead of an isolated leader. A dead node holds no office.
 find_leader() {
-	local n ar
+	local n ar rl
 	for n in "${NODE_IDS[@]}"; do
 		ar=0
 		alive_on "$n" || ar=$?
@@ -239,7 +243,15 @@ find_leader() {
 			continue
 		fi
 		[ "${ar}" -eq 1 ] && continue
-		case "$(leader_role "$n")" in *role=leader*) printf '%s' "$n"; return 0 ;; esac
+		# AND THE ROLE LINE IS READ WITH ITS THIRD VALUE TOO. alive_on already
+		# separates dead from unreadable above; this one did not, so a host that
+		# answered the liveness probe and then could not be read fell into the
+		# case as "not leader", which is the DEFER-072 collapse one probe later.
+		if ! rl="$(leader_role "$n")"; then
+			echo "gate: find_leader: node ${n} answers alive but its role line could not be read, and is skipped; that is not the same as not being leader" >&2
+			continue
+		fi
+		case "${rl}" in *role=leader*) printf '%s' "$n"; return 0 ;; esac
 	done
 	return 1
 }

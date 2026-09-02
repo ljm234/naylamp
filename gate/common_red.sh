@@ -75,11 +75,14 @@ export PATH="${RED}/bin:${PATH}"
 #
 # Parses the option noise, maps user@host to a fake node, and runs the command
 # with bash inside that node's fake home, with the stub dir on PATH so sudo
-# resolves to the shim. Two scenarios per node, set by writing "down" or "cut"
-# into state/<n>.mode: down returns 255 to everything except the bare "true"
-# that require_hosts_reachable sends, because the hole DEFER-072 names is the
-# transport that dies MID-RUN, not the blackout the reachability probe already
-# catches; cut prints a couple of lines and dies, the ssh severed mid-cat.
+# resolves to the shim. THREE scenarios per node, set by writing "down", "cut"
+# or "nolog" into state/<n>.mode: down returns 255 to everything except the bare
+# "true" that require_hosts_reachable sends, because the hole DEFER-072 names is
+# the transport that dies MID-RUN, not the blackout the reachability probe
+# already catches; cut prints a couple of lines and dies, the ssh severed
+# mid-cat; and nolog answers everything except a read of the node log, which is
+# the state cut cannot produce when the answer is a single line, because then
+# read_on's terminator still fits inside the two lines the cut keeps.
 cat > "${RED}/bin/ssh" <<'STUB'
 #!/usr/bin/env bash
 set -u
@@ -115,6 +118,11 @@ fi
 mode="$(cat "${RED}/state/${n}.mode" 2>/dev/null || true)"
 if [ "${mode}" = down ] && [ "${cmd}" != true ]; then
 	exit 255
+fi
+if [ "${mode}" = nolog ]; then
+	case "${cmd}" in
+		*node.log*) exit 255 ;;
+	esac
 fi
 if [ "${mode}" = cut ]; then
 	case "${cmd}" in
@@ -244,6 +252,18 @@ case "${out}" in
 esac
 row "0n" "no-terminator/255" "${got}/${rc}" "a cut stream loses its terminator and the status says 255"
 printf '' > "${RED}/state/1.mode"
+
+# nolog is the third scenario and it earns its row for the same reason the other
+# two have theirs: a mode nobody exercises is a mode that can rot. It exists
+# because cut cannot produce this state for a one-line answer, and that is not
+# an argument, it is the row below: with the log unreadable the bare probe still
+# answers, so the host is ALIVE, and only the log read fails.
+printf 'nolog' > "${RED}/state/2.mode"
+"${RED}/bin/ssh" ubuntu@203.0.113.12 true >/dev/null 2>&1 && rc=0 || rc=$?
+row "0o" "0" "${rc}" "a nolog node is alive: the bare probe still answers"
+out="$("${RED}/bin/ssh" ubuntu@203.0.113.12 'grep -E "role=" naylamp/logs/node.log | tail -1' 2>/dev/null)" && rc=0 || rc=$?
+row "0p" "255/" "${rc}/${out}" "and only its log read fails, which is what separates an unreadable log from a dead host"
+printf '' > "${RED}/state/2.mode"
 
 # ---- the envelope, sourced once ----------------------------------------------
 

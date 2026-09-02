@@ -146,17 +146,31 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# leader_role prints a node's last role line, empty if none yet.
+# leader_role prints a node's last role line, empty if none yet. It returns 2
+# when the host could not be read, which is not the same as having no role line:
+# the read goes through read_on so a cut stream cannot pass for a whole answer.
 leader_role() {
-	run_on "$1" 'grep -E "role=" naylamp/logs/node.log 2>/dev/null | tail -1' 2>/dev/null || true
+	local out
+	out="$(read_on "$1" "0 1" 'grep -E "role=" naylamp/logs/node.log 2>/dev/null | tail -1')" || return 2
+	printf '%s' "${out}"
 }
 
 # find_leader prints the id of the node whose last role line reports leader, empty
 # if none.
 find_leader() {
-	local n
+	local n rl
 	for n in "${NODE_IDS[@]}"; do
-		case "$(leader_role "$n")" in *role=leader*) printf '%s' "$n"; return 0 ;; esac
+		# THE ROLE LINE IS READ WITH ITS THIRD VALUE. Written as a bare command
+		# substitution, a host that could not be read fell into the case below as
+		# "not leader", which is the DEFER-072 collapse: an unreadable node and a
+		# follower produced the same answer, and the caller could not tell them
+		# apart. Skipping it is still not a verdict, and saying so on stderr is
+		# what lets whoever reads the run know a node was passed over.
+		if ! rl="$(leader_role "$n")"; then
+			echo "gate: find_leader: node ${n} could not be read and is skipped; that is not the same as not being leader" >&2
+			continue
+		fi
+		case "${rl}" in *role=leader*) printf '%s' "$n"; return 0 ;; esac
 	done
 	return 1
 }

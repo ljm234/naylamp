@@ -199,9 +199,19 @@ role_line_count() {
 # find_leader prints the id of the node whose last role line reports leader, empty
 # if none. A follower's last line is role=follower, so only a current leader matches.
 find_leader() {
-	local n
+	local n rl
 	for n in "${NODE_IDS[@]}"; do
-		case "$(leader_role "$n")" in *role=leader*) printf '%s' "$n"; return 0 ;; esac
+		# THE ROLE LINE IS READ WITH ITS THIRD VALUE. leader_role here has gone
+		# through read_on since before the others did, so it has been returning 2
+		# for an unreadable host all along, and this loop was throwing that 2 away
+		# in a command substitution: an unreadable node and a follower produced the
+		# same answer. This file was cited as the model the other four copied, and
+		# it carried the defect the copy was meant to close.
+		if ! rl="$(leader_role "$n")"; then
+			echo "gate: find_leader: node ${n} could not be read and is skipped; that is not the same as not being leader" >&2
+			continue
+		fi
+		case "${rl}" in *role=leader*) printf '%s' "$n"; return 0 ;; esac
 	done
 	return 1
 }
