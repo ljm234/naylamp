@@ -793,9 +793,39 @@ phase_provenance() {
 
 	# DEFER-041 asks every directed gate to print its own anchor and clock rather
 	# than leave it to whoever archives the artifact. This is that line.
-	local sha dirty
-	sha="$(cd "${REPO_DIR}" && git rev-parse HEAD)"
-	dirty="$(cd "${REPO_DIR}" && git status --porcelain | wc -l | tr -d ' ')"
+	# BOTH READS CATCH THEIR STATUS, and this is TWO lines and not one on
+	# purpose. The register's census of this class only listed the second, the
+	# one with the pipeline, because that is what its predicate looked for; the
+	# line above it dies first and with the same codes, since a substitution
+	# whose single command fails takes that status just as a pipeline does.
+	# Measured with REPO_DIR pointing outside a repository: rc=128 on the first,
+	# and rc=127 with git broken. Fixing only the second would have left the
+	# phase dying one line earlier, which reads exactly the same from outside.
+	#
+	# And a provenance that cannot be read is not a provenance of an unknown
+	# tree: it is a phase that cannot attest what it exists to attest, so it
+	# STOPS the run rather than carrying an empty HEAD into the artifact.
+	#
+	# The stop is what makes this correct, and the first version of this fix did
+	# not have it: it registered the verdict and returned, which skipped the
+	# stop at the tail of this function and let the run walk on. Fired on p1.sh
+	# sweep with git broken: the run reached phase_sweep with nothing uploaded,
+	# failed its three clause verdicts, and never named provenance in the final
+	# summary, because emit_final_verdict only walks EXPECTED and the sweep arm
+	# does not list it. The failure was invisible and the sweep took the blame.
+	local sha dirty rc
+	sha="$(cd "${REPO_DIR}" && git rev-parse HEAD)" && rc=0 || rc=$?
+	if [ "${rc}" -ne 0 ]; then
+		fail "P1.provenance: the commit of ${REPO_DIR} could not be read (git exited ${rc}); this run cannot anchor its artifact to a tree"
+		end_check P1.provenance
+		stop "P1.provenance failed; the run is not anchored"
+	fi
+	dirty="$(cd "${REPO_DIR}" && git status --porcelain | wc -l | tr -d ' ')" && rc=0 || rc=$?
+	if [ "${rc}" -ne 0 ]; then
+		fail "P1.provenance: the working tree state of ${REPO_DIR} could not be read (git exited ${rc}); a run that cannot say whether its tree was clean cannot claim provenance"
+		end_check P1.provenance
+		stop "P1.provenance failed; the run is not anchored"
+	fi
 	PROV_HEAD="${sha}"
 	PROV_DIRTY="${dirty}"
 	note "P1.provenance: HEAD ${sha}"

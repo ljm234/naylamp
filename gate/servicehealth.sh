@@ -406,11 +406,27 @@ prepare_phase() {
 # the hygiene guard can prove the fleet is homogeneous, the standing requirement of
 # the wire bit that a prior build would reject.
 record_binary_digests() {
-	local n d
+	local n d rc
 	SAME_BINARY=1
 	FIRST_DIGEST=""
 	for n in "${NODE_IDS[@]}"; do
-		d="$(run_on "$n" 'sha256sum naylamp/bin/naylampd 2>/dev/null | cut -d" " -f1' 2>/dev/null | tr -dc '0-9a-f')"
+		# THE STATUS IS CAUGHT INSTEAD OF KILLING THE RUN, and this is the shape
+		# DEFER-083 settles on in the register. Written bare, this
+		# assignment ended the whole gate the moment a host stopped answering:
+		# run_on returns 255, pipefail makes that the pipeline's status, the
+		# status of an assignment is the status of its substitution, and set -e
+		# kills the script on this line, before the note below can name the host.
+		# Measured on this function extracted verbatim with a run_on that refuses
+		# node 2: rc=255, one line printed, and the caller's end_check never
+		# reached, so its verdict stayed unrecorded rather than failing.
+		#
+		# An unreadable host is not a digest and is not an empty one either.
+		d="$(run_on "$n" 'sha256sum naylamp/bin/naylampd 2>/dev/null | cut -d" " -f1' 2>/dev/null | tr -dc '0-9a-f')" && rc=0 || rc=$?
+		if [ "${rc}" -ne 0 ]; then
+			note "node ${n} naylampd sha256 could not be read (ssh exited ${rc}); an unreadable host is not a matching build"
+			SAME_BINARY=0
+			continue
+		fi
 		note "node ${n} naylampd sha256 ${d:-unknown}"
 		if [ -z "${FIRST_DIGEST}" ]; then
 			FIRST_DIGEST="${d}"
@@ -432,7 +448,7 @@ pre() {
 	"${GATE_DIR}/deploy.sh" || stop "SH.pre: deploy.sh failed; cannot run the gate"
 	record_binary_digests
 	if [ "${SAME_BINARY}" -ne 1 ]; then
-		stop "SH.pre: the three hosts do not carry the same naylampd; the fleet must be homogeneous before any verdict"
+		stop "SH.pre: the three hosts are not known to carry the same naylampd; one or more of them differs or could not be read, and the notes above say which. The fleet must be homogeneous AND readable before any verdict"
 	fi
 	if ! prepare_phase ""; then
 		stop "SH.pre: no leader landed on node 2 or 3 within ${RESTART_TRIES} redraws; node 1 kept winning, so relocate leadership by hand and re-run"

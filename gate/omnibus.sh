@@ -532,11 +532,27 @@ ensure_leader_off_1() {
 }
 
 record_binary_digests() {
-	local n d
+	local n d rc
 	SAME_BINARY=1
 	FIRST_DIGEST=""
 	for n in "${NODE_IDS[@]}"; do
-		d="$(run_on "$n" 'sha256sum naylamp/bin/naylampd 2>/dev/null | cut -d" " -f1' 2>/dev/null | tr -dc '0-9a-f')"
+		# THE STATUS IS CAUGHT INSTEAD OF KILLING THE RUN, and this is the shape
+		# DEFER-083 settles on in the register. Written bare, this
+		# assignment ended the whole gate the moment a host stopped answering:
+		# run_on returns 255, pipefail makes that the pipeline's status, the
+		# status of an assignment is the status of its substitution, and set -e
+		# kills the script on this line, before the note below can name the host.
+		# Measured on this function extracted verbatim with a run_on that refuses
+		# node 2: rc=255, one line printed, and the caller's end_check never
+		# reached, so its verdict stayed unrecorded rather than failing.
+		#
+		# An unreadable host is not a digest and is not an empty one either.
+		d="$(run_on "$n" 'sha256sum naylamp/bin/naylampd 2>/dev/null | cut -d" " -f1' 2>/dev/null | tr -dc '0-9a-f')" && rc=0 || rc=$?
+		if [ "${rc}" -ne 0 ]; then
+			note "node ${n} naylampd sha256 could not be read (ssh exited ${rc}); an unreadable host is not a matching build"
+			SAME_BINARY=0
+			continue
+		fi
 		note "node ${n} naylampd sha256 ${d:-unknown}"
 		if [ -z "${FIRST_DIGEST}" ]; then
 			FIRST_DIGEST="${d}"
@@ -684,7 +700,7 @@ phase_provenance() {
 	if [ "${SAME_BINARY}" -eq 1 ] && [ -n "${FIRST_DIGEST}" ]; then
 		pass "OM.provenance: all three hosts carry the same naylampd (sha256 ${FIRST_DIGEST})"
 	else
-		fail "OM.provenance: the three hosts do not carry the same naylampd; a mixed fleet invalidates every later verdict"
+		fail "OM.provenance: the three hosts are not known to carry the same naylampd; one or more of them differs or could not be read, and the notes above say which. A mixed or unreadable fleet invalidates every later verdict"
 	fi
 
 	end_check OM.provenance
@@ -1133,7 +1149,14 @@ phase_digest() {
 			same=0
 			continue
 		fi
-		d="$(printf '%s' "${out}" | grep -oE 'digest=[0-9a-f]+' | tail -1 | cut -d= -f2)"
+		# grep EXITS 1 WHEN IT DOES NOT MATCH, and here not matching is a real
+		# outcome rather than an error: the guard above only proved the remote
+		# command exited zero, so what reaches this line is a binary that answered
+		# and printed no digest. Written bare, pipefail carried that 1 out of the
+		# pipeline and set -e ended the phase on this line, with OM.digest left
+		# unrecorded instead of failed. Measured on an output that carried exit=0
+		# and no digest= at all: rc=1 and nothing after it.
+		d="$(printf '%s' "${out}" | grep -oE 'digest=[0-9a-f]+' | tail -1 | cut -d= -f2)" || d=""
 		[ -z "${first}" ] && first="${d}"
 		if [ -z "${d}" ] || [ "${d}" != "${first}" ]; then
 			same=0
