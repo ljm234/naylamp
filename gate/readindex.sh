@@ -223,23 +223,21 @@ readindex_count() {
 # holds office. The old probe read an unanswered ssh as a dead node, which is
 # the collapse DEFER-072 counts.
 
-# find_leader prints the id of the node whose last role line reports leader, empty
-# if none.
-#
-# LIVENESS COMES FIRST, and without it two things go quietly wrong. A cluster the
-# operator stopped by hand still answers this with whichever node led last, so a
-# run against a dead cluster would sail past the precondition and only fail later
-# with a message about a write that did not commit. Worse is RI.red: if node 1's
-# daemon died between the green and the cut, the client reaches nothing, the read
-# comes back refused and no readindex line appears, and the red PASSES having
-# tested a dead process instead of an isolated leader. A dead node holds no office.
+# find_leader answers with THREE values, and the third is the point: 0 it prints
+# the id of the node whose last role line reports leader, 1 no node reports it
+# and every host was read, 2 no node reports it AND at least one host could not
+# be read. A follower's last line is role=follower, so only a current leader
+# matches. The contract is written here and not only inside the body, because a
+# header that describes a return contract wrongly is what aligns a caller
+# against something that is not there.
 find_leader() {
-	local n ar rl
+	local n ar rl unread=0
 	for n in "${NODE_IDS[@]}"; do
 		ar=0
 		alive_on "$n" || ar=$?
 		if [ "${ar}" -eq 2 ]; then
 			echo "gate: find_leader: node ${n} could not be read and is skipped, which is not the same as dead" >&2
+			unread=1
 			continue
 		fi
 		[ "${ar}" -eq 1 ] && continue
@@ -249,10 +247,19 @@ find_leader() {
 		# case as "not leader", which is the DEFER-072 collapse one probe later.
 		if ! rl="$(leader_role "$n")"; then
 			echo "gate: find_leader: node ${n} answers alive but its role line could not be read, and is skipped; that is not the same as not being leader" >&2
+			unread=1
 			continue
 		fi
 		case "${rl}" in *role=leader*) printf '%s' "$n"; return 0 ;; esac
 	done
+	# AND THE THIRD VALUE IS CARRIED OUT, not just announced. A loop that skipped
+	# an unreadable node and then returned the same 1 as a loop that read all
+	# three left the caller unable to tell "there is no leader" from "one of the
+	# three could not be looked at", which is the DEFER-072 collapse one floor up
+	# from the one this function already closed.
+	if [ "${unread}" -eq 1 ]; then
+		return 2
+	fi
 	return 1
 }
 
@@ -271,17 +278,29 @@ wait_for_leader() {
 # start in three. A node-1 leader is the only one the co-located client can still
 # reach once its peers are cut, which is what the red needs.
 ensure_leader_1() {
-	local tries=0 L
-	L="$(find_leader || true)"
+	local tries=0 L rc=0
+	L="$(find_leader)" || rc=$?
 	while [ "${L}" != 1 ]; do
 		tries=$((tries + 1))
 		[ "${tries}" -le "${RESTART_TRIES}" ] || return 1
-		note "leader is on node ${L:-none}; redrawing (attempt ${tries}) to land it on node 1"
+		# ${L:-none} WAS A LIE WHENEVER A HOST COULD NOT BE READ, and this loop is
+		# one of the places where such a note reaches a GREEN artifact: a later
+		# redraw can find a leader, this returns 0, the run goes on and seals with
+		# the sentence already printed. An artifact line gets quoted on its own,
+		# so it has to be true on its own, and none was not.
+		if [ "${rc}" -eq 2 ]; then
+			note "the leader could NOT BE NAMED: a node's role line could not be read, which is not the same as there being no leader; redrawing (attempt ${tries}) to land it on node 1"
+		elif [ -z "${L}" ]; then
+			note "no node reports the leader role; redrawing (attempt ${tries}) to land it on node 1"
+		else
+			note "leader is on node ${L}; redrawing (attempt ${tries}) to land it on node 1"
+		fi
 		"${GATE_DIR}/cluster.sh" stop >/dev/null 2>&1 || true
 		"${GATE_DIR}/cluster.sh" start >/dev/null 2>&1 || true
 		wait_for_leader || return 1
 		sleep "${SETTLE_S}"
-		L="$(find_leader || true)"
+		rc=0
+		L="$(find_leader)" || rc=$?
 	done
 	return 0
 }
@@ -395,10 +414,24 @@ green() {
 red() {
 	note "RI.red: with node 1 cut from its majority, the read is withheld AND no new readindex line appears, so the round never confirmed"
 	begin_check
-	local L
-	L="$(find_leader || true)"
+	# THIS ONE DOES NOT REACH A SEALED ARTIFACT, because it ends in fail and a red
+	# run seals nothing; it is fixed here anyway and the difference is written so
+	# nobody reads the fix as a claim that it blocked. With node 1 unreadable, the
+	# old message said leadership had LEFT node 1, which is a thing that may not
+	# have happened: the office may still be there and unreadable.
+	local L rc=0 n1rc=0
+	L="$(find_leader)" || rc=$?
 	if [ "${L}" != 1 ]; then
-		fail "RI.red: leadership left node 1 before the cut (leader ${L:-none}); rerun so the client can reach the isolated leader"
+		# THE QUESTION IS ABOUT NODE 1 AND NOT ABOUT "SOME NODE", which is what
+		# the first version of this branch got wrong: find_leader returns 2 when
+		# ANY host was unread, so a readable node 1 that is merely a follower
+		# would have been reported as an unknown. Node 1 is asked directly.
+		leader_role 1 >/dev/null || n1rc=$?
+		if [ "${n1rc}" -ne 0 ]; then
+			fail "RI.red: node 1 could not be read before the cut, so whether office is still on it cannot be told either way; rerun"
+		else
+			fail "RI.red: leadership left node 1 before the cut (leader ${L:-no node}); rerun so the client can reach the isolated leader"
+		fi
 		end_check RI.red
 		return
 	fi

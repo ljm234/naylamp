@@ -261,10 +261,18 @@ sclient() {
 	run_on 1 "cd naylamp && echo probe | timeout 15 openssl s_client -connect ${PRIV[${PROBE_TARGET}]}:${NODE_PORT} -cert ${cert} -key ${key} -CAfile certs/ca.pem -tls1_3 2>&1 || true"
 }
 
-# health_check prints each node's last role line and answers with THREE values,
-# which is the shape the other five gates already carry in leader_role: 0 a
-# leader is present, 1 no leader is present, and 2 the question could not be
+# health_check prints each node's last role line and answers with THREE values:
+# 0 a leader is present, 1 no leader is present, and 2 the question could not be
 # answered because a host could not be read.
+#
+# WHAT THE OTHER GATES SHARE WITH THIS IS THE 2 AND NOT THE PAIR, and the first
+# version of this comment got that wrong: it said the five copies of leader_role
+# already carry this shape. They do not. leader_role returns 0 or 2 and never 1,
+# and its 0 means the role line arrived whole, not that a leader was found. The
+# 0/1 pair with a leader's meaning belongs to find_leader, which is the function
+# that had 0 and 1 and no third value at all until the same pass that fixed this
+# comment gave it one. Following the old pointer would have aligned a caller
+# against a contract that was never there.
 #
 # THE THIRD VALUE IS THE POINT, and this was the last site of DEFER-072 in this
 # family. Written as a bare substitution with a trailing || true, an unreadable

@@ -235,13 +235,15 @@ role_line_count() {
 	printf '%s' "${c}" | tr -dc '0-9'
 }
 
-# find_leader prints the id of the node whose last role line reports leader, empty
-# if none. A follower's last line is role=follower, so only a current leader
-# matches. Within a phase this reads a live node's fresh line rather than a stale
-# one, and the mechanism is wipe_hosts, which clears logs at the start of every
-# phase; the launch itself appends and no longer truncates.
+# find_leader answers with THREE values, and the third is the point: 0 it prints
+# the id of the node whose last role line reports leader, 1 no node reports it
+# and every host was read, 2 no node reports it AND at least one host could not
+# be read. A follower's last line is role=follower, so only a current leader
+# matches. The contract is written here and not only inside the body, because a
+# header that describes a return contract wrongly is what aligns a caller
+# against something that is not there.
 find_leader() {
-	local n rl
+	local n rl unread=0
 	for n in "${NODE_IDS[@]}"; do
 		# THE ROLE LINE IS READ WITH ITS THIRD VALUE. Written as a bare command
 		# substitution, a host that could not be read fell into the case below as
@@ -251,10 +253,19 @@ find_leader() {
 		# what lets whoever reads the run know a node was passed over.
 		if ! rl="$(leader_role "$n")"; then
 			echo "gate: find_leader: node ${n} could not be read and is skipped; that is not the same as not being leader" >&2
+			unread=1
 			continue
 		fi
 		case "${rl}" in *role=leader*) printf '%s' "$n"; return 0 ;; esac
 	done
+	# AND THE THIRD VALUE IS CARRIED OUT, not just announced. A loop that skipped
+	# an unreadable node and then returned the same 1 as a loop that read all
+	# three left the caller unable to tell "there is no leader" from "one of the
+	# three could not be looked at", which is the DEFER-072 collapse one floor up
+	# from the one this function already closed.
+	if [ "${unread}" -eq 1 ]; then
+		return 2
+	fi
 	return 1
 }
 
@@ -386,17 +397,29 @@ wipe_hosts() {
 # redraw re-reads the fresh role line and redraws again until it lands or the bound
 # is spent.
 ensure_leader_off_1() {
-	local tries=0 L
-	L="$(find_leader || true)"
+	local tries=0 L rc=0
+	L="$(find_leader)" || rc=$?
 	while [ -z "${L}" ] || [ "${L}" = 1 ]; do
 		tries=$((tries + 1))
 		[ "${tries}" -le "${RESTART_TRIES}" ] || return 1
-		note "leader is on node ${L:-none}; redrawing (attempt ${tries}) to land it on node 2 or 3"
+		# ${L:-none} WAS A LIE WHENEVER A HOST COULD NOT BE READ, and this loop is
+		# one of the places where such a note reaches a GREEN artifact: a later
+		# redraw can find a leader, this returns 0, the run goes on and seals with
+		# the sentence already printed. An artifact line gets quoted on its own,
+		# so it has to be true on its own, and none was not.
+		if [ "${rc}" -eq 2 ]; then
+			note "the leader could NOT BE NAMED: a node's role line could not be read, which is not the same as there being no leader; redrawing (attempt ${tries}) to land it on node 2 or 3"
+		elif [ -z "${L}" ]; then
+			note "no node reports the leader role; redrawing (attempt ${tries}) to land it on node 2 or 3"
+		else
+			note "leader is on node ${L}; redrawing (attempt ${tries}) to land it on node 2 or 3"
+		fi
 		"${GATE_DIR}/cluster.sh" stop >/dev/null 2>&1 || true
 		"${GATE_DIR}/cluster.sh" start >/dev/null 2>&1 || true
 		wait_for_leader || return 1
 		sleep "${RELOCATE_SETTLE_S}"
-		L="$(find_leader || true)"
+		rc=0
+		L="$(find_leader)" || rc=$?
 	done
 	return 0
 }

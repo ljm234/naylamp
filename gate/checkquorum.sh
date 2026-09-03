@@ -196,10 +196,15 @@ role_line_count() {
 	printf '%s' "${c}" | tr -dc '0-9'
 }
 
-# find_leader prints the id of the node whose last role line reports leader, empty
-# if none. A follower's last line is role=follower, so only a current leader matches.
+# find_leader answers with THREE values, and the third is the point: 0 it prints
+# the id of the node whose last role line reports leader, 1 no node reports it
+# and every host was read, 2 no node reports it AND at least one host could not
+# be read. A follower's last line is role=follower, so only a current leader
+# matches. The contract is written here and not only inside the body, because a
+# header that describes a return contract wrongly is what aligns a caller
+# against something that is not there.
 find_leader() {
-	local n rl
+	local n rl unread=0
 	for n in "${NODE_IDS[@]}"; do
 		# THE ROLE LINE IS READ WITH ITS THIRD VALUE. leader_role here has gone
 		# through read_on since before the others did, so it has been returning 2
@@ -209,10 +214,19 @@ find_leader() {
 		# it carried the defect the copy was meant to close.
 		if ! rl="$(leader_role "$n")"; then
 			echo "gate: find_leader: node ${n} could not be read and is skipped; that is not the same as not being leader" >&2
+			unread=1
 			continue
 		fi
 		case "${rl}" in *role=leader*) printf '%s' "$n"; return 0 ;; esac
 	done
+	# AND THE THIRD VALUE IS CARRIED OUT, not just announced. A loop that skipped
+	# an unreadable node and then returned the same 1 as a loop that read all
+	# three left the caller unable to tell "there is no leader" from "one of the
+	# three could not be looked at", which is the DEFER-072 collapse one floor up
+	# from the one this function already closed.
+	if [ "${unread}" -eq 1 ]; then
+		return 2
+	fi
 	return 1
 }
 
@@ -238,26 +252,69 @@ partition_installed() {
 
 # cluster_converged reports whether exactly one node is leader and every node's
 # leader field names it, the shape of a settled cluster.
+# cluster_converged answers with THREE values, and the third is why this was
+# rewritten: 0 exactly one node reports leader and all three name it, 1 that is
+# not what the fleet reports, and 2 a host could not be read so the question was
+# not answered. It used to go through role_of and leaderfield_of, which flatten
+# an unreadable host to the empty string, so an unreadable node made this return
+# 1, "not converged", about a fleet that may well be converged. That 1 travelled
+# up through wait_converged into a note that ASSERTS the cluster did not
+# reconverge, in a run whose only verdict is registered before it: a false line
+# inside a green artifact, which is the shape DEFER-072 is about. The reads go
+# through leader_role, which carries the third value, and each node is read ONCE
+# for both fields rather than twice.
 cluster_converged() {
-	local n L="" leadcount=0
+	local n L="" leadcount=0 rl role lf
+	local -a lines=()
 	for n in "${NODE_IDS[@]}"; do
-		if [ "$(role_of "$n")" = leader ]; then leadcount=$((leadcount + 1)); L="$n"; fi
+		rl="$(leader_role "$n")" || return 2
+		lines[n]="${rl}"
+		role="$(printf '%s' "${rl}" | grep -oE 'role=(follower|candidate|leader)' | tail -1 | cut -d= -f2 || true)"
+		if [ "${role}" = leader ]; then
+			leadcount=$((leadcount + 1))
+			L="$n"
+		fi
 	done
 	[ "${leadcount}" -eq 1 ] || return 1
 	for n in "${NODE_IDS[@]}"; do
-		[ "$(leaderfield_of "$n")" = "${L}" ] || return 1
+		lf="$(printf '%s' "${lines[n]}" | grep -oE 'leader=[0-9]+' | tail -1 | cut -d= -f2 || true)"
+		[ "${lf}" = "${L}" ] || return 1
 	done
 	return 0
 }
 
 # wait_converged polls cluster_converged until it holds or the budget runs out.
+# wait_converged carries cluster_converged's third value out to its callers, and
+# it does NOT give up on the first unreadable answer: it keeps polling to the
+# budget, because a host that is unreadable now may answer on the next turn, and
+# only reports 2 if the budget ran out with a read still missing. So 1 means the
+# fleet said it is not converged and 2 means nobody could tell.
 wait_converged() {
-	local timeout="$1" start now
+	local timeout="$1" start now rc unread=0
 	start=$(date +%s)
 	while :; do
-		cluster_converged && return 0
+		rc=0
+		cluster_converged || rc=$?
+		if [ "${rc}" -eq 0 ]; then
+			return 0
+		fi
+		# EL PESTILLO DESCRIBE LA ULTIMA LECTURA Y NO EL HISTORIAL. Dejandolo
+		# pegado, una sola lectura ilegible en la primera vuelta tenia el
+		# veredicto de todo el presupuesto aunque las siguientes leyeran los
+		# tres hosts y dijeran que no converge, y eso es esta misma clase del
+		# reves: decir que no se pudo saber cuando si se pudo.
+		if [ "${rc}" -eq 2 ]; then
+			unread=1
+		else
+			unread=0
+		fi
 		now=$(date +%s)
-		[ $(( now - start )) -ge "${timeout}" ] && return 1
+		if [ $(( now - start )) -ge "${timeout}" ]; then
+			if [ "${unread}" -eq 1 ]; then
+				return 2
+			fi
+			return 1
+		fi
 		sleep "${POLL_S}"
 	done
 }
@@ -340,9 +397,26 @@ precondition() {
 		if [ "${alive_rc}" -eq 1 ]; then
 			stop "F0: node ${n} is not running; run cluster.sh start and wait until cluster.sh status shows a leader"
 		fi
-		[ -n "$(role_of "$n")" ] || stop "F0: node ${n} has no role line yet; run cluster.sh start and wait until cluster.sh status shows a leader"
+		# AND THE ROLE LINE IS READ WITH ITS THIRD VALUE TOO, which is what made
+		# the branch further down nearly unreachable: role_of flattens an
+		# unreadable host to the empty string, so a host that is ALIVE with an
+		# unreadable log stopped the run HERE, saying it has no role line yet,
+		# about a node nobody could read. alive_on above already separates dead
+		# from unreadable; this line did not, one probe later.
+		local rl0 rl0rc=0
+		rl0="$(leader_role "$n")" || rl0rc=$?
+		if [ "${rl0rc}" -ne 0 ]; then
+			stop "F0: node ${n} answers alive but its role line could not be read, so whether it has one is not known; make the three hosts readable before this gate"
+		fi
+		[ -n "${rl0}" ] || stop "F0: node ${n} has no role line yet; run cluster.sh start and wait until cluster.sh status shows a leader"
 	done
-	wait_converged "${CONVERGE_TIMEOUT_S}" || stop "F0: cluster did not converge on a single leader within ${CONVERGE_TIMEOUT_S}s"
+	local f0wc=0
+	wait_converged "${CONVERGE_TIMEOUT_S}" || f0wc=$?
+	if [ "${f0wc}" -eq 2 ]; then
+		stop "F0: whether the cluster converged on a single leader could not be told within ${CONVERGE_TIMEOUT_S}s because a host could not be read; run cluster.sh status and make the three hosts readable before this gate"
+	elif [ "${f0wc}" -ne 0 ]; then
+		stop "F0: cluster did not converge on a single leader within ${CONVERGE_TIMEOUT_S}s"
+	fi
 	LEADER="$(find_leader || true)"
 	[ -n "${LEADER}" ] || stop "F0: no leader found after convergence"
 	BASE_COUNT="$(role_line_count "${LEADER}")" || stop "F0: the role-line count on the leader could not be read; the baseline cannot be taken"
@@ -361,8 +435,31 @@ f1_red() {
 	assert_stays_leader "${L}" "${SETTLE_S}" CQ.red "node ${L} is still role=leader with no new role transition after ${SETTLE_S}s of isolation; without the quorum check the isolated leader holds its term as a mute leader, the phenomenon the fix removes"
 	note "F1: healing node ${L}"
 	"${GATE_DIR}/partition.sh" heal "${L}"
-	if wait_converged "${CONVERGE_TIMEOUT_S}"; then
-		note "F1: cluster reconverged after heal, leader is node $(find_leader || echo none)"
+	# AND THE ELSE OF THIS IF WAS THE WIDE PATH, not the narrow one: with a host
+	# unreadable, wait_converged always answers something other than 0, so the
+	# branch a reader lands in is the one below and not the one just above. The
+	# first version of this fix rewrote only the then, which left the lie exactly
+	# where it was and moved a comment on top of it.
+	local wc=0
+	wait_converged "${CONVERGE_TIMEOUT_S}" || wc=$?
+	if [ "${wc}" -eq 0 ]; then
+		# THE WORD none WAS A LIE WAITING FOR AN UNREADABLE HOST, and this note is
+		# the clearest case of the class because it decides no verdict at all:
+		# CQ.red is already registered by assert_stays_leader above, so a run that
+		# ends GREEN carries this sentence into its artifact, and an artifact line
+		# gets quoted on its own. "leader is node none" read alone says there is no
+		# leader when there is one nobody could read.
+		local nl nlrc=0
+		nl="$(find_leader)" || nlrc=$?
+		if [ "${nlrc}" -eq 0 ]; then
+			note "F1: cluster reconverged after heal, leader is node ${nl}"
+		elif [ "${nlrc}" -eq 2 ]; then
+			note "F1: cluster reconverged after heal, and the leader could NOT BE NAMED because a node's role line could not be read; that is not the same as there being none"
+		else
+			note "F1: cluster reconverged after heal, and no node reports the leader role"
+		fi
+	elif [ "${wc}" -eq 2 ]; then
+		note "F1: whether the cluster reconverged after heal could NOT BE TOLD within ${CONVERGE_TIMEOUT_S}s, because a host could not be read; that is not the same as it having failed to reconverge"
 	else
 		note "F1: cluster did not reconverge within ${CONVERGE_TIMEOUT_S}s after heal; inspect the node logs"
 	fi
@@ -409,9 +506,23 @@ f3_green() {
 	note "F3: healing node ${L}"
 	"${GATE_DIR}/partition.sh" heal "${L}"
 	begin_check
-	if [ -n "${newleader}" ] && wait_role_leader "${L}" follower "${newleader}" "${CONVERGE_TIMEOUT_S}" && wait_converged "${CONVERGE_TIMEOUT_S}"; then
+	# THE THIRD LAMP GETS READ HERE TOO. Collapsed into the && chain, a 2 from
+	# wait_converged came out as this fail, which ASSERTS the node did not
+	# reintegrate when the only thing that happened is that a host went unread.
+	# The run is red either way and a red seals nothing, so this does not block;
+	# it is fixed because a verdict line gets quoted on its own and this one
+	# pointed at the cluster instead of at the silent host. assert_stays_leader,
+	# three functions up, already had the right shape.
+	local rj=1
+	if [ -n "${newleader}" ] && wait_role_leader "${L}" follower "${newleader}" "${CONVERGE_TIMEOUT_S}"; then
+		rj=0
+		wait_converged "${CONVERGE_TIMEOUT_S}" || rj=$?
+	fi
+	if [ "${rj}" -eq 0 ]; then
 		pass "CQ.rejoin: after heal node ${L} is role=follower leader=${newleader} and the cluster converged on leader ${newleader}; the old leader rejoined as a follower at the new term"
 		note "CQ.rejoin evidence, last role line on node ${L}: $(leader_role "${L}")"
+	elif [ "${rj}" -eq 2 ]; then
+		fail "CQ.rejoin: whether node ${L} reintegrated as a follower of ${newleader} and the cluster converged could NOT BE TOLD within ${CONVERGE_TIMEOUT_S}s, because a host could not be read"
 	else
 		fail "CQ.rejoin: node ${L} did not reintegrate as a follower of ${newleader:-the new leader} and converge within ${CONVERGE_TIMEOUT_S}s"
 	fi

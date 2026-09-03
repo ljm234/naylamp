@@ -381,13 +381,21 @@ leader_role() {
 
 role_of() { leader_role "$1" | grep -oE 'role=(follower|candidate|leader)' | tail -1 | cut -d= -f2 || true; }
 
+# find_leader answers with THREE values, and the third is the point: 0 it prints
+# the id of the node whose last role line reports leader, 1 no node reports it
+# and every host was read, 2 no node reports it AND at least one host could not
+# be read. A follower's last line is role=follower, so only a current leader
+# matches. The contract is written here and not only inside the body, because a
+# header that describes a return contract wrongly is what aligns a caller
+# against something that is not there.
 find_leader() {
-	local n ar rl
+	local n ar rl unread=0
 	for n in "${NODE_IDS[@]}"; do
 		ar=0
 		alive_on "$n" || ar=$?
 		if [ "${ar}" -eq 2 ]; then
 			echo "gate: find_leader: node ${n} could not be read and is skipped, which is not the same as dead" >&2
+			unread=1
 			continue
 		fi
 		[ "${ar}" -eq 1 ] && continue
@@ -397,10 +405,19 @@ find_leader() {
 		# case as "not leader", which is the DEFER-072 collapse one probe later.
 		if ! rl="$(leader_role "$n")"; then
 			echo "gate: find_leader: node ${n} answers alive but its role line could not be read, and is skipped; that is not the same as not being leader" >&2
+			unread=1
 			continue
 		fi
 		case "${rl}" in *role=leader*) printf '%s' "$n"; return 0 ;; esac
 	done
+	# AND THE THIRD VALUE IS CARRIED OUT, not just announced. A loop that skipped
+	# an unreadable node and then returned the same 1 as a loop that read all
+	# three left the caller unable to tell "there is no leader" from "one of the
+	# three could not be looked at", which is the DEFER-072 collapse one floor up
+	# from the one this function already closed.
+	if [ "${unread}" -eq 1 ]; then
+		return 2
+	fi
 	return 1
 }
 
@@ -526,17 +543,29 @@ wipe_hosts() {
 # system. A relocation that never lands aborts with a message that says what to do,
 # rather than proceeding to partition the client's own host.
 ensure_leader_off_1() {
-	local tries=0 L
-	L="$(find_leader || true)"
+	local tries=0 L rc=0
+	L="$(find_leader)" || rc=$?
 	while [ -z "${L}" ] || [ "${L}" = 1 ]; do
 		tries=$((tries + 1))
 		[ "${tries}" -le "${RESTART_TRIES}" ] || return 1
-		note "leader is on node ${L:-none}; redrawing (attempt ${tries} of ${RESTART_TRIES}) to land it on node 2 or 3"
+		# ${L:-none} WAS A LIE WHENEVER A HOST COULD NOT BE READ, and this loop is
+		# one of the places where such a note reaches a GREEN artifact: a later
+		# redraw can find a leader, this returns 0, the run goes on and seals with
+		# the sentence already printed. An artifact line gets quoted on its own,
+		# so it has to be true on its own, and none was not.
+		if [ "${rc}" -eq 2 ]; then
+			note "the leader could NOT BE NAMED: a node's role line could not be read, which is not the same as there being no leader; redrawing (attempt ${tries} of ${RESTART_TRIES}) to land it on node 2 or 3"
+		elif [ -z "${L}" ]; then
+			note "no node reports the leader role; redrawing (attempt ${tries} of ${RESTART_TRIES}) to land it on node 2 or 3"
+		else
+			note "leader is on node ${L}; redrawing (attempt ${tries} of ${RESTART_TRIES}) to land it on node 2 or 3"
+		fi
 		"${GATE_DIR}/cluster.sh" stop >/dev/null 2>&1 || true
 		"${GATE_DIR}/cluster.sh" start >/dev/null 2>&1 || true
 		wait_for_leader || return 1
 		sleep "${RELOCATE_SETTLE_S}"
-		L="$(find_leader || true)"
+		rc=0
+		L="$(find_leader)" || rc=$?
 	done
 	return 0
 }
@@ -816,10 +845,23 @@ phase_kill() {
 	note "OM.kill: reintegrating node ${L}"
 	"${GATE_DIR}/cluster.sh" start-node "${L}" >/dev/null 2>&1 || true
 	sleep "${HEAL_SETTLE_S}"
-	if [ "$(role_of "${L}")" = leader ]; then
+	# THE BRANCH ITSELF WAS THE LIE, and this one is worse than a blank because
+	# the sentence keeps its verb. With node L unreadable, role_of returned the
+	# empty string, the condition went false, and the else printed "rejoined as"
+	# about a node nobody could read. OM.kill's verdict is registered above and
+	# neither note touches it, so a green run carried that sentence into its
+	# artifact, where lines get quoted on their own. The kill itself already
+	# tells an unreadable node from a dead one a few lines up; this block had
+	# forgotten it, which is the same defect twice in one function.
+	local rl rlrc=0 role=""
+	rl="$(leader_role "${L}")" || rlrc=$?
+	role="$(printf '%s' "${rl}" | grep -oE 'role=(follower|candidate|leader)' | tail -1 | cut -d= -f2 || true)"
+	if [ "${rlrc}" -ne 0 ]; then
+		note "OM.kill: node ${L} could not be read after the restart, so whether it rejoined is NOT KNOWN; that is not the same as having rejoined"
+	elif [ "${role}" = leader ]; then
 		note "OM.kill: node ${L} came back and won office again; that is legal and the run continues"
 	else
-		note "OM.kill: node ${L} rejoined as $(role_of "${L}")"
+		note "OM.kill: node ${L} rejoined as ${role:-no role line yet}"
 	fi
 
 	end_check OM.kill

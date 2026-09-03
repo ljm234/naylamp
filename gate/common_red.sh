@@ -21,6 +21,7 @@ set -euo pipefail
 
 GATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RED="${GATE_DIR}/out/common-red"
+AQUI_GATE="${GATE_DIR}"
 
 FAILURES=0
 row() {
@@ -414,6 +415,304 @@ printf '' > "${RED}/state/2.mode"
 out="$(health_check 2>&1)" && rc=0 || rc=$?
 row "E5" "1" "${rc}" "health_check: no leader with every host readable is still a plain no, and answers 1"
 cp "${RED}/state/node1.log.kept" "${RED}/home/1/naylamp/logs/node.log"
+
+# ---- F: find_leader's third value, and the note that used to lie -------------
+#
+# THE STATE THAT MAKES THE OLD NOTES LIE is one state and not a family: a host
+# that is ALIVE and whose node log cannot be read, with the office on it. The
+# old code read that as the empty string, printed the word "none", and so said
+# there is no leader when there is one nobody could read. The nolog mode of the
+# stub above is exactly that state, which is why it was built.
+#
+# find_leader comes in TWO code shapes and both are exercised: omnibus.sh runs an
+# alive_on guard ahead of the read, servicehealth.sh does not. The guarded shape
+# has TWO ways to reach its third value, an unreadable LIVENESS probe and an
+# unreadable ROLE LINE, and both get a row, because the first version of this
+# section only reached the second and a mutant that deleted the first stayed
+# green. A DEAD node gets a row too, for the opposite reason: it must NOT raise
+# the third value, or the shape's whole purpose is gone.
+#
+# fl_take extracts a function BY TEXT and leaves it in fl_src. THE CHECK RUNS IN
+# THE MAIN SHELL and not inside a substitution, which is where the first version
+# of this guard was wrong: `eval "$(guard ...)"` runs the guard's exit in a
+# subshell, eval takes an empty string, set -e never sees a status, and the
+# PREVIOUS definition stays in scope. A guard written against a dead instrument,
+# dead itself.
+fl_src=""
+fl_take() { # $1 fichero, $2 funcion, $3 minimo de lineas, $4 texto obligatorio
+	fl_src="$(awk -v fn="^$2\\\\(\\\\) \\\\{" '$0 ~ fn {f=1} f{print} f&&/^\}$/{exit}' "$1")"
+	if [ "$(printf '%s\n' "${fl_src}" | grep -c . || true)" -lt "$3" ] || ! printf '%s' "${fl_src}" | grep -q -- "$4"; then
+		echo "common_red: ${2} did not come whole out of ${1}; the F rows would test nothing" >&2
+		return 1
+	fi
+	return 0
+}
+
+# El cajon de la seccion: los tres nodos con pid VIVO, para que alive_on conteste
+# 0 salvo donde el modo diga otra cosa, y las filas monten su estado a mano.
+cp "${RED}/home/1/naylamp/logs/node.log" "${RED}/state/node1.log.f"
+cp "${RED}/home/2/naylamp/logs/node.log" "${RED}/state/node2.log.f"
+cp "${RED}/home/3/naylamp/logs/node.log" "${RED}/state/node3.log.f"
+cp "${RED}/home/1/naylamp/naylampd.pid" "${RED}/state/node1.pid.f"
+for n in 1 2 3; do printf '%s' "$$" > "${RED}/home/${n}/naylamp/naylampd.pid"; done
+SEGUIDOR='2026-08-25T00:00:01Z role=follower leader=0 term=0\n2026-08-25T00:00:13Z role=follower leader=2 term=2\n'
+LIDER='2026-08-25T00:00:01Z role=follower leader=0 term=0\n2026-08-25T00:00:12Z role=leader leader=%s term=2\n'
+
+fl_take "${GATE_DIR}/omnibus.sh" leader_role 4 read_on || exit 1
+eval "${fl_src}"
+fl_take "${GATE_DIR}/omnibus.sh" find_leader 14 'unread=1' || exit 1
+eval "${fl_src}"
+
+# El nodo 2 lleva la oficina y su log no se puede leer; los otros dos, seguidores.
+printf "${SEGUIDOR}" > "${RED}/home/1/naylamp/logs/node.log"
+printf "${LIDER}" 2 > "${RED}/home/2/naylamp/logs/node.log"
+printf "${SEGUIDOR}" > "${RED}/home/3/naylamp/logs/node.log"
+printf 'nolog' > "${RED}/state/2.mode"
+lr=0; leader_role 2 >/dev/null || lr=$?
+row "F1" "2" "${lr}" "leader_role: a live host whose log cannot be read answers 2, which is the value the OM.kill branch reads"
+rc=0; out="$(find_leader 2>/dev/null)" || rc=$?
+row "F2" "2/" "${rc}/${out}" "find_leader, guarded shape, unreadable ROLE LINE: no leader found AND a host unreadable answers 2, not the 1 that means there is none"
+printf '' > "${RED}/state/2.mode"
+
+# La otra via de la forma con guarda: la sonda de VIVEZA es la que no se puede leer.
+printf 'down' > "${RED}/state/2.mode"
+rc=0; out="$(find_leader 2>/dev/null)" || rc=$?
+row "F3" "2/" "${rc}/${out}" "find_leader, guarded shape, unreadable LIVENESS: the other way into the third value, which no row reached before"
+printf '' > "${RED}/state/2.mode"
+
+# Y el contrario, que es lo que la guarda existe para no confundir: un nodo MUERTO
+# no levanta el tercer valor, porque un nodo muerto no tiene oficina y eso se sabe.
+sleep 0 & muerto=$!
+wait "${muerto}" 2>/dev/null || true
+printf '%s' "${muerto}" > "${RED}/home/3/naylamp/naylampd.pid"
+# Y el nodo 2 pasa a seguidor, que las filas de arriba lo dejaron con la oficina:
+# con un lider vivo delante la funcion devuelve 0 antes de mirar al muerto, y esta
+# fila estaria midiendo el hallazgo en vez de la ausencia del hallazgo.
+printf "${SEGUIDOR}" > "${RED}/home/2/naylamp/logs/node.log"
+rc=0; out="$(find_leader 2>/dev/null)" || rc=$?
+row "F4" "1/" "${rc}/${out}" "find_leader, guarded shape: a DEAD node does not raise the third value, which is the distinction the guard exists for"
+printf '%s' "$$" > "${RED}/home/3/naylamp/naylampd.pid"
+
+# La forma SIN guarda, que llevan tres de los cinco, sobre el mismo estado.
+fl_take "${GATE_DIR}/servicehealth.sh" find_leader 12 'unread=1' || exit 1
+eval "${fl_src}"
+printf "${LIDER}" 2 > "${RED}/home/2/naylamp/logs/node.log"
+printf 'nolog' > "${RED}/state/2.mode"
+rc=0; out="$(find_leader 2>/dev/null)" || rc=$?
+row "F5" "2/" "${rc}/${out}" "find_leader without the guard: the same state gives the same 2, so the two code shapes agree"
+printf '' > "${RED}/state/2.mode"
+
+# El 2 no se traga al 1: con todo legible y sin lider, sigue siendo un no llano.
+printf "${SEGUIDOR}" > "${RED}/home/2/naylamp/logs/node.log"
+rc=0; out="$(find_leader 2>/dev/null)" || rc=$?
+row "F6" "1/" "${rc}/${out}" "find_leader: no leader with every host readable is still a plain no, and answers 1"
+
+# Y un lider encontrado es un lider aunque otro host no se lea, con el ilegible
+# DELANTE del lider en el recorrido, que es el unico orden que prueba la frase:
+# con el ilegible detras, la funcion devuelve antes de llegar a el.
+printf 'nolog' > "${RED}/state/1.mode"
+printf "${LIDER}" 3 > "${RED}/home/3/naylamp/logs/node.log"
+rc=0; out="$(find_leader 2>/dev/null)" || rc=$?
+row "F7" "0/3" "${rc}/${out}" "find_leader: a leader found AFTER an unreadable host is still a leader, which is the order that proves it"
+printf '' > "${RED}/state/1.mode"
+
+# ---- F8: LA NOTA, punta a punta, por el camino que acaba en VERDE ------------
+#
+# Esta es la fila que prueba lo que la clasificacion afirma y no solo el
+# mecanismo: el bucle imprime su nota, un redibujado posterior encuentra lider,
+# la funcion devuelve 0 y la corrida SIGUE, o sea que la frase entra en un
+# artefacto verde. El cluster.sh falso es lo que hace posible el redibujado: su
+# "start" devuelve el log del nodo 2 a legible, que es lo que haria un arranque
+# de verdad. Sin esa recuperacion la funcion devolveria 1 y esta fila estaria
+# midiendo el camino que NO mete la mentira en el sello.
+#
+# Se capturan LOS DOS canales, y la razon es un hallazgo: la nota no nombra al
+# host, lo nombra find_leader por el canal de error. Contar solo la nota habria
+# dejado la fila afirmando un nombrado que no ocurre en el canal que mira.
+mkdir -p "${RED}/fakegate"
+cat > "${RED}/fakegate/cluster.sh" <<'FAKE'
+#!/usr/bin/env bash
+[ "${1:-}" = start ] && : > "${NAYLAMP_RED_DIR}/state/2.mode"
+exit 0
+FAKE
+chmod +x "${RED}/fakegate/cluster.sh"
+# Y find_leader vuelve a ser el de omnibus.sh, que es de donde sale la funcion
+# que esta fila corre: dejarla con el de servicehealth.sh que cargo la F5 haria
+# que ensure_leader_off_1 de un guion corriera con el find_leader de otro, y la
+# linea de error que la fila cuenta es distinta en las dos formas.
+fl_take "${GATE_DIR}/omnibus.sh" find_leader 14 'unread=1' || exit 1
+eval "${fl_src}"
+
+# LOS TRES LOGS SE FIJAN, y no solo los dos que esta fila mira: la F7 dejo la
+# oficina en el nodo 3, y con un lider legible ahi el bucle no llega a entrar,
+# devuelve 0 en la primera vuelta y la fila mide una nota que nunca se imprimio.
+printf "${SEGUIDOR}" > "${RED}/home/1/naylamp/logs/node.log"
+printf "${LIDER}" 2 > "${RED}/home/2/naylamp/logs/node.log"
+printf "${SEGUIDOR}" > "${RED}/home/3/naylamp/logs/node.log"
+printf 'nolog' > "${RED}/state/2.mode"
+nota_out="$(
+	set +e
+	exec 2>&1
+	GATE_DIR="${RED}/fakegate"
+	RESTART_TRIES=3
+	RELOCATE_SETTLE_S=0
+	note() { echo "gate: $*"; }
+	wait_for_leader() { return 0; }
+	eval "$(awk '/^ensure_leader_off_1\(\) \{/{f=1} f{print} f&&/^\}$/{exit}' "${AQUI_GATE}/omnibus.sh")"
+	ensure_leader_off_1
+	echo "rc=$?"
+)"
+dice="$(printf '%s\n' "${nota_out}" | grep -c 'could NOT BE NAMED' || true)"
+nombra="$(printf '%s\n' "${nota_out}" | grep -c 'find_leader: node 2 .*could not be read' || true)"
+miente="$(printf '%s\n' "${nota_out}" | grep -c 'leader is on node none' || true)"
+verde="$(printf '%s\n' "${nota_out}" | grep -c '^rc=0$' || true)"
+row "F8" "1/1/0/1" "${dice}/${nombra}/${miente}/${verde}" "the run says the leader could not be named AND names the host on stderr, never says none, and the loop RECOVERS so the run goes on to seal"
+printf '' > "${RED}/state/2.mode"
+cp "${RED}/state/node1.log.f" "${RED}/home/1/naylamp/logs/node.log"
+cp "${RED}/state/node2.log.f" "${RED}/home/2/naylamp/logs/node.log"
+cp "${RED}/state/node3.log.f" "${RED}/home/3/naylamp/logs/node.log"
+cp "${RED}/state/node1.pid.f" "${RED}/home/1/naylamp/naylampd.pid"
+
+# ---- G: wait_converged's third value, the tenth site and the widest path -----
+#
+# cluster_converged used to read every node through role_of and leaderfield_of,
+# which flatten an unreadable host to the empty string, so ONE unreadable node
+# made it answer "not converged" about a fleet that was converged. That 1 came
+# out of wait_converged into a note that ASSERTS the cluster did not reconverge,
+# in a run whose only verdict is registered before it: a false line inside a
+# GREEN artifact. And it was the WIDE path, not a race: with a host unreadable
+# the answer is never 0, so that branch is where a reader lands.
+# Y el leader_role de ESTE guion, que si no las filas G correrian el
+# cluster_converged de checkquorum.sh contra el leader_role de omnibus.sh que
+# dejo la seccion F. Hoy los cinco cuerpos son identicos byte a byte y el
+# numero saldria igual, pero la fila afirmaria de un fichero una propiedad que
+# esta leyendo de otro, y un mutante sobre el de checkquorum.sh pasaria verde.
+fl_take "${GATE_DIR}/checkquorum.sh" leader_role 4 read_on || exit 1
+eval "${fl_src}"
+fl_take "${GATE_DIR}/checkquorum.sh" cluster_converged 18 'return 2' || exit 1
+eval "${fl_src}"
+fl_take "${GATE_DIR}/checkquorum.sh" wait_converged 16 'return 2' || exit 1
+eval "${fl_src}"
+POLL_S=0
+
+CONV='2026-08-25T00:00:01Z role=follower leader=0 term=0\n2026-08-25T00:00:13Z role=%s leader=1 term=2\n'
+printf "${CONV}" leader   > "${RED}/home/1/naylamp/logs/node.log"
+printf "${CONV}" follower > "${RED}/home/2/naylamp/logs/node.log"
+printf "${CONV}" follower > "${RED}/home/3/naylamp/logs/node.log"
+rc=0; wait_converged 0 || rc=$?
+row "G1" "0" "${rc}" "wait_converged: one leader and all three naming it is converged, which is the control"
+
+printf 'nolog' > "${RED}/state/3.mode"
+rc=0; wait_converged 0 || rc=$?
+row "G2" "2" "${rc}" "wait_converged: a fleet that IS converged with one host unreadable answers 2, where it used to answer 1 and the note said it had not reconverged"
+printf '' > "${RED}/state/3.mode"
+
+printf "${CONV}" follower > "${RED}/home/1/naylamp/logs/node.log"
+rc=0; wait_converged 0 || rc=$?
+row "G3" "1" "${rc}" "wait_converged: no leader with every host readable is still a plain no, so the 2 does not swallow the 1"
+
+# ---- H: las TRES ramas del if que la clasificacion llamo decimo sitio --------
+#
+# G1..G3 disparan wait_converged. Estas disparan lo que se HACE con su respuesta,
+# que es otra cosa y es donde vivia la mentira: un if de f1_red cuyas tres ramas
+# son notas y ninguna registra veredicto. Una fila por rama, porque una rama sin
+# estado en el brazo es una rama que puede pudrirse, y porque la version anterior
+# de este arreglo reescribio una de las tres y dejo intacta la que mas se pisa.
+#
+# El bloque se saca POR TEXTO del guion real, desde el comentario del if hasta su
+# fi, y se corre con wait_converged forzado a cada uno de sus tres valores.
+h_src="$(awk '/# AND THE ELSE OF THIS IF WAS THE WIDE PATH/{f=1} f{print} f&&/^\tfi$/{exit}' "${GATE_DIR}/checkquorum.sh")"
+if [ "$(printf '%s\n' "${h_src}" | grep -c . || true)" -lt 12 ] || ! printf '%s' "${h_src}" | grep -q 'wc}" -eq 2'; then
+	echo "common_red: el bloque de las tres ramas no salio entero de checkquorum.sh; las filas H no medirian nada" >&2
+	exit 1
+fi
+w_src="$(awk '/^wait_converged\(\) \{/{f=1} f{print} f&&/^\}$/{exit}' "${GATE_DIR}/checkquorum.sh")"
+if [ "$(printf '%s\n' "${w_src}" | grep -c . || true)" -lt 20 ] || ! printf '%s' "${w_src}" | grep -q 'unread=0'; then
+	echo "common_red: wait_converged no salio entera de checkquorum.sh; H6 y H7 no medirian nada" >&2
+	exit 1
+fi
+
+h_rama() { # $1 lo que devuelve wait_converged, $2 lo que devuelve find_leader
+	(
+		set +e
+		CONVERGE_TIMEOUT_S=1
+		note() { echo "gate: $*"; }
+		eval "wait_converged() { return $1; }"
+		eval "find_leader() { [ ${2} -eq 0 ] && printf '1'; return ${2}; }"
+		eval "_h_bloque() {
+${h_src}
+}"
+		_h_bloque
+	)
+}
+got="$(h_rama 0 0 | grep -c 'reconverged after heal, leader is node 1' || true)"
+row "H1" "1" "${got}" "the if names the leader when wait_converged answers 0, which is the branch a green run lands in normally"
+got="$(h_rama 2 0 | grep -c 'could NOT BE TOLD' || true)"
+lie="$(h_rama 2 0 | grep -c 'did not reconverge' || true)"
+row "H2" "1/0" "${got}/${lie}" "and with 2 it says the answer could not be told, where it used to assert the cluster had not reconverged: the tenth site, on the branch that is the WIDE path"
+got="$(h_rama 1 0 | grep -c 'did not reconverge' || true)"
+row "H3" "1" "${got}" "and with 1 it still says the cluster did not reconverge, because that one is true and the fix must not swallow it"
+
+# H4 y H5: el if INTERNO, el de find_leader, cuyas otras dos ramas no tenia
+# ninguna fila. Se pueden borrar enteras y el brazo se queda verde, que es lo
+# mismo que le paso al if de fuera antes de las tres de arriba.
+got="$(h_rama 0 2 | grep -c 'could NOT BE NAMED because' || true)"
+row "H4" "1" "${got}" "the inner if names the read as unreadable when find_leader answers 2, instead of reporting no leader"
+got="$(h_rama 0 1 | grep -c 'no node reports the leader role' || true)"
+row "H5" "1" "${got}" "and with 1 it says no node reports it, which is the true one and must survive the fix"
+
+# H6: que wait_converged NO se rinde a la primera lectura ilegible, que es lo
+# que su comentario promete y lo que ninguna fila media: G1 a G3 la llaman con
+# presupuesto CERO, o sea una sola vuelta, y el bucle entero queda sin tocar.
+# Aqui cluster_converged va sustituido a proposito, porque lo que se mide es la
+# POLITICA del bucle y no la lectura; va dicho para que la fila no se lea como
+# que dispara el guion entero.
+h_bucle() { # $1 el valor de la primera vuelta, $2 el de las siguientes
+	(
+		set +e
+		POLL_S=0
+		eval "i=0; cluster_converged() { i=\$((i + 1)); [ \"\${i}\" -ne 1 ] || return $1; return $2; }"
+		eval "${w_src}"
+		wait_converged 1
+		echo "rc=$?"
+	)
+}
+got="$(h_bucle 2 1 | tail -1)"
+row "H6" "rc=1" "${got}" "wait_converged does not let one unreadable read taint the budget: the latch describes the LAST read, not the history"
+got="$(h_bucle 2 2 | tail -1)"
+row "H7" "rc=2" "${got}" "and when the budget really runs out with a read still missing, it does answer 2"
+
+# H8 y H9: las dos ramas nuevas de la precondicion de F0, que no tenian fila
+# ninguna: un mutante que mata su condicion dejaba el brazo entero verde.
+p_src="$(awk '/^precondition\(\) \{/{f=1} f{print} f&&/^\}$/{exit}' "${GATE_DIR}/checkquorum.sh")"
+if [ "$(printf '%s\n' "${p_src}" | grep -c . || true)" -lt 25 ] || ! printf '%s' "${p_src}" | grep -q 'rl0rc}" -ne 0'; then
+	echo "common_red: precondition no salio entera de checkquorum.sh; las filas H8 y H9 no medirian nada" >&2
+	exit 1
+fi
+h_pre() { # $1 lo que devuelve leader_role, $2 lo que devuelve wait_converged
+	(
+		set +e
+		CONVERGE_TIMEOUT_S=1
+		NODE_IDS=(1 2 3)
+		note() { :; }
+		stop() { echo "STOP $*"; exit 3; }
+		alive_on() { return 0; }
+		role_line_count() { printf '7'; return 0; }
+		find_leader() { printf '1'; return 0; }
+		eval "leader_role() { [ ${1} -eq 0 ] && printf 'role=leader leader=1'; return ${1}; }"
+		eval "wait_converged() { return ${2}; }"
+		eval "${p_src}"
+		precondition
+	)
+}
+got="$(h_pre 2 0 | grep -c 'answers alive but its role line could not be read' || true)"
+row "H8" "1" "${got}" "F0 stops naming the unreadable role line instead of claiming the node has none, which is what used to make the branch below unreachable"
+got="$(h_pre 0 2 | grep -c 'could not be told' || true)"
+row "H9" "1" "${got}" "and F0's own third value has a row, which it did not: a mutant killing its condition left the whole arm green"
+
+cp "${RED}/state/node1.log.f" "${RED}/home/1/naylamp/logs/node.log"
+cp "${RED}/state/node2.log.f" "${RED}/home/2/naylamp/logs/node.log"
+cp "${RED}/state/node3.log.f" "${RED}/home/3/naylamp/logs/node.log"
 
 # ---- T: the tripwire, DEFER-073's instrument ----------------------------------
 #

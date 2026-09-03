@@ -155,10 +155,15 @@ leader_role() {
 	printf '%s' "${out}"
 }
 
-# find_leader prints the id of the node whose last role line reports leader, empty
-# if none.
+# find_leader answers with THREE values, and the third is the point: 0 it prints
+# the id of the node whose last role line reports leader, 1 no node reports it
+# and every host was read, 2 no node reports it AND at least one host could not
+# be read. A follower's last line is role=follower, so only a current leader
+# matches. The contract is written here and not only inside the body, because a
+# header that describes a return contract wrongly is what aligns a caller
+# against something that is not there.
 find_leader() {
-	local n rl
+	local n rl unread=0
 	for n in "${NODE_IDS[@]}"; do
 		# THE ROLE LINE IS READ WITH ITS THIRD VALUE. Written as a bare command
 		# substitution, a host that could not be read fell into the case below as
@@ -168,10 +173,19 @@ find_leader() {
 		# what lets whoever reads the run know a node was passed over.
 		if ! rl="$(leader_role "$n")"; then
 			echo "gate: find_leader: node ${n} could not be read and is skipped; that is not the same as not being leader" >&2
+			unread=1
 			continue
 		fi
 		case "${rl}" in *role=leader*) printf '%s' "$n"; return 0 ;; esac
 	done
+	# AND THE THIRD VALUE IS CARRIED OUT, not just announced. A loop that skipped
+	# an unreadable node and then returned the same 1 as a loop that read all
+	# three left the caller unable to tell "there is no leader" from "one of the
+	# three could not be looked at", which is the DEFER-072 collapse one floor up
+	# from the one this function already closed.
+	if [ "${unread}" -eq 1 ]; then
+		return 2
+	fi
 	return 1
 }
 
