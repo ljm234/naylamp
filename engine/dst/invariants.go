@@ -84,12 +84,20 @@ func checkIndexSet(col *naylamp.Collection, orc *oracle) error {
 // findable. We query with each expected vector's own data and confirm its id
 // comes back as the closest match (a vector is always nearest to itself).
 //
-// This one walks the oracle's ids in map order and returns on the first that
-// fails, so when a state breaks several of them at once, WHICH ONE it names
-// varies between runs of the same seed. The determinism argument on
-// compareIDSets below applies here and is not acted on: it is open as
-// DEFER-062 in NAYLAMP_DEFERRED_BACKLOG.md, outside this repository, and
-// fixing it would move the literal ids that archived gate rows quote.
+// This one returns on the FIRST id that fails, so which one it names is
+// whatever order ids() hands back. That order used to be the map's, which made
+// the message vary between runs of the same seed while the run itself stayed
+// reproducible; ids() sorts now, and the comment there carries the measurement.
+// The fear that fixing it would move the literal ids quoted by archived gate
+// rows was measured before acting and did not hold. Three quotes of these
+// messages carry a literal id outside gate/out, all three in the fixture of
+// gate/p1.sh and all three fed by this function: the P1.reach row, and the two
+// P1.point.reach rows, which reach here through the point campaign. Only the
+// first is output of a mutation this gate can run, and forty runs of the
+// sinreparar mutant, twenty sorted and twenty not, all named id 67. The other
+// two name no run: no mutation here turns P1.point.reach red, so nothing
+// re-measures them. And the pattern all three are there to exercise reads no
+// id, so the P1.pre control is green either way, which was checked.
 func checkReachability(col *naylamp.Collection, orc *oracle) error {
 	for _, id := range orc.ids() {
 		data := orc.vectors[id]

@@ -8,6 +8,7 @@ package dst
 import (
 	"fmt"
 	"math/rand/v2"
+	"slices"
 
 	"naylamp/engine/naylamp"
 	"naylamp/engine/vector"
@@ -50,12 +51,22 @@ func (o *oracle) count() int {
 	return len(o.vectors)
 }
 
-// ids returns all ids the oracle currently holds.
+// ids returns all ids the oracle currently holds, in ascending order.
+//
+// The order is sorted and not the map's, because a caller that stops at the
+// FIRST id it finds wrong turns the map's traversal into part of the message.
+// checkReachability does exactly that, so a state with two ids violating at
+// once stayed reproducible in its FAILURE and not in its TEXT, which is what
+// TestDST_Reproducible compares. Measured on one state of 40 ids with four
+// sharing a vector, 200 calls in a single process: thirty distinct messages
+// unsorted, one sorted. The cost is a single pass over ids the caller is about
+// to walk anyway.
 func (o *oracle) ids() []uint64 {
 	out := make([]uint64, 0, len(o.vectors))
 	for id := range o.vectors {
 		out = append(out, id)
 	}
+	slices.Sort(out)
 	return out
 }
 
