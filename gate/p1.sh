@@ -517,9 +517,25 @@ refused_on_host() {
 # Unifying is what makes the arm exercise the same object as the gate.
 #
 # UNIFYING ALONE WOULD NOT BE ENOUGH, so P1.pre carries a control that runs this
-# table against real failure lines taken from measured mutant output. Without it
-# a wrong entry here would be wrong in both paths at once and the arm would go
-# green again, which is the same defect one level up.
+# table against a fixture of eighteen lines. Without it a wrong entry here would
+# be wrong in both paths at once and the arm would go green again, which is the
+# same defect one level up.
+#
+# THIS COMMENT USED TO SAY "real failure lines taken from measured mutant
+# output", flatly and of the whole fixture, and that said more than the object
+# sustains. Measured on 3 September 2026 against every raw file archived under
+# gate/out, 134 files and 3797444 lines, with two predicates, exact string and
+# then shape with every number free to vary: four rows match exactly, three
+# match only in shape because they carry a clock, and eleven match nothing. One
+# of those eleven is synthetic on purpose, the no-pattern verdict, which leaves
+# TEN rows that are not re-derivable from anything this repository or its
+# archive contains. The structural reason is plain: this gate carries five
+# mutations and none of them turns P1.point.reach, P1.point.exact,
+# P1.point.ledger or P1.point.query red, so their rows cannot be the output of
+# anything runnable here. That is DEFER-086. It does not weaken the control,
+# which is green and whose patterns match: what the control proves is that a
+# pattern matches a SHAPE, and a composed shape serves for that, as long as it
+# is not sold as a measurement.
 failure_re() {
 	case "$1" in
 		P1.exact|P1.point.exact)   printf 'index set mismatch' ;;
@@ -673,16 +689,23 @@ phase_pre() {
 		fail "P1.pre: the listing instrument returned ${alive} for a selector that matches everything, so it is DEAD and every count below is meaningless, including the zero that negative arm 2 expects"
 	fi
 
-	# ---- control of the failure table, against lines that really occurred ----
+	# ---- control of the failure table, row by row against its expected verdict ----
 	#
 	# UNIFYING THE PATTERNS CLOSES ONE HOLE AND OPENS A SMALLER ONE, so this is
 	# what closes that. With the gate and the red arm reading one table, a wrong
 	# entry is wrong in BOTH at once and the arm goes green over it again, which is
-	# the same defect one level up. The fixture below is real output: the first
-	# three came from mutants run on 168a4b9 on 25 August 2026, the rest are the
-	# forms point_test.go emits, and the last three are GREEN lines that must NOT
-	# match. The floor pair is the one that matters, since its passing line and its
-	# failing line differ only in "over ... floor" against "at ... want".
+	# the same defect one level up. The fixture below is PART measured and PART
+	# composed, and this sentence says which because it used to open with "the
+	# fixture below is real output" and then qualify, which reads as a warrant for
+	# all eighteen rows. Of the first three, two are in the archive verbatim and
+	# P1.exact is not, all three from mutants run on 168a4b9 on 25 August 2026,
+	# older than anything sealed here. The rest are the forms point_test.go emits,
+	# COMPOSED from those forms and not captured from a run: ten of the eighteen
+	# rows match nothing archived, in shape or in text, and no mutation this gate
+	# carries can produce them. See the note on failure_re and DEFER-086. The last
+	# three are GREEN lines that must NOT match. The floor pair is the one that
+	# matters, since its passing line and its failing line differ only in
+	# "over ... floor" against "at ... want".
 	#
 	# THE file:line PREFIX IS DELIBERATELY ABSENT FROM THESE LINES. The patterns
 	# never look at it, so carrying it would pin this control to line numbers that
@@ -718,7 +741,13 @@ P1.point.reach|no|    P1.point.reach: swept 50000 live ids, 20.95s
 P1.nosuchverdict|no|    anything at all
 FIXTURE
 	if [ "${bad}" -eq 0 ]; then
-		pass "P1.pre: the failure table matches every real failure line of the fixture and none of its green lines"
+		# The wording carries DEFER-086 and is deliberate: this line goes INSIDE a
+		# sealed artifact, and "every real failure line" claimed the fixture rows
+		# were captured output when ten of the eighteen are composed shapes that no
+		# mutation here can produce. What the control proves is the verdict per row,
+		# so that is what it now says. A gate that exists to keep false statements
+		# out of sealed artifacts does not get to make one in its own pass line.
+		pass "P1.pre: the failure table gives the expected verdict on every fixture row, matching each failing shape and none of the green lines"
 	fi
 
 	# ---- negative arm 1: the refusal bites ----------------------------------
