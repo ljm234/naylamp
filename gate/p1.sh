@@ -1767,9 +1767,41 @@ echo "run id: ${RUN_ID}"
 echo "hosts (pub): ${NAYLAMP_GATE_HOSTS}"
 echo "red arm host: node ${RED_NODE}"
 echo "budgets: sweep=${SWEEP_TIMEOUT} recall=${RECALL_TIMEOUT} point=${POINT_TIMEOUT}, all three ceilings and none of them estimates"
-# The list is the twenty two live exclusions of G3, counted against that section
-# and not summarised: 1 to 12, 15, 16, 18 to 22 and 24 to 26. Thirteen, fourteen,
-# seventeen and TWENTY THREE are struck there and are not repeated here.
+# The list is the twenty four live exclusions of G3, counted against that
+# section and not summarised: 1 to 12, 15, 16, 18 to 22 and 24 to 28. Thirteen,
+# fourteen, seventeen and TWENTY THREE are struck there and are not repeated
+# here.
+#
+# TWENTY SEVEN WAS ADDED ON 2026-09-04 AND IT IS THE FIRST ONE ADDED BY A
+# RE-DERIVATION OF CLAUSE (d) RATHER THAN BY A NEW MEASUREMENT. It is the twin of
+# twenty five: the red arm splits by REGIME and not by clause, so sinreparar,
+# fuga and fantasma all score against the SWEEP at dim=16 and maxID=100, and only
+# ef18 and relleno score against the 50k campaign. Neither of those two turns
+# P1.point.exact red, so at the top of the point the red arm covers the floor and
+# the shape and covers neither clause (i) nor clause (ii). The FACT was already
+# written in four places, all of them inside the DEFER-086 argument about where
+# the fixture rows come from, and the EXCLUSION was written in none, which is
+# what the iron run of 2026-09-04 found by re-deriving instead of inheriting.
+#
+# TWENTY EIGHT WAS ADDED THE SAME DAY AND BY THE SAME ARGUMENT, and it revises a
+# decision taken earlier that same day rather than inheriting it. That decision said the
+# apparatus defect did not block because today's seal is not false, which is true
+# and is not what clause (d) asks: (d) does not ask whether something is false
+# today, it asks whether what the gate does not verify is declared by name. The
+# FACT lived in DEFER-087 and the EXCLUSION nowhere, which is what twenty seven
+# had just repaired one line up, and exclusion twenty six settles it, being the
+# same class, declared for the red arm's rows since 2026-08-24. Its regime, in short: the
+# five point labels are scored by the ABSENCE of a failure pattern, only
+# P1.point.floor carries a guard on the VALUE, and the count in the
+# P1.point.reach line comes from orc.count(), the size of the oracle map, not
+# from a counter of what checkReachability walked.
+#
+# AND THE SCOPE OF THIS BANNER IS SAID PLAINLY, because the first of the two
+# entries above was written claiming it would land in the sealed artifact and
+# that is false: this line does NOT enter the SEALED file, which carries only the
+# run's identity and its verdicts. It enters the archived console log, the
+# sibling file the seal of 2026-08-26 names, and that is where clause (d)'s
+# declaration is read from.
 #
 # TWENTY THREE FELL ON 2026-08-27 AND IT IS THE FIRST OF THEM THAT FELL TO A FIX
 # AND NOT TO A MEASUREMENT. It named the concurrent falsifier of clause (i),
@@ -1786,7 +1818,7 @@ echo "budgets: sweep=${SWEEP_TIMEOUT} recall=${RECALL_TIMEOUT} point=${POINT_TIM
 # forbids raising a phase without naming what is not verified, so a short
 # version of this line would be the one thing the gate cannot afford to
 # abbreviate.
-echo "not claimed (22, the live exclusions of G3): 1 result order; 2 speed, latency and throughput; 3 durability; 4 concurrency, where this gate is WEAKER than CI on two counts: no -race, and no interleaving exercised at all, the second half inherited from the struck 23; 5 the corpus/efSearch axis; 6 that the result is THE exact one; 7 the API surface 1.4 promised; 8 isolation between collections; 9 memory and index size; 10 build determinism under seed; 11 every metric but cosine; 12 degenerate vectors and ties; 15 coverage of the dim interval, which is sampled at two values; 16 that the recall floor is a sample over fixed query seeds and not a bound; 18 that the red arm attests ONE VM and not three; 19 that this is a deployed service; 20 ARM64 arithmetic as a contribution, which measurement retired; 21 what the three-host agreement can see, which is little by construction; 22 the reupsert regime above the layer-0 cap; 24 that the degenerate rung runs with layer 0 unpruned; 25 that reachability at the top of the point has no red arm; 26 that no row of this red arm can notice its own metric has stopped measuring"
+echo "not claimed (24, the live exclusions of G3): 1 result order; 2 speed, latency and throughput; 3 durability; 4 concurrency, where this gate is WEAKER than CI on two counts: no -race, and no interleaving exercised at all, the second half inherited from the struck 23; 5 the corpus/efSearch axis; 6 that the result is THE exact one; 7 the API surface 1.4 promised; 8 isolation between collections; 9 memory and index size; 10 build determinism under seed; 11 every metric but cosine; 12 degenerate vectors and ties; 15 coverage of the dim interval, which is sampled at two values; 16 that the recall floor is a sample over fixed query seeds and not a bound; 18 that the red arm attests ONE VM and not three; 19 that this is a deployed service; 20 ARM64 arithmetic as a contribution, which measurement retired; 21 what the three-host agreement can see, which is little by construction; 22 the reupsert regime above the layer-0 cap; 24 that the degenerate rung runs with layer 0 unpruned; 25 that reachability at the top of the point has no red arm; 26 that no row of this red arm can notice its own metric has stopped measuring; 27 that the set agreement at the top of the point has no red arm either, the twin of 25: the ONE row that covers clause (i) is row 3, fantasma, and it scores against the sweep at dim=16 and maxID=100, and that mutation has never been run at 50k; 28 that none of the five point labels can notice its own check has stopped asserting, except the floor: all five are scored by the ABSENCE of a failure pattern, only P1.point.floor carries a guard on the VALUE, and the swept count in the P1.point.reach line comes from the size of the oracle map and not from a counter of the traversal, so a gutted checkReachability would print the same line"
 
 mkdir -p "${OUT_LOCAL}"
 
