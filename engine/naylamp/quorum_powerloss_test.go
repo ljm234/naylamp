@@ -1,12 +1,14 @@
 package naylamp
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"naylamp/engine/cluster"
 	"naylamp/engine/faultio"
+	"naylamp/engine/raft"
 )
 
 // This file is the deterministic stand-in for cutting the power to a rack.
@@ -26,15 +28,28 @@ import (
 // power goes out on all three replicas, which is the only reading of a
 // rack-level failure where the acknowledged write has nowhere to hide.
 //
-// The red arm does not end where a reader expects. A cluster whose barrier does nothing does not come back missing the write. It
-// comes back refusing to start, with "restored commit exceeds restored log":
-// the hard state is replaced through a temp file that is fsynced and renamed,
-// and renames are outside this model, so the durable commit survives while the
-// log it points into does not. That is the same dichotomy the claim audit named
+// The red arm does not end where a reader expects. A cluster whose barrier does
+// nothing does not come back missing the write. It comes back refusing to start.
+// WHICH refusal is the part this header got wrong for a month, and it is
+// corrected here rather than left for the body to contradict twenty lines down:
+// it said "restored commit exceeds restored log", and measured on 5 September
+// 2026 all three replicas refuse with raft.ErrCorruptHardState instead. The
+// reasoning behind the wrong name is kept because it explains the shape: the
+// hard state is replaced through a temp file that is fsynced and renamed, and a
+// rename is followed by identity rather than by name, so what survives is a
+// hard state whose bytes never crossed. ~~Both branches are the absence of
+// durability, so the red arm accepts either~~ is what this header said until 5
+// September 2026, and the body stopped doing it that day: the refusal is checked
+// by identity against raft.ErrCorruptHardState, and the other branch fails the
+// arm instead of being accepted, because it has no sentinel to check against and
+// this scenario does not produce it. That is the same dichotomy the claim audit named
 // as the reason the hardware arm is probabilistic, loss or a cluster that will
-// not come up, except that here it lands on the same branch every run. Both
+// not come up, except that here it lands on the same branch every run. ~~Both
 // branches are the absence of durability, so the red arm accepts either and
-// reports which one it got.
+// reports which one it got.~~ Both branches would be the absence of durability,
+// but the arm accepts only the one this scenario produces and checks it by
+// identity; and it reports counts rather than which branch it got, because the
+// branch is fixed and the counts are what the control has to differ from.
 
 // powerLossCluster is one three-replica group whose nodes each sit on their own
 // simulated disk.
@@ -254,45 +269,44 @@ func TestQuorumPowerLoss_AcknowledgedWriteSurvives(t *testing.T) {
 	}
 }
 
-// TestQuorumPowerLoss_WithoutFsyncTheWriteIsLost is the red arm. The same
-// scenario with a barrier that does nothing must not bring the acknowledged
-// write back. A replica may refuse to start instead of coming back without it,
-// and both are the absence of durability, so both are accepted and the split is
-// logged. If the write comes back intact, the three replicas were never on
-// simulated disks in the first place and the arm above measured nothing.
-func TestQuorumPowerLoss_WithoutFsyncTheWriteIsLost(t *testing.T) {
-	const seed = 1
-	deaf := func(d *faultio.Disk) faultio.Opener { return faultio.DeafBarrier(d.Opener()) }
-	c := newPowerLossCluster(t, seed, deaf)
+// runUnderBarrier drives the scenario once under the barrier its opener gives it and
+// reports what the machines held afterwards: how many replicas refused to start,
+// how many came back without the acknowledged write, how many came back with it,
+// and how many bytes the cut removed.
+//
+// Both sides of the red arm below go through here, so the only thing that
+// differs between them is the barrier. A control built out of a gentler scenario
+// would not be a control: it would be a different experiment quoted as one.
+func runUnderBarrier(t *testing.T, seed uint64, ackedID uint64, vec []float32, mk func(*faultio.Disk) faultio.Opener) (kept, refused, lost int, cut int64, failedIDs []cluster.NodeID, failed map[cluster.NodeID]error) {
+	t.Helper()
+	c := newPowerLossCluster(t, seed, mk)
+	commitOneWrite(t, c, ackedID, vec)
 
-	const ackedID = uint64(42)
-	commitOneWrite(t, c, ackedID, []float32{1, 0, 0})
-
-	if cut := c.cutPowerToAll(t); cut == 0 {
-		t.Fatal("the power cut removed nothing from a cluster that never fsynced: the layer is not modeling the barrier")
+	// The second write is what puts unsynced bytes on the floor under a real
+	// barrier: the leader replicates it and each follower dies inside its own
+	// append, before the fsync that would have made it durable.
+	lead := leaderOf(c.nodes, c.ids)
+	c.armFollowers(t, lead)
+	if _, out, err := c.nodes[lead].Upsert(uint64(43), []float32{0, 1, 0}); err == nil {
+		pumpDying(c.nodes, out, 4000)
 	}
 
+	cut = c.cutPowerToAll(t)
 	back, failed := c.reboot(t, seed)
 	defer func() {
 		for _, n := range back {
 			_ = n.Close()
 		}
 	}()
-
-	// A refusal to start counts as the absence of durability, but only the
-	// documented one. Accepting any error at all would let an unrelated open
-	// failure, a permissions problem or a missing directory, stand in for the
-	// property under test and turn this arm green for a reason that has nothing
-	// to do with the barrier.
-	for id, err := range failed {
-		if !strings.Contains(err.Error(), "restored commit exceeds restored log") &&
-			!strings.Contains(err.Error(), "corrupt hard state") {
-			t.Fatalf("replica %d refused to start for a reason unrelated to the missing barrier: %v", id, err)
-		}
-	}
-
-	kept, refused, lost := 0, len(failed), 0
+	refused = len(failed)
+	// The ids come back in the group's own order and not in a map's. A message
+	// that names whichever key Go handed out first says a different replica on
+	// different runs, and this house closed that exact class in 9d002a6: an arm
+	// whose line moves cannot be cited by its line.
 	for _, id := range c.ids {
+		if _, bad := failed[id]; bad {
+			failedIDs = append(failedIDs, id)
+		}
 		n, ok := back[id]
 		if !ok {
 			continue
@@ -303,13 +317,77 @@ func TestQuorumPowerLoss_WithoutFsyncTheWriteIsLost(t *testing.T) {
 			lost++
 		}
 	}
+	return kept, refused, lost, cut, failedIDs, failed
+}
+
+// TestQuorumPowerLoss_WithoutFsyncTheWriteIsLost is the red arm. The same
+// scenario with a barrier that does nothing must not bring the acknowledged
+// write back. A replica refusing to start is the absence of durability too, so
+// that counts, but only the refusal this scenario produces and checked by
+// identity: see the sentinel below. If the write comes back intact, the three
+// replicas were never on simulated disks in the first place and the arm above
+// measured nothing.
+func TestQuorumPowerLoss_WithoutFsyncTheWriteIsLost(t *testing.T) {
+	const seed = 1
+	const ackedID = uint64(42)
+	vec := []float32{1, 0, 0}
+
+	// THE CONTROL RUNS INSIDE THE ARM, and it is what makes the arm assert a
+	// DIFFERENCE rather than an outcome. Without it this test says only that a
+	// cluster with a deaf barrier ends badly, which a cluster that never
+	// acknowledged anything would satisfy too. With it, the same seed and the
+	// same scenario run twice and the two ends are required to differ.
+	//
+	// It was added on 5 September 2026 and the reason is measured. As written
+	// before, the arm's only live assertion was a strings.Contains over an error
+	// message: all three replicas refuse to start, so the map of those that came
+	// back is empty, the loop that looks at data iterates nothing, and the count
+	// of survivors comes out zero without examining a single replica. Renaming
+	// the error literal alone, with no change of behaviour, turned the arm red.
+	// An arm whose only teeth are in a string is what DEFER-077 scores as a
+	// failure.
+	saneKept, saneRefused, saneLost, saneCut, _, _ := runUnderBarrier(t, seed, ackedID, vec,
+		func(d *faultio.Disk) faultio.Opener { return d.Opener() })
+	if saneCut == 0 {
+		t.Fatal("the control cut removed nothing, so it does not establish what a real barrier survives")
+	}
+	if saneKept != 3 || saneRefused != 0 || saneLost != 0 {
+		t.Fatalf("control: with a real barrier the write came back on %d replicas, %d refused and %d came back without it; the arm below has nothing to differ from",
+			saneKept, saneRefused, saneLost)
+	}
+
+	// THE ARM. Same seed, same scenario, a barrier that accepts Sync and does
+	// nothing.
+	kept, refused, lost, cut, failedIDs, failed := runUnderBarrier(t, seed, ackedID, vec,
+		func(d *faultio.Disk) faultio.Opener { return faultio.DeafBarrier(d.Opener()) })
+	if cut == 0 {
+		t.Fatal("the power cut removed nothing from a cluster that never fsynced: the layer is not modeling the barrier")
+	}
+
+	// A refusal to start counts as the absence of durability, but only the one
+	// this scenario produces, and it is checked BY IDENTITY and not by text.
+	// raft.ErrCorruptHardState is a sentinel; the other refusal Raft.Restore can
+	// raise, "restored commit exceeds restored log", is an anonymous errors.New
+	// with no sentinel to compare against. This scenario does not take that
+	// branch: measured on 5 September 2026, all three replicas refuse with the
+	// sentinel. So anything else, that branch included, fails here and names
+	// what arrived instead of being waved through by a substring. The day this
+	// scenario takes the other branch somebody has to look at it, which is the
+	// point.
+	for _, id := range failedIDs {
+		if err := failed[id]; !errors.Is(err, raft.ErrCorruptHardState) {
+			t.Fatalf("replica %d refused to start for a reason this arm does not recognize: %v", id, err)
+		}
+	}
+
 	if kept > 0 {
 		t.Fatalf("a cluster whose fsync does nothing brought the acknowledged write back on %d of 3 replicas", kept)
 	}
-	if refused+lost != len(c.ids) {
-		t.Fatalf("accounted for %d replicas out of %d", refused+lost, len(c.ids))
+	if refused+lost != 3 {
+		t.Fatalf("accounted for %d replicas out of 3", refused+lost)
 	}
-	t.Logf("without a real barrier: %d of 3 replicas refused to start, %d came back without the acknowledged write", refused, lost)
+	t.Logf("same seed and same scenario twice: with a real barrier the write came back on %d of 3 replicas; without one, %d refused to start and %d came back without it",
+		saneKept, refused, lost)
 }
 
 // hasID reports whether a replica's committed log carries an upsert for id.
