@@ -186,10 +186,11 @@ jobs:
       # whole step went from a 0.55s to 1.09s band to a 1.01s to 1.45s one, five
       # runs each side, cache warm, load average from 1.91 to 2.34; the raw is
       # naylamp-hygiene-coste-20260831T215618Z.txt in the runs directory of the
-      # workspace. No figure is quoted for the new shape from a runner, because
-      # none exists yet: the first one is whatever the next run of this workflow
-      # prints. Where the older range was measured is not written above either,
-      # so do not read it as a runner figure just because it sits in a workflow.
+      # workspace. On a runner it crosses one second boundary, 00:09:45Z to
+      # 00:09:46Z in run 34000288418 on 2026-09-05, so under two and no finer:
+      # the log counts in whole seconds. Where the older range was measured is not
+      # written above either, so do not read it as a runner figure just because it
+      # sits in a workflow.
       # THE SHELL GUARD, and this step exists because of what its absence
       # produced. gate/ carries a defender written as a test script, with its red
       # arm inside, and until 1 September 2026 NOBODY RAN IT: it fired when
@@ -222,7 +223,8 @@ jobs:
       # The raw is naylamp-sealed-guard-20260901T201142Z.txt in the runs directory
       # of the register. An earlier draft quoted 0.71s, which came from a terminal
       # and from no archived run at all, in the same file that says two steps
-      # above why that is not done here. No runner figure exists yet.
+      # above why that is not done here. On the runner it opens and closes inside
+      # 00:09:38Z, run 34000288418, so under a second.
       - name: Shell guard
         working-directory: .
         run: ./gate/clean-guard-test.sh
@@ -273,9 +275,15 @@ jobs:
       # for engine/persist, and the canaries only break a build, next to the
       # 159.7s the Test step already pays on
       # engine/naylamp alone, measured on 2026-08-31 and quoted in that step's
-      # own note. No runner figure exists yet and no run of this script
-      # is archived in the register, so the figures carry machine, toolchain and
-      # load, and no identifier.
+      # own note. The runner figure is 7s, from run 34000288418 on 2026-09-05,
+      # 00:09:38Z to 00:09:45Z, which is 1.9 per cent of that run and the reason
+      # a new step of this size cannot be seen in the wall clock. It is one
+      # sample, and the only one of the three the log can resolve at all. The
+      # local figures above are not archived in the register, so they carry
+      # machine, toolchain and load and no identifier, and they are not a cost
+      # for this runner: they were taken on the laptop with the script run on
+      # its own, and the runner pays it inside a job whose cache the steps
+      # before it already warmed.
       #
       # It carries the same exposure the arm it guards just shed, and that is
       # worth saying here rather than only in its own header. Rows 3 and 4 close

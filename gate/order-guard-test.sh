@@ -24,9 +24,11 @@
 #
 # Y por eso esta cabecera es mas larga que la de sus vecinas, medido el 5 de
 # septiembre de 2026, contando desde la linea 2 hasta la primera que no es
-# comentario ni blanco: 137 de 429 aqui, 40 de 199 en clean-guard-test.sh y 42
-# de 217 en hook-guard-test.sh. Vigila dos defensores en tres paquetes en vez
-# de un guion en uno, y lleva dentro una decision que se tomo una vez y que sin
+# comentario ni blanco: 144 de 435 aqui, 40 de 199 en clean-guard-test.sh y 42
+# de 217 en hook-guard-test.sh. Esa cifra propia se re-cuenta cada vez que la
+# cabecera crece, que es lo que le paso a la version anterior: decia 137 de 429
+# con 141 de 432 debajo cuando entro en d3247e3. Vigila dos defensores en tres paquetes en vez de un
+# guion en uno, y lleva dentro una decision que se tomo una vez y que sin
 # escribir se vuelve a discutir. Si algun dia sobra, lo que sobra es la
 # explicacion del overlay, no el limite.
 #
@@ -58,10 +60,11 @@
 # engine/naylamp/persist_order_test.go movio los dos mensajes de ese defensor de
 # sitio sin cambiar una coma de lo que dicen. Un brazo anclado en numeros habria
 # empezado a mentir ese dia. El movimiento no se puede re-derivar de la historia
-# porque ese fichero todavia no esta commiteado, y las lineas concretas que la
-# primera version de esta nota daba ya no describen el fichero: hoy los dos
-# subtests salen por sus t.Run y no por donde la nota decia. Se deja el hecho y
-# se retira el numero, que es lo que esta seccion predica.
+# porque ocurrio antes de que el fichero entrara, y el fichero entro con el mismo
+# d3247e3 que trae este guion. Las lineas concretas que la primera version de
+# esta nota daba ya no describen el fichero: hoy los dos subtests salen por sus
+# t.Run y no por donde la nota decia. Se deja el hecho y se retira el numero, que
+# es lo que esta seccion predica.
 #
 # Y EL DIRECTORIO DE TRABAJO IMPORTA, medido y no supuesto. Las claves de un
 # overlay se resuelven contra el directorio actual, y `.github/workflows/ci.yml`
