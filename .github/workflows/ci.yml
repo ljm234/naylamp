@@ -226,6 +226,74 @@ jobs:
       - name: Shell guard
         working-directory: .
         run: ./gate/clean-guard-test.sh
+      # order-guard-test.sh lands the day the defender it fires does, and it is
+      # the piece that takes TestPowerCutSweep_EveryReplicaStillBoots out of the
+      # class DEFER-077 is about. That defender closes two ordering defects no
+      # other arm in the tree sees, and until 5 September 2026 its two mutations
+      # were applied by hand, which DEFER-077 names. This step
+      # applies both by program and fails unless each one reddens the scenario it
+      # claims to redden.
+      #
+      # It runs from the repository root, like the two steps around it, and for a
+      # reason of its own that is measured rather than inherited. A go test
+      # overlay resolves its keys against the working directory, and this job
+      # defaults to engine/. With keys written the obvious way, relative to the
+      # root, the same overlay file gives FAIL from the root and "ok
+      # naylamp/engine/naylamp 4.123s" from engine/: the substitution does not
+      # enter and nothing says so. The script writes absolute keys AND plants
+      # itself at the root. Not because either half alone would leave the failure
+      # mute, which was measured and is false in both directions, but because the
+      # package path is relative and needs the cd anyway, and an absolute key does
+      # not care where the script is invoked from. It also carries canary rows,
+      # one per mutated package, that stop the run if the overlay is not
+      # entering. Without those a green would be unreadable: nothing separates a
+      # mutation that never arrived from a defender that slept through it.
+      #
+      # It also guards the checkpoint ordering, in engine/persist, and that row
+      # is not there for symmetry. The red of
+      # TestCrashInsideCheckpoint_AckedWritesSurvive depends on a second
+      # undefended defect: Recover reads the manifest watermark
+      # without checking that the snapshot is there. Fix that one and the
+      # ordering mutation stops losing data, so the arm goes quietly green.
+      # Measured on 2026-09-05 with both applied at once, the script exits 1 and
+      # names its checkpoint red row, which is row 7. That is DEFER-095, and the
+      # day it closes this row will say so rather than let the red go out
+      # unnoticed.
+      #
+      # Cost, on a MacBook Pro M1 Max with go1.26.6, and no band has ever held
+      # for this script. With four rows, across sixteen runs on 2026-09-05, the
+      # range was 11.12s to 20.48s, the top of it at one-minute load 10.35. With
+      # the checkpoint rows in, across nine runs the same day, 17.70s to 25.04s,
+      # and the load axis does not explain it: the fastest of the nine ran at
+      # load 6.31 and the slowest at 3.48. Read a ceiling of twenty-five seconds
+      # and nothing finer. The pieces do reproduce, measured three times each:
+      # 6.34s to 7.17s for the checkpoint control, 2.67s to 3.68s for its red
+      # row, 0.09s for its canary, so the addition is about ten seconds. It runs
+      # the two defenders five times in all, three for engine/naylamp and two
+      # for engine/persist, and the canaries only break a build, next to the
+      # 159.7s the Test step already pays on
+      # engine/naylamp alone, measured on 2026-08-31 and quoted in that step's
+      # own note. No runner figure exists yet and no run of this script
+      # is archived in the register, so the figures carry machine, toolchain and
+      # load, and no identifier.
+      #
+      # It carries the same exposure the arm it guards just shed, and that is
+      # worth saying here rather than only in its own header. Rows 3 and 4 close
+      # on a grep over the TEXT of the error the defender prints, so renaming
+      # either literal in production code turns this step red with no defect
+      # behind it. Measured on 2026-09-05: rename "corrupt hard state file" and
+      # row 4 fails; rename both and rows 3 and 4 fail, exit 1 either way. The
+      # script says why it accepts that trade; CI pays it.
+      #
+      # WHAT THE SCRIPT DOES NOT VERIFY. It
+      # uses go test -overlay, which substitutes files at COMPILE time: the tree
+      # is not mutated and nothing is copied, so what runs is the code with one
+      # file swapped rather than a mutated tree. For what these rows claim the
+      # difference does not matter, because the compilation unit is the same; for
+      # a claim about the state of the tree it would, and none is made.
+      - name: Order guard
+        working-directory: .
+        run: ./gate/order-guard-test.sh
       - name: Hygiene tool
         working-directory: .
         run: |
