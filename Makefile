@@ -141,30 +141,149 @@ PRUNE := -name .git -o -path ./gate/out/certs -o \( -type d -exec test -e {}/SEA
 # AND IT REFUSES BEFORE IT SWEEPS. Keeping what carries a seal is only half the
 # defence: the other half was that nothing wrote the seal by itself, so the first
 # artifact born without one went silently. The guard below lists the iron
-# artifacts (p1-<run id>, never the rehearsal's p1-local-) that hold something and
-# carry no SEALED, and stops with a non-zero status without removing anything,
+# artifacts (p<n>-<run id>, never a rehearsal's p<n>-local-) that hold something
+# and carry no SEALED, and stops with a non-zero status without removing anything,
 # which turns a silent loss into a stop. Overriding is explicit and named, never
 # the default:
 #
 #   make clean UNSEALED_OK=1
 #
+# AND IT NAMES EVERY PHASE, WHICH IT DID NOT UNTIL 2026-09-06. The predicate
+# listed p1-* alone, so a gate/out/p2-<run id> written by an iron run of
+# gate/p2.sh would have carried no seal past a guard that never looked at it, and
+# the sweep below WOULD have taken it: that sweep excludes only certs, *.log and
+# whatever carries a SEALED file, so it does not care about the prefix. Guard and
+# sweep disagreeing about which names matter is the same defect this block
+# already fixed once for the empty ones.
+#
+# It asks by SHAPE, p[0-9]-, and not by a list of the phases that exist today.
+# Naming p1 and p2 by hand would have reopened the same hole in silence the day a
+# p3- appeared, which is the failure the PRUNE line above already says it exists
+# to avoid: "so that it scales without a list somebody has to remember to
+# update". The rehearsal exclusion follows the same shape, p[0-9]-local-.
+#
+# There is no p2 iron artifact yet, because gate/p2.sh's iron path refuses to
+# run, so this is written before the first one exists rather than after losing
+# it. Row 8 of gate/clean-guard-test.sh puts the old p1-only predicate back and
+# measures that the loss was real.
+#
 # THE EMPTY ONES ARE NOT CAUGHT, and the first version of this guard did catch
 # them and left no way out. A p1-<run id> that a phase created and never wrote to
 # has nothing to keep, and gate/p1.sh refuses to seal an empty directory for that
 # reason, so catching it here meant a directory that could be neither sealed nor
-# cleaned. The sweep below takes it, which is what should happen to it, and the
-# predicate here now matches the one gate/p1.sh uses. The two asking different
-# questions was the defect.
+# cleaned. The sweep below takes it, which is what should happen to it, and on
+# emptiness this predicate and gate/p1.sh's ask the same question. The two asking
+# different questions was the defect.
+#
+# ON THE NAME they do NOT match, and saying they did was wrong from 2026-09-06,
+# when this one grew to cover p2: gate/p1.sh's is_iron_artifact knows only p1 and
+# demands the full shape p1-<stamp>Z-<pid>, while this one accepts any p<n>- that
+# is not a rehearsal. That is deliberate and it is the safer direction here. That
+# function decides whether to WRITE a seal, so it is strict on purpose; this guard
+# decides whether to DELETE, so a name it does not recognise must stop it rather
+# than be swept. A predicate that refuses too much costs a run of make clean
+# UNSEALED_OK=1; one that refuses too little costs the artifact.
 #
 # gate/p1.sh seals asks the same question without needing this target, so
 # reaching this guard means something went wrong rather than that somebody
 # forgot.
+#
+# AND THE EMPTINESS TEST DISCOUNTS THE RUNNING MARKER, for the same reason
+# gate/p1.sh's does. Several places in this tree ask whether an artifact is empty,
+# and on 2026-09-07 they learned about the marker one at a time: one at first, then
+# three after a reader counted, then the rest after a second reader found a fourth
+# inside phase_hygiene. No count is written here, for the reason two blocks down:
+# the way to keep them in step is to grep for `ls -A` before adding another.
+# A reader measured the state that left reachable: a directory whose sole file is
+# RUNNING is empty to seal_artifact, which will not seal it, and full to this
+# guard and to unsealed_iron_artifacts, which refuse to clean it and report it as
+# unsealed. Neither sealable nor cleanable, which is exactly what the empty
+# exception above exists to prevent. The three ask the same question again.
+# AND IT REFUSES WHILE A RUN IS STILL WRITING, which is piece five of DEFER-074 and
+# was a hole with two incidents before it was a line of code. On 2026-08-28 this
+# sweep took a live rehearsal's directory out from under a running gate, halfway
+# through a 50k recall; on 2026-09-07 it did it again, and the preflight caught the
+# aftermath with four replicas still alive. The seal guard below cannot help: it
+# protects FINISHED artifacts, and it excludes the rehearsal prefix on purpose.
+#
+# THE PREDICATE IS THE PROCESS AND NOT THE FILE. A directory is protected while it
+# carries a RUNNING file whose pid is alive. A marker whose process is gone does NOT
+# protect anything: that is deliberate, because a run killed with -9 would otherwise
+# block every future clean, which is how a defence gets removed for being in the way.
+# It is named on its way out rather than swept in silence.
+#
+# WHAT IT DOES NOT COVER, with no cardinal in front because the list is right
+# below and counts itself. Clause 11:
+#
+#   pid REUSE. A stale marker whose number now belongs to some unrelated process
+#   reads as alive and blocks a clean until somebody removes it by hand. That is the
+#   cheap side of the trade.
+#
+#   THE 2026-08-28 INCIDENT WAS OPEN FOR ONE DAY AND IS NOT ANY MORE. That one was a
+#   gate/p1.sh rehearsal, and when this block was first written gate/p1.sh wrote no
+#   marker: grep -c RUNNING gate/p1.sh gave 0, so a live NAYLAMP_P1_LOCAL=1 run was
+#   swept exactly as it had been then, and row 5 of gate/clean-guard-test.sh
+#   certified that in green. That was written here on purpose, because this block
+#   narrates two incidents as its reason and it would have been dishonest to let it
+#   imply both were covered. On 2026-09-07 the marker landed in gate/p1.sh too and
+#   that count stopped being zero; row 9b of the bench now covers that family, and
+#   row 9c fails if either call is taken out of that file. No figure is written
+#   here on purpose: a count of a file, kept outside the file, moves every time the
+#   file is edited, and this one went from 13 to 18 inside a single day. These
+#   lines are kept
+#   rather than deleted because the gap was real for a day and the reason it closed
+#   is the same reason it should never have been left open: p1.sh is the script that
+#   runs the Phase 1 iron session, which is where a sweep in flight costs most.
+#
+#   A PID THIS USER CANNOT SIGNAL. kill -0 returns non-zero for EPERM just as it
+#   does for ESRCH, so a live process owned by somebody else used to read as gone
+#   and get swept with a reassuring message. That is the expensive direction, so the
+#   check below asks ps as well, and only calls a marker stale when NEITHER sees the
+#   process.
+#
+# The loop below splits on whitespace, which is safe here and not in general: every
+# path it walks is gate/out/<artifact>/RUNNING, and the artifact name comes from a
+# run id this tree validates for shape before it creates anything. A directory put
+# there by hand with a space in its name would break it, and that is the assumption
+# rather than a guarantee.
+#
+# THE OVERRIDE IS ITS OWN, AND THAT IS THE POINT. UNSEALED_OK=1 means "yes, delete
+# this FINISHED artifact that carries no seal"; it must not also mean "yes, kill the
+# run that is being paid for right now". Measured on 2026-09-07: with the two sharing
+# a valve, make clean UNSEALED_OK=1 took a live rehearsal's directory without
+# printing a single line about it, which is the 2026-08-28 scene word for word. The
+# refusal below has its own switch and its own name:
+#
+#   make clean KILL_RUNNING_OK=1
+#
 UNSEALED_OK ?=
+KILL_RUNNING_OK ?=
 clean:
 	@test ! -d gate/out || { \
-		u=$$(find gate/out -mindepth 1 -maxdepth 1 -type d -name 'p1-*' ! -name 'p1-local-*' \
+		alive=; stale=; \
+		for m in $$(find gate/out -mindepth 2 -maxdepth 2 -name RUNNING -print 2>/dev/null); do \
+			d=$$(basename "$$(dirname "$$m")"); \
+			p=$$(sed -n 's/^pid: //p' "$$m" | head -n1); \
+			case "$$p" in ''|0|*[!0-9]*) stale="$$stale $$d(no usable pid)"; continue ;; esac; \
+			if kill -0 "$$p" 2>/dev/null || ps -p "$$p" >/dev/null 2>&1; then alive="$$alive $$d(pid $$p)"; \
+			else stale="$$stale $$d(pid $$p, gone)"; fi; \
+		done; \
+		if [ -n "$$alive" ] && [ -z "$(KILL_RUNNING_OK)" ]; then \
+			echo "make: refusing to clean: a gate run is still writing:$$alive" >&2; \
+			echo "make: its RUNNING marker carries a pid that is alive. Wait for it, or stop it." >&2; \
+			echo "make: UNSEALED_OK=1 does NOT override this one, on purpose. The switch that" >&2; \
+			echo "make: kills a paid run has to be typed on purpose: make clean KILL_RUNNING_OK=1" >&2; \
+			exit 1; \
+		fi; \
+		if [ -n "$$stale" ]; then \
+			echo "make: sweeping the remains of runs that did not finish:$$stale" >&2; \
+		fi; \
+	}
+	@test ! -d gate/out || { \
+		u=$$(find gate/out -mindepth 1 -maxdepth 1 -type d \
+			-name 'p[0-9]-*' ! -name 'p[0-9]-local-*' \
 			! -exec test -e {}/SEALED \; \
-			-exec sh -c 'test -n "$$(ls -A "$$1")"' _ {} \; -print | sed 's#.*/##' | tr '\n' ' '); \
+			-exec sh -c 'test -n "$$(ls -A "$$1" | grep -vx RUNNING)"' _ {} \; -print | sed 's#.*/##' | tr '\n' ' '); \
 		if [ -n "$$u" ] && [ -z "$(UNSEALED_OK)" ]; then \
 			echo "make: refusing to clean: iron artifacts with no SEALED file: $$u" >&2; \
 			echo "make: seal one by writing gate/out/<name>/SEALED with who cites it and why it is kept," >&2; \
