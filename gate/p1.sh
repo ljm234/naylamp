@@ -347,6 +347,63 @@ is_iron_artifact() {
 # Idempotent by design. A standalone hygiene re-enters the directory of another
 # run with that run's id, and overwriting there would swap a full seal for a thin
 # one written by an invocation that never saw the phases.
+# THE RUNNING MARKER, piece five of DEFER-074, and this script is the one that
+# needed it FIRST. The incident of 2026-08-28 was a rehearsal of THIS file, killed
+# halfway through a 50k recall by a make clean that took gate/out out from under it;
+# the log of that death is still in the tree as
+# gate/out/ensayo-local-20260829T002319Z-21017-MATADO.log. The marker went into
+# gate/p2.sh on 2026-09-07 and left this one uncovered, which a reader measured with
+# grep -c RUNNING gate/p1.sh giving zero. That asymmetry is the wrong way round:
+# p1.sh is the script that runs the Phase 1 iron session, an hour and a half with
+# three machines billing, which is where a clean in flight costs most.
+#
+# THE PREDICATE IS THE PROCESS AND NOT THE FILE, and the Makefile is what asks. What
+# this pair owes it is a marker that carries the pid and disappears on the way out.
+escribe_running() {
+	# NOT INTO ANOTHER RUN'S ARTIFACT. A standalone hygiene rewrites RUN_ID from its
+	# argument and re-enters somebody else's directory, which seal_artifact's comment
+	# already states. Leaving a marker there is worse than leaving none: if that
+	# invocation dies on a -9, a dead pid sits inside a directory the guard NEVER
+	# sweeps, because its seal protects it, and make clean announces remains over
+	# something it does not touch, on every future run. A reader brought this on
+	# 2026-09-07.
+	#
+	# THIS CLOSES ONE DOOR OF TWO, and saying otherwise would be the kind of claim
+	# this file exists to avoid. phase_hygiene seals while the run is alive, with the
+	# marker still in place, and retira_running does not fire until cleanup: a -9 in
+	# that window leaves seal and marker together just the same. The removal now runs
+	# AFTER the seal, which trades one face of that window for the other, and the
+	# trade is written down in cleanup rather than presented as a fix.
+	if [ -e "${OUT_LOCAL}/SEALED" ]; then
+		echo "gate: no RUNNING marker written: ${OUT_LOCAL} is a sealed artifact of another run" >&2
+		return 0
+	fi
+	printf 'pid: %s\nrun: %s\nstarted: %s\nscript: %s\nhost: %s\n' \
+		"$$" "$(basename "${OUT_LOCAL}")" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+		"gate/p1.sh" "$(hostname)" > "${OUT_LOCAL}/RUNNING"
+}
+
+retira_running() {
+	# THIS SCRIPT NAMES ITS ARTIFACT TWO WAYS and the removal knows both, each
+	# written as a literal with the run id appended inline, never a bare root.
+	# Clause 23. Deriving the write from a variable and the removal from one literal
+	# is exactly the latent defect a reader measured in gate/p2.sh on 2026-09-07:
+	# the day the two names diverge the marker outlives the run. Here they cannot
+	# diverge silently, because anything that is neither name says so out loud.
+	case "${OUT_LOCAL}" in
+		"${OUT_DIR}/p1-${RUN_ID}")
+			[ -f "${OUT_DIR}/p1-${RUN_ID}/RUNNING" ] || return 0
+			grep -q "^pid: $$\$" "${OUT_DIR}/p1-${RUN_ID}/RUNNING" || return 0
+			rm -f -- "${OUT_DIR}/p1-${RUN_ID}/RUNNING" ;;
+		"${OUT_DIR}/p1-local-${RUN_ID}")
+			[ -f "${OUT_DIR}/p1-local-${RUN_ID}/RUNNING" ] || return 0
+			grep -q "^pid: $$\$" "${OUT_DIR}/p1-local-${RUN_ID}/RUNNING" || return 0
+			rm -f -- "${OUT_DIR}/p1-local-${RUN_ID}/RUNNING" ;;
+		*)
+			echo "gate: RUNNING marker NOT removed: ${OUT_LOCAL} is neither p1-${RUN_ID} nor p1-local-${RUN_ID}" >&2 ;;
+	esac
+}
+
 seal_artifact() {
 	[ "${NAYLAMP_P1_LOCAL:-}" = 1 ] && return 0
 	[ "${RUN_STARTED}" -eq 1 ] || return 0
@@ -356,7 +413,26 @@ seal_artifact() {
 	# cleanup of 2026-08-27 swept by hand were empty: phases that write no raw
 	# output still mkdir their artifact. Sealing an empty directory would keep it
 	# forever and rebuild that pile with a marker on top.
-	[ -n "$(ls -A "${OUT_LOCAL}" 2>/dev/null)" ] || return 0
+	#
+	# AND THE RUNNING MARKER DOES NOT COUNT AS CONTENT. phase_hygiene seals while the
+	# run is still alive, so the marker is still there; counting it would let a run
+	# that wrote nothing else seal a directory whose only file then disappears at
+	# cleanup, leaving a SEALED EMPTY directory that no sweep can ever take.
+	#
+	# AND THE SAME DISCOUNT GOES IN EVERY OTHER PLACE THAT ASKS ABOUT EMPTINESS, and
+	# the count of those places was wrong twice. The first version of this change
+	# discounted the marker here alone; a reader measured what that costs, and the
+	# second version said THREE and fixed unsealed_iron_artifacts below and the seal
+	# guard in the Makefile. A second reader counted FOUR: phase_hygiene has its own
+	# emptiness test, and it was the one that mattered most, because it is the one
+	# that turns the mismatch into a RED verdict. With any of them out of step, a
+	# directory whose sole file is RUNNING is empty to one and full to another, so
+	# P1.hygiene goes red over a directory the very same invocation created and the
+	# make clean its message names refuses to take it. Neither sealable nor
+	# cleanable, which is the state the empty exception exists to prevent. The FOUR
+	# ask the same question now, and the way to keep it that way is to grep for
+	# `ls -A` before adding a fifth.
+	[ -n "$(ls -A "${OUT_LOCAL}" 2>/dev/null | grep -vx RUNNING)" ] || return 0
 	[ -e "${OUT_LOCAL}/SEALED" ] && { SEALED_THIS_RUN=1; return 0; }
 	{
 		echo "Phase 1 iron gate artifact, sealed by gate/p1.sh."
@@ -414,7 +490,16 @@ unsealed_iron_artifacts() {
 			[ -d "${d}" ] || continue
 			b="$(basename "${d}")"
 			is_iron_artifact "${b}" || continue
-			[ -n "$(ls -A "${d}" 2>/dev/null)" ] || continue
+			# THE SAME PREDICATE seal_artifact USES, and discounting the marker here
+			# too is what keeps the trap shut. Change one of the places that ask
+			# about emptiness and not the rest, which is what the first version of
+			# this change did on 2026-09-07, and a directory whose only file is
+			# RUNNING lands in an impossible state: seal_artifact calls it empty and
+			# will not seal it, this function calls it full and reports it unsealed,
+			# and the make clean its message names will not take it either, because
+			# that guard reads the same way. Neither sealable nor cleanable, which is
+			# exactly what the empty exception exists to prevent.
+			[ -n "$(ls -A "${d}" 2>/dev/null | grep -vx RUNNING)" ] || continue
 			seen=$((seen + 1))
 			[ -e "${d}/SEALED" ] && continue
 			out="${out} ${b}"
@@ -426,6 +511,14 @@ unsealed_iron_artifacts() {
 cleanup() {
 	local rc=$?
 	set +e
+	# THE MARKER GOES LAST AND NOT FIRST, and the reason the first version gave did
+	# not discriminate: "a sealed artifact must not carry a RUNNING file" is satisfied
+	# either way, because cleanup is the last thing that runs. What does discriminate
+	# is the window. Between the removal and seal_artifact the artifact carries
+	# neither guard, no live marker and no seal yet, and a sweep landing there takes
+	# it. Today that window is three echoes wide, which a reader measured; the day
+	# cleanup grows, and on iron it will, it stops being free. So the removal waits
+	# until the seal is written.
 	if [ "${HOSTS_REACHABLE}" -eq 1 ] && [ "${UPLOADED}" -eq 1 ]; then
 		echo "gate: the run is ending with material still on the hosts; P1.hygiene is what removes it and it did not complete" >&2
 		# The printed command carries the prefix LITERAL and the run id appended,
@@ -446,6 +539,7 @@ cleanup() {
 	# hygiene: every subcommand other than all and hygiene, plus any abort. Sealing
 	# here too is why a run that dies mid-phase keeps what it managed to write.
 	seal_artifact
+	retira_running
 	if ! emit_final_verdict; then
 		[ "${rc}" -eq 0 ] && rc=1
 	fi
@@ -1555,7 +1649,7 @@ phase_hygiene() {
 	# artifact", which it had not. An empty artifact is the one case where not
 	# sealing is correct.
 	if [ "${NAYLAMP_P1_LOCAL:-}" != 1 ] && [ "${SEALED_THIS_RUN}" -eq 0 ] \
-		&& [ -d "${OUT_LOCAL}" ] && [ -n "$(ls -A "${OUT_LOCAL}" 2>/dev/null)" ]; then
+		&& [ -d "${OUT_LOCAL}" ] && [ -n "$(ls -A "${OUT_LOCAL}" 2>/dev/null | grep -vx RUNNING)" ]; then
 		fail "P1.hygiene: this run wrote an artifact and did not seal it, so the next make clean would take it"
 		left=1
 	fi
@@ -1821,6 +1915,7 @@ echo "budgets: sweep=${SWEEP_TIMEOUT} recall=${RECALL_TIMEOUT} point=${POINT_TIM
 echo "not claimed (24, the live exclusions of G3): 1 result order; 2 speed, latency and throughput; 3 durability; 4 concurrency, where this gate is WEAKER than CI on two counts: no -race, and no interleaving exercised at all, the second half inherited from the struck 23; 5 the corpus/efSearch axis; 6 that the result is THE exact one; 7 the API surface 1.4 promised; 8 isolation between collections; 9 memory and index size; 10 build determinism under seed; 11 every metric but cosine; 12 degenerate vectors and ties; 15 coverage of the dim interval, which is sampled at two values; 16 that the recall floor is a sample over fixed query seeds and not a bound; 18 that the red arm attests ONE VM and not three; 19 that this is a deployed service; 20 ARM64 arithmetic as a contribution, which measurement retired; 21 what the three-host agreement can see, which is little by construction; 22 the reupsert regime above the layer-0 cap; 24 that the degenerate rung runs with layer 0 unpruned; 25 that reachability at the top of the point has no red arm; 26 that no row of this red arm can notice its own metric has stopped measuring; 27 that the set agreement at the top of the point has no red arm either, the twin of 25: the ONE row that covers clause (i) is row 3, fantasma, and it scores against the sweep at dim=16 and maxID=100, and that mutation has never been run at 50k; 28 that none of the five point labels can notice its own check has stopped asserting, except the floor: all five are scored by the ABSENCE of a failure pattern, only P1.point.floor carries a guard on the VALUE, and the swept count in the P1.point.reach line comes from the size of the oracle map and not from a counter of the traversal, so a gutted checkReachability would print the same line"
 
 mkdir -p "${OUT_LOCAL}"
+escribe_running
 
 if [ "${cmd}" != pre ]; then
 	require_hosts_reachable
