@@ -232,8 +232,16 @@ delta() { /usr/bin/python3 -c "print('%.2f' % ($2 - $1))"; }
 # dictated on 2026-09-06, and it is not a summary of exclusion 17, it is the
 # exclusion.
 banner() {
-	local b
-	b=$(cat <<BANNER
+	# THE TEXT IS EMITTED, NOT CAPTURED, and that is a measured trap rather than a
+	# preference. This used to be b=$(cat <<BANNER ... BANNER) followed by two
+	# printfs. Inside a command substitution bash tracks the quotes of the content
+	# even when the content is a here-document, so the banner had to carry an EVEN
+	# number of apostrophes to parse at all. It carried two. On 2026-09-07 a
+	# sentence with a third was added and the whole script stopped parsing, with
+	# the error reported three hundred lines away inside an unrelated case. A pipe
+	# to tee duplicates the stream without any substitution, so no invisible
+	# condition is left on what the banner may say.
+	cat <<BANNER | tee /dev/stderr
 ================================================================================
 NAYLAMP PHASE 2 GATE, REHEARSAL ONLY. run id p2-local-${RUN_ID}
 This is NOT gate evidence and it seals nothing.
@@ -252,17 +260,30 @@ filesystem, three real machines and a real election, and it does NOT exercise a
 cut model different from the simulation's. The fleet's three OS disks are
 caching: ReadWrite, read on 2026-09-06 with the fleet powered off, so the host
 write cache survives the guest reboot. That is the choice, not a pending item.
+And it stopped being a reading on 2026-09-07: naylamp-1 was powered on, cut with
+echo b > /proc/sysrq-trigger and read back. It stopped answering 6 s after the
+cut and answered again 14 s after it, the cut being the mandate plus a deliberate
+three second delay. The journal DID need recovery, and the boot before it, a
+normal one from deallocate, did not: that difference is what says the cut cut,
+and at least 39 s of that boot's journal never reached the disk.
+
+Two files fsynced before the cut both survived, the one whose directory was also
+fsynced and the one whose was not. That is a bounded result and it is written as
+one: it says the DEFER-028 gap did not materialise on ext4 in ordered data mode
+under this cut. It does not say why, and this gate does not need it to.
 
 TREE MEASURED: ${REPO_DIR}
-CARRIER: the Raft entry log inside naylampd. Not persist.DB, which no binary in
-this tree starts.
+CARRIER: the Raft entry log inside naylampd, which is the half that makes its
+directory entry durable. raft.openFreshSegment calls fsyncDir(s.dir)
+(engine/raft/storage.go:455 and :460); persist.openActiveSegment returns without
+it (engine/persist/wal.go:149), and fsyncDir appears zero times in that file.
+That gap is DEFER-028 and this gate does NOT exercise it: persist.DB is out by
+name, and no binary in this tree starts one. Outside its own package, persist is
+used only for encoding helpers.
 WITNESS: the manifest of acked client operations, built on this machine, outside
 anything that gets cut.
 ================================================================================
 BANNER
-)
-	printf '%s\n' "${b}"
-	printf '%s\n' "${b}" >&2
 }
 
 # vec_for prints the vector this rehearsal gives an id: its binary expansion over
@@ -416,9 +437,56 @@ entry_log_bytes() {
 
 # ---- phases -------------------------------------------------------------------
 
+# THE RUNNING MARKER, and it is the FIRST byte written into the artifact rather
+# than a detail of the build phase. It exists because make clean has now killed a
+# live rehearsal TWICE, on 2026-08-28 and on 2026-09-07, and both times the sweep
+# took gate/out out from under a run that was still writing. The predicate that
+# matters is not the file, it is the PROCESS: a marker whose pid is gone must not
+# block a clean forever, which is how a defence gets switched off for being in the
+# way. So the marker carries the pid and whoever reads it asks the operating system.
+#
+# WHAT IT DOES NOT COVER, said here and not left to be discovered. A marker whose
+# process died does NOT protect its directory, on purpose, so a run killed with -9
+# leaves an artifact that the next clean sweeps. A pid can be REUSED, so a stale
+# marker whose number now belongs to some unrelated process reads as alive and
+# blocks a clean until somebody removes it by hand. When this was written gate/p1.sh
+# wrote NO marker, so a live NAYLAMP_P1_LOCAL=1 rehearsal was still swept exactly as
+# one was on 2026-08-28, which is the incident this piece cites as half of its
+# reason. That half closed the same day, a few hours later: gate/p1.sh writes one
+# now. The first two are the cheap side of the trade, and the expensive side was
+# losing a running gate.
+escribe_running() {
+	printf 'pid: %s\nrun: p2-local-%s\nstarted: %s\nscript: %s\nhost: %s\n' \
+		"$$" "${RUN_ID}" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "gate/p2.sh" "$(hostname)" \
+		> "${OUT_LOCAL}/RUNNING"
+}
+
+retira_running() {
+	# The removal is written against a LITERAL prefix with the run id appended
+	# inline, never a bare variable, and only if the file this run wrote is the one
+	# being removed. Clause 23.
+	#
+	# AND IT ASSERTS THAT THE LITERAL AND OUT_LOCAL ARE THE SAME PATH, which they are
+	# today only because line 150 says so and nothing checked it. A reader measured
+	# what that costs on the day the iron path lands: OUT_LOCAL becomes p2-<run id>,
+	# this function walks p2-local-<run id>, finds nothing, returns 0, and the marker
+	# outlives the run. Every later make clean would then announce the remains of a
+	# run that did not finish, forever, over a directory it never sweeps. Clause 23
+	# justifies the literal in a REMOVAL; it does not justify deriving the write and
+	# the removal by two different routes.
+	if [ "${OUT_LOCAL}" != "${OUT_DIR}/p2-local-${RUN_ID}" ]; then
+		echo "gate: RUNNING marker NOT removed: the artifact is ${OUT_LOCAL} and this removal only knows p2-local-${RUN_ID}" >&2
+		return 0
+	fi
+	[ -f "${OUT_DIR}/p2-local-${RUN_ID}/RUNNING" ] || return 0
+	grep -q "^pid: $$\$" "${OUT_DIR}/p2-local-${RUN_ID}/RUNNING" || return 0
+	rm -f -- "${OUT_DIR}/p2-local-${RUN_ID}/RUNNING"
+}
+
 phase_build() {
 	begin_check
 	mkdir -p "${OUT_DIR}" "${OUT_LOCAL}" "${FLEET}"
+	escribe_running
 	note "rehearsal: building naylampd NATIVE; on iron this build is linux/arm64 static and comes from gate/build.sh"
 	( cd "${REPO_DIR}" && go build -o "${BIN}" ./engine/cmd/naylampd ) || stop "naylampd did not build"
 	note "built naylampd $(stat -f%z "${BIN}" 2>/dev/null || stat -c%s "${BIN}") bytes, sha256 $(shasum -a 256 "${BIN}" | cut -c1-16)"
@@ -1016,6 +1084,7 @@ limpia_flota() {
 al_salir() {
 	local rc=$?
 	limpia_flota
+	retira_running
 	if [ "${RUN_STARTED}" -eq 1 ] && [ "${EMITIDO}" -eq 0 ]; then
 		echo "gate: the run ABORTED before reaching its verdict block, so nothing above is a result" >&2
 		emit_final_verdict || true
