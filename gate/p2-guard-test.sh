@@ -36,6 +36,15 @@
 # have something to be wrong about.
 set -euo pipefail
 
+# QUIEN ES ESTE BANCO, dicho en su PRIMERA linea de salida y en una forma que no
+# es prosa. Entra el 8 de septiembre de 2026. El barrido que revisa el archivo de
+# corridas/ clasificaba cada captura buscando por el CUERPO el texto de alguna de
+# sus filas, y eso tiene dos agujeros medidos: el texto de una fila se reescribe,
+# y entonces las capturas de ese banco dejan de existir para el barrido sin que
+# nadie lo note; y un informe ESCRITO que cita unas filas se cuenta como corrida.
+# Una cita vive siempre por el medio de un fichero, nunca en su primera linea.
+echo "BANCO: p2-guard-test"
+
 GATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 P2="${GATE_DIR}/p2.sh"
 REPO_DIR="$(cd "${GATE_DIR}/.." && pwd)"
@@ -197,6 +206,15 @@ trap limpia_y_cierra EXIT
 FILAS=0
 ROJAS=0
 MAL=0
+# EL REGISTRO DE FILAS, y entra el 8 de septiembre de 2026 porque este banco era
+# el unico de los cuatro que no lo tenia. FILAS y MAL se llevaban a mano en once
+# sitios, y la linea de RESULTADO publicaba esas dos cuentas sin nada que las
+# contrastara. Aqui cada fila deja su rastro en un fichero, y el resumen deriva
+# las dos cifras del fichero: si una fila se olvida de contarse, las cuentas no
+# casan y el banco lo dice en vez de publicarlas.
+REGISTRO_FILAS="${SCRATCH}/filas-del-banco"
+: > "${REGISTRO_FILAS}"
+anota_fila() { printf '%s\n' "$1" >> "${REGISTRO_FILAS}"; }
 # Categorias contadas y no recitadas. El epilogo de la version anterior decia
 # OCHO filas que siguen cuando eran ONCE, porque tres filas nuevas entraron y el
 # cardinal escrito a mano se quedo, y esa cifra mala llego a archivarse en una
@@ -231,6 +249,17 @@ PY
 prepara() {
 	local nombre="$1" copia="${SCRATCH}/$1.sh"
 	cp "${P2}" "${copia}"
+	# Y SU HERMANO AL LADO, porque desde el 8 de septiembre de 2026 gate/p2.sh
+	# sourcea gate/cert-margen.sh, que es donde vive el margen del material TLS, y
+	# se NIEGA si no lo encuentra. Sin esta linea la copia moria con rc 2
+	# diciendo que falta el margen, y la fila F2 daba NO CUADRA sin que el defecto
+	# tuviera nada que ver con lo que esa fila mide. Medido: una copia suelta de
+	# p2.sh sale con "gate: .../cert-margen.sh is missing".
+	#
+	# El arreglo va en el BANCO y no en el guion: que p2.sh se niegue sin su
+	# margen es la conducta correcta, y es la misma que el banco del hook tuvo
+	# que aprender con gate/msg-shas.sh una pasada antes.
+	cp "${P2%/*}/cert-margen.sh" "${SCRATCH}/cert-margen.sh"
 	corta_workload "${copia}"
 	if [ -n "${2:-}" ]; then
 		if ! /usr/bin/python3 - "${copia}" "$2" "$3" <<'PY'
@@ -275,8 +304,10 @@ sin_supervivientes() {
 	n=$(ps -Ao args= 2>/dev/null | grep -cE '^[^ ]*/(p2-naylampd|naylampd-mutante) node -id ' || true)
 	[ -z "${n}" ] && n=0
 	if [ "${n}" -eq 0 ]; then
+		anota_fila OK
 		printf '%-26s %s\n' "${etiqueta}-sin-supervivientes" "0 nodos vivos ${glosa}   OK"
 	else
+		anota_fila FALLA
 		printf '%-26s %s\n' "${etiqueta}-sin-supervivientes" "NO CUADRA: ${n} nodos siguen vivos tras terminar el guion"
 		MAL=$((MAL + 1))
 	fi
@@ -320,7 +351,7 @@ fila() {
 		*) [ "${rc}" = "${rc_espera}" ] || bien=no ;;
 	esac
 	[ "${espera}" = fail ] && [ "${cierre}" = verde ] && bien=no
-	[ "${bien}" = no ] && MAL=$((MAL + 1))
+	if [ "${bien}" = no ]; then anota_fila FALLA; MAL=$((MAL + 1)); else anota_fila OK; fi
 	[ "${v}" = fail ] && ROJAS=$((ROJAS + 1))
 	if [ "${llego_final}" = abort ]; then ABORTAN=$((ABORTAN + 1)); else SIGUEN=$((SIGUEN + 1)); fi
 
@@ -385,10 +416,10 @@ salida="$(env -u NAYLAMP_GATE_HOSTS -u NAYLAMP_GATE_PRIVATE -u NAYLAMP_GATE_KEY 
 set -e
 FILAS=$((FILAS + 1))
 if [ "${rc}" -eq 2 ] && printf '%s' "${salida}" | grep -q 'NAYLAMP_GATE_HOSTS is required' && ! printf '%s' "${salida}" | grep -q 'gate: verdict '; then
-	echo "F0-fierro-sin-identidad      sin las variables de la flota     rc=2, ninguna fase corrio, ningun veredicto   OK"
+	anota_fila OK; echo "F0-fierro-sin-identidad      sin las variables de la flota     rc=2, ninguna fase corrio, ningun veredicto   OK"
 	NO_EMPIEZAN=$((NO_EMPIEZAN + 1))
 else
-	echo "F0-fierro-sin-identidad      NO CUADRA: rc=${rc}"; MAL=$((MAL + 1))
+	anota_fila FALLA; echo "F0-fierro-sin-identidad      NO CUADRA: rc=${rc}"; MAL=$((MAL + 1))
 fi
 
 # Y LA OTRA MITAD, que la fila vieja no tenia: CON la identidad puesta, el camino
@@ -407,10 +438,10 @@ salida="$(NAYLAMP_RED_ARM=1 \
 	NAYLAMP_P2_SOURCE_ONLY=1 bash -c "source '${P2}'; echo ES_FIERRO=\${ES_FIERRO}; basename \"\${OUT_LOCAL}\"" 2>&1)"; rc=$?
 set -e
 if [ "${rc}" -eq 0 ] && printf '%s' "${salida}" | grep -q 'ES_FIERRO=1' && printf '%s' "${salida}" | grep -qE '^p2-[0-9]'; then
-	echo "F0b-fierro-elegido           con la identidad de la flota      toma el camino de fierro y nombra p2-<run id>  OK"
+	anota_fila OK; echo "F0b-fierro-elegido           con la identidad de la flota      toma el camino de fierro y nombra p2-<run id>  OK"
 	NO_EMPIEZAN=$((NO_EMPIEZAN + 1))
 else
-	echo "F0b-fierro-elegido           NO CUADRA: rc=${rc} [$(printf '%s' "${salida}" | tr '\n' '|' | cut -c1-90)]"; MAL=$((MAL + 1))
+	anota_fila FALLA; echo "F0b-fierro-elegido           NO CUADRA: rc=${rc} [$(printf '%s' "${salida}" | tr '\n' '|' | cut -c1-90)]"; MAL=$((MAL + 1))
 fi
 
 set +e
@@ -418,10 +449,10 @@ salida="$(NAYLAMP_P2_LOCAL=1 "${P2}" 2>&1)"; rc=$?
 set -e
 FILAS=$((FILAS + 1))
 if [ "${rc}" -eq 2 ] && printf '%s' "${salida}" | grep -q 'usage:' && ! printf '%s' "${salida}" | grep -q 'gate: verdict '; then
-	echo "F1-sin-subcomando            invocacion desnuda               rc=2, uso impreso, ningun veredicto           OK"
+	anota_fila OK; echo "F1-sin-subcomando            invocacion desnuda               rc=2, uso impreso, ningun veredicto           OK"
 	NO_EMPIEZAN=$((NO_EMPIEZAN + 1))
 else
-	echo "F1-sin-subcomando            NO CUADRA: rc=${rc}"; MAL=$((MAL + 1))
+	anota_fila FALLA; echo "F1-sin-subcomando            NO CUADRA: rc=${rc}"; MAL=$((MAL + 1))
 fi
 
 # Un subcomando que el uso NO anuncia tiene que salir por el mismo sitio y no
@@ -433,10 +464,10 @@ set -e
 FILAS=$((FILAS + 1))
 sobra="$(ls -d "${REPO_DIR}"/gate/out/p2-local-* 2>/dev/null | wc -l | tr -d ' ' || true)"
 if [ "${rc}" -eq 2 ] && printf '%s' "${salida}" | grep -q 'usage:' && ! printf '%s' "${salida}" | grep -q 'gate: verdict '; then
-	echo "F1b-subcomando-no-cableado   'hygiene', que el uso no anuncia   rc=2 y ningun veredicto                      OK"
+	anota_fila OK; echo "F1b-subcomando-no-cableado   'hygiene', que el uso no anuncia   rc=2 y ningun veredicto                      OK"
 	NO_EMPIEZAN=$((NO_EMPIEZAN + 1))
 else
-	echo "F1b-subcomando-no-cableado   NO CUADRA: rc=${rc}"; MAL=$((MAL + 1))
+	anota_fila FALLA; echo "F1b-subcomando-no-cableado   NO CUADRA: rc=${rc}"; MAL=$((MAL + 1))
 fi
 
 copia="$(prepara runid-roto \
@@ -447,10 +478,10 @@ salida="$(NAYLAMP_P2_LOCAL=1 NAYLAMP_P2_REPO="${REPO_DIR}" "${copia}" all 2>&1)"
 set -e
 FILAS=$((FILAS + 1))
 if [ "${rc}" -eq 2 ] && printf '%s' "${salida}" | grep -q 'not the shape this script deletes by' && ! printf '%s' "${salida}" | grep -q 'gate: verdict '; then
-	echo "F2-runid-fuera-de-forma      la guarda del borrado            rc=2, antes de crear nada, ningun veredicto   OK"
+	anota_fila OK; echo "F2-runid-fuera-de-forma      la guarda del borrado            rc=2, antes de crear nada, ningun veredicto   OK"
 	NO_EMPIEZAN=$((NO_EMPIEZAN + 1))
 else
-	echo "F2-runid-fuera-de-forma      NO CUADRA: rc=${rc}"; MAL=$((MAL + 1))
+	anota_fila FALLA; echo "F2-runid-fuera-de-forma      NO CUADRA: rc=${rc}"; MAL=$((MAL + 1))
 fi
 
 echo
@@ -630,6 +661,55 @@ sin_supervivientes F9 "tras un corte que dejo una replica viva"
 sin_supervivientes F8 "al cerrar el banco, tras las filas de higiene y de corte parcial"
 
 echo
+# LA LINEA DE RESULTADO, y NO es uniforme en los siete: son SEIS con la forma de
+# dos numeros y uno, gate/p2-iron-test.sh, con un superconjunto de tres. El
+# barrido acepta las dos a proposito. Entra el 8
+# de septiembre de 2026 por una orden de quien encarga. Nace de que una trampa
+# EXIT convertia un abortado en rc 0: cualquier banco archivado pudo morir a
+# medias y leerse como verde, asi que hay que poder barrer `corridas/` y separar
+# lo completo de lo abortado con UN solo predicado.
+#
+# Y VA EN ESTA FORMA Y NO EN LA DE ABAJO porque el primer barrido del archivo
+# fallo por anclarse al TEXTO: la linea final de otro banco decia una cosa el 6
+# de septiembre y otra el 7, y el predicado dio por ABORTADA una corrida entera.
+# Una marca de terminacion no puede ser prosa. La linea de abajo se queda porque
+# dice mas, y esta se anade porque dice lo mismo en todos.
+# EL REPARTO SE COMPRUEBA ANTES DE PUBLICAR LA LINEA, y hasta el 8 de septiembre
+# de 2026 se comprobaba DESPUES. La suma por categorias vivia treinta lineas mas
+# abajo y sumaba a MAL alli, o sea que un reparto que no cuadrara subia MAL
+# despues de que la linea de RESULTADO ya hubiera publicado el MAL viejo: el
+# crudo archivado decia "0 en FALLA" y el guion salia con 1. La marca de
+# terminacion mentia sobre el color de su propia corrida, que es la clase que
+# este registro persigue por nombre.
+if [ "$((NO_EMPIEZAN + SIGUEN + ABORTAN + SUPERVIV))" -ne "${FILAS}" ]; then
+	echo "guard: el reparto por categorias no suma las filas corridas" >&2
+	anota_fila FALLA
+	MAL=$((MAL + 1))
+fi
+
+# LAS DOS CUENTAS SALEN DEL REGISTRO Y NO DE LOS ACUMULADORES, que es para lo que
+# existe el registro: si una fila se olvida de anotarse, o se anota dos veces, las
+# dos cuentas dejan de casar y eso se ve. FILAS y MAL siguen contandose a mano
+# para poder contrastarlos.
+n_filas=$(grep -c . "${REGISTRO_FILAS}" || true)
+n_falla=$(grep -c '^FALLA$' "${REGISTRO_FILAS}" || true)
+echo "RESULTADO: ${n_filas} filas, ${n_falla} en FALLA"
+# COMPLETO SE PONE AQUI, detras del resumen y delante de las anti-vacuidades, por
+# la razon escrita en los otros tres bancos: salir por exit 1 con COMPLETO en cero
+# hace que la trampa imprima "ABORTADO antes del resumen" debajo del resumen.
+COMPLETO=1
+if [ "${n_filas}" -eq 0 ]; then
+	echo "test: VACIO. El registro de filas salio a cero, asi que este banco no ha probado nada" >&2
+	exit 1
+fi
+if [ "${n_filas}" -ne "${FILAS}" ]; then
+	echo "test: el registro tiene ${n_filas} filas y el contador dice ${FILAS}; alguna fila no se anoto o se anoto dos veces" >&2
+	exit 1
+fi
+if [ "${n_falla}" -ne "${MAL}" ]; then
+	echo "test: el registro cuenta ${n_falla} fallas y el acumulador ${MAL}; las dos cuentas tienen que casar" >&2
+	exit 1
+fi
 echo "filas: ${FILAS}, veredictos rojos obtenidos: ${ROJAS}, filas que no cuadran: ${MAL}"
 echo
 printf 'LA PREGUNTA DEL FLUJO, contestada fila a fila y contada, no recitada:\n'
@@ -645,10 +725,6 @@ printf '  y la pregunta se contestaba con una constante.\n'
 printf '  %d filas no miran veredicto sino lo que queda vivo despues, porque un rojo correcto\n' "${SUPERVIV}"
 printf '  y tres daemons huerfanos caben en la misma corrida.\n'
 printf '  suma: %d, y FILAS dice %d\n' "$((NO_EMPIEZAN + SIGUEN + ABORTAN + SUPERVIV))" "${FILAS}"
-if [ "$((NO_EMPIEZAN + SIGUEN + ABORTAN + SUPERVIV))" -ne "${FILAS}" ]; then
-	echo "guard: el reparto por categorias no suma las filas corridas" >&2
-	MAL=$((MAL + 1))
-fi
 echo
 echo "LO QUE ESTE BANCO COMPRUEBA DE CADA FILA, y no solo el veredicto: el codigo de"
 echo "salida, si la corrida llego a su final o aborto, y que una fila roja NO cierre con"
@@ -701,6 +777,5 @@ RETIRADOS="$(barre_bancos_viejos)"
 QUEDAN="$(ls -d "${TMPDIR:-/tmp}"/naylamp-p2-guard-[0-9]* 2>/dev/null | wc -l | tr -d ' ')"
 echo "bancos de corridas anteriores retirados: ${RETIRADOS}; quedan ${QUEDAN} de un techo de ${CONSERVA}"
 
-COMPLETO=1
 [ "${MAL}" -eq 0 ] || exit 1
 exit 0

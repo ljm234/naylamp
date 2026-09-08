@@ -145,6 +145,17 @@
 
 set -eu
 
+# QUIEN ES ESTE BANCO, dicho en su PRIMERA linea de salida y en una forma que no
+# es prosa. Entra el 8 de septiembre de 2026. El barrido que revisa el archivo de
+# corridas/ clasificaba cada captura buscando por el CUERPO el texto de alguna de
+# sus filas, y eso tiene dos agujeros medidos: el texto de una fila se reescribe,
+# y entonces las capturas de ese banco dejan de existir para el barrido sin que
+# nadie lo note; y un informe ESCRITO que cita unas filas se cuenta como corrida,
+# que es como cuatro analisis del archivo acabaron contados como capturas. Una
+# cita vive siempre por el medio de un fichero, nunca en su primera linea, asi que
+# esta linea distingue una corrida de una cita a una corrida.
+echo "BANCO: order-guard-test"
+
 GO=${GO:-go}
 command -v "${GO}" >/dev/null 2>&1 || { echo "test: no encuentro el binario de Go (${GO})" >&2; exit 2; }
 
@@ -165,6 +176,32 @@ CAJON=$(mktemp -d "${TMPDIR:-/tmp}/order-guard-test.XXXXXX")
 # trampa no lo arregla, porque para entonces ya vale 0. Medido sobre este mismo
 # banco: abortado a mitad devolvia CERO, y dos de estos bancos corren en CI, o
 # sea que un banco muerto se leia como un paso verde.
+# LA LINEA DE RESULTADO, UNIFORME EN TODOS LOS BANCOS DE ESTA CASA, y entra el
+# 8 de septiembre de 2026 por una orden de quien encarga. Nace de que una trampa
+# EXIT convertia un abortado en rc 0: cualquier banco archivado pudo morir a
+# medias y leerse como verde, asi que hay que poder barrer `corridas/` y separar
+# lo completo de lo abortado.
+#
+# Y NACE TAMBIEN DE QUE EL PRIMER BARRIDO FALLO POR ANCLARSE AL TEXTO. La linea
+# final de OTRO banco, el de limpieza, decia una cosa el 6 de septiembre y otra
+# el 7. La de ESTE no ha cambiado nunca, comprobado con git show sobre la
+# historia, y la primera version de este comentario decia "este banco" porque
+# se clono del suyo sin releer el deictico: la misma clase que el bloque
+# denuncia, cometida dentro del bloque. Un predicado anclado a la redaccion
+# daba por ABORTADA una corrida entera, asi que un
+# predicado anclado a su redaccion daba por ABORTADA una corrida entera. Una
+# marca de terminacion no puede ser prosa: tiene que ser una FORMA estable,
+# `RESULTADO: <n> filas, <n> en FALLA`. **Y NO ES IGUAL EN LOS SIETE, que es lo
+# que decia esta linea y no describia el arbol:** son SEIS con esa forma y uno,
+# `gate/p2-iron-test.sh`, con un superconjunto de tres numeros,
+# `RESULTADO: <n> filas, <n> de ellas rojas, <n> en FALLA`. El predicado del
+# barrido acepta las dos a proposito, con un grupo opcional; la afirmacion de que
+# eran siete iguales se escribio cuatro veces en el arbol y era falsa en todas.
+# Desde el 8 de septiembre son OCHO bancos, con gate/sello-test.sh. Y con la
+# cuenta derivada del registro y no tecleada.
+REGISTRO_FILAS="${CAJON}/filas-del-banco"
+: > "${REGISTRO_FILAS}"
+anota_fila() { printf '%s\n' "$1" >> "${REGISTRO_FILAS}"; }
 COMPLETO=0
 limpia_y_cierra() {
 	if [ "${COMPLETO}" -ne 1 ]; then
@@ -372,9 +409,9 @@ mal() { echo "$1" >&2; fallos=$((fallos + 1)); }
 # ---- 1. CONTROL: el arbol sin tocar deja el defensor verde ----
 rc=$(corre "" "${CAJON}/control.txt")
 if [ "${rc}" -eq 0 ] && paso lockstep "${CAJON}/control.txt" && paso catching-up "${CAJON}/control.txt"; then
-	echo "1 control: OK, el arbol sin mutar deja los dos escenarios verdes"
+	anota_fila OK; echo "1 control: OK, el arbol sin mutar deja los dos escenarios verdes"
 else
-	mal "1 control: FALLA, el defensor no esta verde sobre el arbol sano, asi que ningun rojo de abajo prueba nada"
+	anota_fila FALLA; mal "1 control: FALLA, el defensor no esta verde sobre el arbol sano, asi que ningun rojo de abajo prueba nada"
 	echo "test: sin control no se sigue" >&2
 	exit 1
 fi
@@ -383,9 +420,9 @@ fi
 for lado in a b; do
 	rc=$(corre "${CAJON}/ov_canario_${lado}.json" "${CAJON}/canario_${lado}.txt")
 	if [ "${rc}" -ne 0 ] && ! grep -q "^ok " "${CAJON}/canario_${lado}.txt"; then
-		echo "2 canario(${lado}): OK, el overlay entra: el fichero que no compila rompe la construccion"
+		anota_fila OK; echo "2 canario(${lado}): OK, el overlay entra: el fichero que no compila rompe la construccion"
 	else
-		mal "2 canario(${lado}): FALLA, el overlay NO esta entrando en ese paquete, asi que un verde de su fila roja no diria nada"
+		anota_fila FALLA; mal "2 canario(${lado}): FALLA, el overlay NO esta entrando en ese paquete, asi que un verde de su fila roja no diria nada"
 		echo "test: sin canario no se sigue, porque las filas rojas serian ilegibles" >&2
 		exit 1
 	fi
@@ -395,18 +432,18 @@ done
 rc=$(corre "${CAJON}/ov_a.json" "${CAJON}/rojo_a.txt")
 if [ "${rc}" -ne 0 ] && falla catching-up "${CAJON}/rojo_a.txt" && paso lockstep "${CAJON}/rojo_a.txt" \
 	&& grep -q "restored commit exceeds restored log" "${CAJON}/rojo_a.txt"; then
-	echo "3 rojo(A): OK, MUERDE: bajado AppendEntries por detras del ack, catching-up cae y lockstep se queda verde"
+	anota_fila OK; echo "3 rojo(A): OK, MUERDE: bajado AppendEntries por detras del ack, catching-up cae y lockstep se queda verde"
 else
-	mal "3 rojo(A): FALLA, la mutacion del orden de processReady no dio el reparto que este brazo afirma"
+	anota_fila FALLA; mal "3 rojo(A): FALLA, la mutacion del orden de processReady no dio el reparto que este brazo afirma"
 fi
 
 # ---- 4. ROJO B: el hard state publicado antes de cruzar la barrera ----
 rc=$(corre "${CAJON}/ov_b.json" "${CAJON}/rojo_b.txt")
 if [ "${rc}" -ne 0 ] && falla lockstep "${CAJON}/rojo_b.txt" && falla catching-up "${CAJON}/rojo_b.txt" \
 	&& grep -q "corrupt hard state file" "${CAJON}/rojo_b.txt"; then
-	echo "4 rojo(B): OK, MUERDE: publicado el hard state antes de la barrera, los dos escenarios caen"
+	anota_fila OK; echo "4 rojo(B): OK, MUERDE: publicado el hard state antes de la barrera, los dos escenarios caen"
 else
-	mal "4 rojo(B): FALLA, la mutacion del orden de SaveHardState no puso rojos los dos escenarios"
+	anota_fila FALLA; mal "4 rojo(B): FALLA, la mutacion del orden de SaveHardState no puso rojos los dos escenarios"
 fi
 
 # ---- 5. CONTROL del brazo del checkpoint, y 6. su CANARIO ----
@@ -415,18 +452,18 @@ fi
 # verde sobre el arbol sano, y el overlay entra en engine/persist.
 rc=$(corre_en "" "${CAJON}/control_cp.txt" "${PAQUETE_CP}" "${SELECTOR_CP}")
 if [ "${rc}" -eq 0 ] && grep -q "^--- PASS: ${SELECTOR_CP} " "${CAJON}/control_cp.txt"; then
-	echo "5 control(cp): OK, el brazo del checkpoint esta verde sobre el arbol sin mutar"
+	anota_fila OK; echo "5 control(cp): OK, el brazo del checkpoint esta verde sobre el arbol sin mutar"
 else
-	mal "5 control(cp): FALLA, el brazo del checkpoint no esta verde sobre el arbol sano, asi que su rojo no probaria nada"
+	anota_fila FALLA; mal "5 control(cp): FALLA, el brazo del checkpoint no esta verde sobre el arbol sano, asi que su rojo no probaria nada"
 	echo "test: sin control no se sigue" >&2
 	exit 1
 fi
 
 rc=$(corre_en "${CAJON}/ov_canario_c.json" "${CAJON}/canario_c.txt" "${PAQUETE_CP}" "${SELECTOR_CP}")
 if [ "${rc}" -ne 0 ] && ! grep -q "^ok " "${CAJON}/canario_c.txt"; then
-	echo "6 canario(c): OK, el overlay entra en engine/persist"
+	anota_fila OK; echo "6 canario(c): OK, el overlay entra en engine/persist"
 else
-	mal "6 canario(c): FALLA, el overlay NO esta entrando en engine/persist"
+	anota_fila FALLA; mal "6 canario(c): FALLA, el overlay NO esta entrando en engine/persist"
 	echo "test: sin canario no se sigue, porque la fila roja seria ilegible" >&2
 	exit 1
 fi
@@ -442,11 +479,30 @@ fi
 rc=$(corre_en "${CAJON}/ov_c.json" "${CAJON}/rojo_c.txt" "${PAQUETE_CP}" "${SELECTOR_CP}")
 if [ "${rc}" -ne 0 ] && grep -q "^--- FAIL: ${SELECTOR_CP} " "${CAJON}/rojo_c.txt" \
 	&& grep -q "acknowledged writes came back intact after recovery" "${CAJON}/rojo_c.txt"; then
-	echo "7 rojo(C): OK, MUERDE: publicado el manifest antes que su snapshot, el brazo del checkpoint cae"
+	anota_fila OK; echo "7 rojo(C): OK, MUERDE: publicado el manifest antes que su snapshot, el brazo del checkpoint cae"
 else
-	mal "7 rojo(C): FALLA, la mutacion del orden de checkpointWith no puso rojo al brazo que existe para cazarla"
+	anota_fila FALLA; mal "7 rojo(C): FALLA, la mutacion del orden de checkpointWith no puso rojo al brazo que existe para cazarla"
 fi
 
+n_filas=$(grep -c . "${REGISTRO_FILAS}" || true)
+n_falla=$(grep -c '^FALLA$' "${REGISTRO_FILAS}" || true)
+echo "RESULTADO: ${n_filas} filas, ${n_falla} en FALLA"
+# COMPLETO SE PONE AQUI Y NO DESPUES DE LAS DOS ANTI-VACUIDADES, y es una
+# correccion del 8 de septiembre de 2026. Estaban las dos por delante, saliendo
+# por exit 1 con COMPLETO todavia en cero, asi que la trampa imprimia "ABORTADO
+# antes del resumen" JUSTO DEBAJO del resumen que se acababa de imprimir. Un
+# lector midio lo que costaba: el barrido del archivo leia la linea de RESULTADO,
+# daba la corrida por terminada, y el banner que la contradecia tres lineas mas
+# abajo no lo miraba nadie. El resumen es la linea de RESULTADO: llegar hasta
+# aqui es haber terminado, y lo que salga rojo despues es un rojo ordinario.
 COMPLETO=1
+if [ "${n_filas}" -eq 0 ]; then
+	echo "test: VACIO. El registro de filas salio a cero, asi que este banco no ha probado nada" >&2
+	exit 1
+fi
+if [ "${n_falla}" -ne "${fallos}" ]; then
+	echo "test: el registro cuenta ${n_falla} fallas y el acumulador ${fallos}; las dos cuentas tienen que casar" >&2
+	exit 1
+fi
 [ "${fallos}" -eq 0 ] || { echo "test: ${fallos} fallo(s)" >&2; exit 1; }
 echo "test: los dos defensores estan verdes sobre el arbol sano, el overlay entra en los tres paquetes, y las tres mutaciones muerden"

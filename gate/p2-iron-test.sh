@@ -17,6 +17,17 @@
 # run and removed when the rows are green. It is swept by make clean either way.
 set -uo pipefail
 
+# QUIEN ES ESTE BANCO, dicho en su PRIMERA linea de salida y en una forma que no
+# es prosa. Entra el 8 de septiembre de 2026. El barrido que revisa el archivo de
+# corridas/ clasificaba cada captura buscando por el CUERPO el texto de alguna de
+# sus filas, y eso tiene dos agujeros medidos: el texto de una fila se reescribe,
+# y entonces las capturas de ese banco dejan de existir para el barrido sin que
+# nadie lo note; y un informe ESCRITO que cita unas filas se cuenta como corrida,
+# que es como cuatro analisis del archivo acabaron contados como capturas. Una
+# cita vive siempre por el medio de un fichero, nunca en su primera linea, asi que
+# esta linea distingue una corrida de una cita a una corrida.
+echo "BANCO: p2-iron-test"
+
 GATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BANCO="${GATE_DIR}/out/p2-iron-test"
 

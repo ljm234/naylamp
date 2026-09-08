@@ -37,6 +37,17 @@
 
 set -eu
 
+# QUIEN ES ESTE BANCO, dicho en su PRIMERA linea de salida y en una forma que no
+# es prosa. Entra el 8 de septiembre de 2026. El barrido que revisa el archivo de
+# corridas/ clasificaba cada captura buscando por el CUERPO el texto de alguna de
+# sus filas, y eso tiene dos agujeros medidos: el texto de una fila se reescribe,
+# y entonces las capturas de ese banco dejan de existir para el barrido sin que
+# nadie lo note; y un informe ESCRITO que cita unas filas se cuenta como corrida,
+# que es como cuatro analisis del archivo acabaron contados como capturas. Una
+# cita vive siempre por el medio de un fichero, nunca en su primera linea, asi que
+# esta linea distingue una corrida de una cita a una corrida.
+echo "BANCO: redrow-guard-test"
+
 RAIZ=$(cd "$(dirname "$0")/.." && pwd)
 GUION="${RAIZ}/gate/p1.sh"
 A26="${RAIZ}/gate/out/p1-20260826T214025Z-63564"
@@ -53,6 +64,32 @@ CAJON=$(mktemp -d "${TMPDIR:-/tmp}/redrow-guard-test.XXXXXX")
 # trampa no lo arregla, porque para entonces ya vale 0. Medido sobre este mismo
 # banco: abortado a mitad devolvia CERO, y dos de estos bancos corren en CI, o
 # sea que un banco muerto se leia como un paso verde.
+# LA LINEA DE RESULTADO, UNIFORME EN TODOS LOS BANCOS DE ESTA CASA, y entra el
+# 8 de septiembre de 2026 por una orden de quien encarga. Nace de que una trampa
+# EXIT convertia un abortado en rc 0: cualquier banco archivado pudo morir a
+# medias y leerse como verde, asi que hay que poder barrer `corridas/` y separar
+# lo completo de lo abortado.
+#
+# Y NACE TAMBIEN DE QUE EL PRIMER BARRIDO FALLO POR ANCLARSE AL TEXTO. La linea
+# final de OTRO banco, el de limpieza, decia una cosa el 6 de septiembre y otra
+# el 7. La de ESTE no ha cambiado nunca, comprobado con git show sobre la
+# historia, y la primera version de este comentario decia "este banco" porque
+# se clono del suyo sin releer el deictico: la misma clase que el bloque
+# denuncia, cometida dentro del bloque. Un predicado anclado a la redaccion
+# daba por ABORTADA una corrida entera, asi que un
+# predicado anclado a su redaccion daba por ABORTADA una corrida entera. Una
+# marca de terminacion no puede ser prosa: tiene que ser una FORMA estable,
+# `RESULTADO: <n> filas, <n> en FALLA`. **Y NO ES IGUAL EN LOS SIETE, que es lo
+# que decia esta linea y no describia el arbol:** son SEIS con esa forma y uno,
+# `gate/p2-iron-test.sh`, con un superconjunto de tres numeros,
+# `RESULTADO: <n> filas, <n> de ellas rojas, <n> en FALLA`. El predicado del
+# barrido acepta las dos a proposito, con un grupo opcional; la afirmacion de que
+# eran siete iguales se escribio cuatro veces en el arbol y era falsa en todas.
+# Desde el 8 de septiembre son OCHO bancos, con gate/sello-test.sh. Y con la
+# cuenta derivada del registro y no tecleada.
+REGISTRO_FILAS="${CAJON}/filas-del-banco"
+: > "${REGISTRO_FILAS}"
+anota_fila() { printf '%s\n' "$1" >> "${REGISTRO_FILAS}"; }
 COMPLETO=0
 limpia_y_cierra() {
 	if [ "${COMPLETO}" -ne 1 ]; then
@@ -80,30 +117,39 @@ verdicto() { finished_cleanly "$1" && echo TERMINO || echo "NO CORRIDA"; }
 
 # ---- VERDE: todo crudo entero de las dos corridas tiene que decir TERMINO ----
 enteros=0
+malos=0
 for f in "${A26}"/red-*.txt "${A29}"/red-*.txt; do
 	[ -r "${f}" ] || continue
 	[ "${f}" = "${CORTADO}" ] && continue
 	enteros=$((enteros + 1))
 	if [ "$(verdicto "${f}")" != "TERMINO" ]; then
 		di "verde: FALLA, $(basename "$(dirname "${f}")")/$(basename "${f}") deberia decir TERMINO" >&2
-		fallos=$((fallos + 1))
+		# EL BUCLE NO TOCA EL ACUMULADOR, y esto es del 8 de septiembre. Contando
+		# aqui, diecisiete crudos malos daban diecisiete fallos para UNA sola fila,
+		# y la cuenta de filas rojas del registro no podia casar nunca con la del
+		# acumulador. Quien cuenta es la conclusion de la fila, una vez.
+		malos=$((malos + 1))
 	fi
 done
 # Sin un suelo, un directorio vacio o renombrado daria cero crudos y la mitad
 # verde saldria bien sin haber mirado nada. Es el instrumento muerto que esta
 # casa ya pago una vez.
 if [ "${enteros}" -lt 17 ]; then
+	anota_fila FALLA
 	di "verde: VACIO. Solo encontre ${enteros} crudos enteros y hacen falta al menos 17" >&2
 	di "verde: los artefactos sellados de las dos corridas de fierro no estan donde se esperan" >&2
 	fallos=$((fallos + 1))
-elif [ "${fallos}" -eq 0 ]; then
-	di "verde: OK, los crudos enteros de las dos corridas dicen TERMINO"
+elif [ "${malos}" -eq 0 ]; then
+	anota_fila OK; di "verde: OK, los ${enteros} crudos enteros de las dos corridas dicen TERMINO"
 else
-	di "verde: FALLA, alguno de los crudos enteros no dijo TERMINO" >&2
+	anota_fila FALLA
+	di "verde: FALLA, ${malos} de los ${enteros} crudos enteros no dijeron TERMINO" >&2
+	fallos=$((fallos + 1))
 fi
 
 # ---- ROJO 1: el corte REAL, que es el que destapo el defecto ----
 if [ ! -r "${CORTADO}" ]; then
+	anota_fila FALLA
 	di "rojo:  VACIO. Falta el crudo cortado real ${CORTADO}" >&2
 	fallos=$((fallos + 1))
 elif ! grep -q 'upserted 30000 / 60009' "${CORTADO}" \
@@ -112,13 +158,15 @@ elif ! grep -q 'upserted 30000 / 60009' "${CORTADO}" \
 	# cualquier cosa: un fichero vacio, uno de basura, uno que perdio su contenido.
 	# La fila pasaria sin pinchar en nada del corte real. Se ancla por TEXTO y no
 	# por numero de linea, como el tripwire de gate/common_red_pins.txt.
+	anota_fila FALLA
 	di "rojo:  VACIO. ${CORTADO} ya no trae las dos lineas del corte real" >&2
 	di "       hacen falta 'upserted 30000 / 60009' y 'client_loop: send disconnect: Broken pipe'" >&2
 	fallos=$((fallos + 1))
 elif [ "$(verdicto "${CORTADO}")" = "NO CORRIDA" ]; then
-	di "rojo:  OK, MUERDE sobre el corte real, con sus dos lineas ancladas dentro"
+	anota_fila OK; di "rojo:  OK, MUERDE sobre el corte real, con sus dos lineas ancladas dentro"
 	di "       su ultima linea es: $(tail -n1 "${CORTADO}")"
 else
+	anota_fila FALLA
 	di "rojo:  FALLA, el corte real dice TERMINO y el defecto sigue abierto" >&2
 	fallos=$((fallos + 1))
 fi
@@ -126,6 +174,7 @@ fi
 # ---- ROJO 2: un entero truncado a mano, y su ANTI-VACUIDAD ----
 PATRON="${A29}/red-fuga.txt"
 if [ ! -r "${PATRON}" ]; then
+	anota_fila FALLA
 	di "rojo:  VACIO. Falta el crudo entero que sirve de patron" >&2
 	fallos=$((fallos + 1))
 else
@@ -134,11 +183,13 @@ else
 	v_ent=$(verdicto "${CAJON}/entero.txt")
 	v_tru=$(verdicto "${CAJON}/truncado.txt")
 	if [ "${v_ent}" = "${v_tru}" ]; then
+		anota_fila FALLA
 		di "test:  VACIO. El entero y su truncado dan lo mismo (${v_ent}), asi que esta prueba no separa nada" >&2
 		fallos=$((fallos + 1))
 	elif [ "${v_ent}" = "TERMINO" ] && [ "${v_tru}" = "NO CORRIDA" ]; then
-		di "rojo:  OK, MUERDE sobre un entero truncado a mano, y el entero sigue diciendo TERMINO"
+		anota_fila OK; di "rojo:  OK, MUERDE sobre un entero truncado a mano, y el entero sigue diciendo TERMINO"
 	else
+		anota_fila FALLA
 		di "rojo:  FALLA, entero=${v_ent} truncado=${v_tru}, que no es lo que se pide" >&2
 		fallos=$((fallos + 1))
 	fi
@@ -157,20 +208,51 @@ l_llam=$(grep -n 'if ! finished_cleanly "${out}"; then' "${CAJON}/red_row.sh" | 
 l_surv=$(grep -n 'SURVIVED\.' "${CAJON}/red_row.sh" | head -n1 | cut -d: -f1)
 l_pass=$(grep -n 'pass "${id}: red as written' "${CAJON}/red_row.sh" | head -n1 | cut -d: -f1)
 if [ ! -s "${CAJON}/red_row.sh" ] || [ -z "${l_surv}" ] || [ -z "${l_pass}" ]; then
+	anota_fila FALLA
 	di "sitio: VACIO. No pude leer red_row ni sus dos conclusiones en gate/p1.sh" >&2
 	di "sitio: alguien la renombro o cambio el texto de una conclusion, y esta mitad dejo de probar" >&2
 	fallos=$((fallos + 1))
 elif [ "${n_llam}" != 1 ] || [ -z "${l_llam}" ]; then
-	di "sitio: FALLA. red_row llama a finished_cleanly ${n_llam} vez(veces) y tiene que llamarla exactamente una" >&2
+	anota_fila FALLA
+	# EL MENSAJE NOMBRA LAS DOS MITADES DE LA CONDICION, y la primera version solo
+	# nombraba una. La rama salta si la llamada no aparece exactamente una vez O si
+	# la linea del `if` no se localiza, y con solo la cuenta impresa salia el
+	# absurdo "llama 1 vez y tiene que llamarla exactamente una", que manda a quien
+	# lee a buscar donde no es. Medido al mutar un espacio dentro del `if`.
+	di "sitio: FALLA. red_row llama a finished_cleanly ${n_llam} vez(veces), y hace falta exactamente una" >&2
+	if [ -z "${l_llam}" ]; then
+		di "sitio: y la que falla aqui es la otra mitad: no se localiza la linea 'if ! finished_cleanly \"\${out}\"; then'" >&2
+		di "sitio: la llamada existe pero ya no tiene esa forma, asi que no se puede decir si va antes de las conclusiones" >&2
+	fi
 	fallos=$((fallos + 1))
 elif [ "${l_llam}" -lt "${l_surv}" ] && [ "${l_llam}" -lt "${l_pass}" ]; then
-	di "sitio: OK, la llamada vive dentro de red_row y va antes de las DOS conclusiones"
+	anota_fila OK; di "sitio: OK, la llamada vive dentro de red_row y va antes de las DOS conclusiones"
 else
+	anota_fila FALLA
 	di "sitio: FALLA. La llamada va DESPUES de una conclusion (llamada=${l_llam} SURVIVED=${l_surv} pass=${l_pass})" >&2
 	di "sitio: que es el defecto del 29 de agosto otra vez" >&2
 	fallos=$((fallos + 1))
 fi
 
+n_filas=$(grep -c . "${REGISTRO_FILAS}" || true)
+n_falla=$(grep -c '^FALLA$' "${REGISTRO_FILAS}" || true)
+echo "RESULTADO: ${n_filas} filas, ${n_falla} en FALLA"
+# COMPLETO SE PONE AQUI Y NO DESPUES DE LAS DOS ANTI-VACUIDADES, y es una
+# correccion del 8 de septiembre de 2026. Estaban las dos por delante, saliendo
+# por exit 1 con COMPLETO todavia en cero, asi que la trampa imprimia "ABORTADO
+# antes del resumen" JUSTO DEBAJO del resumen que se acababa de imprimir. Un
+# lector midio lo que costaba: el barrido del archivo leia la linea de RESULTADO,
+# daba la corrida por terminada, y el banner que la contradecia tres lineas mas
+# abajo no lo miraba nadie. El resumen es la linea de RESULTADO: llegar hasta
+# aqui es haber terminado, y lo que salga rojo despues es un rojo ordinario.
 COMPLETO=1
+if [ "${n_filas}" -eq 0 ]; then
+	echo "test: VACIO. El registro de filas salio a cero, asi que este banco no ha probado nada" >&2
+	exit 1
+fi
+if [ "${n_falla}" -ne "${fallos}" ]; then
+	echo "test: el registro cuenta ${n_falla} fallas y el acumulador ${fallos}; las dos cuentas tienen que casar" >&2
+	exit 1
+fi
 [ "${fallos}" -eq 0 ] || { di "test: ${fallos} fallo(s)" >&2; exit 1; }
 di "test: la guarda separa lo cortado de lo entero, las mitades muerden, y la llamada sigue en su sitio"
