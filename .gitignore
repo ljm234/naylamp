@@ -70,6 +70,22 @@ naylamp-gate-key*
 /NAYLAMP_*GATE*.txt
 gate/out/
 
+# Commit messages live OUTSIDE the repository, at
+# ~/Desktop/Naylamp_workspace/mensajes/NN-name-commit-msg.txt. This line exists
+# because a mensajes/ in here is a trap: git add -A commits it as an ordinary
+# file and the text of a message becomes tree content forever. Ignoring it makes
+# that impossible; gate/msg-sitio.sh additionally says it out loud, because
+# ignored is not the same as absent.
+#
+# TWO LINES, AND NEITHER ANCHORED TO THE ROOT. A reader measured that
+# `/mensajes/` ignores only the repository root and only a DIRECTORY:
+# `gate/mensajes/01` was committable, and a plain FILE named `mensajes` was
+# committable too. Both were the outcome this rule exists to make impossible.
+# Without the leading slash the rule applies at every depth, and the pair covers
+# a file and a directory.
+mensajes
+mensajes/
+
 # Benchmark datasets, which live outside the repo
 *.fvecs
 *.ivecs

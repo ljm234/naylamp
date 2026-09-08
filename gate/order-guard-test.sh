@@ -158,7 +158,23 @@ for f in "${NODE_GO}" "${STORAGE_GO}" "${CHECKPOINT_GO}"; do
 done
 
 CAJON=$(mktemp -d "${TMPDIR:-/tmp}/order-guard-test.XXXXXX")
-trap 'rm -rf -- "$CAJON" 2>/dev/null || true' EXIT
+# LA BANDERA DE TERMINACION, escrita el 8 de septiembre de 2026 y la trae un
+# lector adversarial. Una trampa EXIT se COME el estado de salida cuando el
+# guion muere por `set -e` o `set -u`: medido en el `/bin/sh` de esta maquina,
+# que es bash 3.2, un abortado pasa de rc 1 a rc 0. Preservar `$?` dentro de la
+# trampa no lo arregla, porque para entonces ya vale 0. Medido sobre este mismo
+# banco: abortado a mitad devolvia CERO, y dos de estos bancos corren en CI, o
+# sea que un banco muerto se leia como un paso verde.
+COMPLETO=0
+limpia_y_cierra() {
+	if [ "${COMPLETO}" -ne 1 ]; then
+		echo "test: ABORTADO antes del resumen; lo impreso arriba NO es un resultado" >&2
+		rm -rf -- "$CAJON" 2>/dev/null || true
+		exit 1
+	fi
+	rm -rf -- "$CAJON" 2>/dev/null || true
+}
+trap limpia_y_cierra EXIT
 
 # El overlay se resuelve contra el directorio actual, asi que este guion corre
 # desde la raiz del repositorio Y escribe claves absolutas. Con una sola de las
@@ -431,5 +447,6 @@ else
 	mal "7 rojo(C): FALLA, la mutacion del orden de checkpointWith no puso rojo al brazo que existe para cazarla"
 fi
 
+COMPLETO=1
 [ "${fallos}" -eq 0 ] || { echo "test: ${fallos} fallo(s)" >&2; exit 1; }
 echo "test: los dos defensores estan verdes sobre el arbol sano, el overlay entra en los tres paquetes, y las tres mutaciones muerden"

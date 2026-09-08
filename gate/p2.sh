@@ -50,6 +50,25 @@
 set -euo pipefail
 
 GATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# THE MARGIN OF LIFE DEMANDED OF THE TLS MATERIAL LIVES IN ONE PLACE, and that is
+# not cosmetic: if this script and the two others that look at the same thing
+# ever carried different numbers there would be a DEAD ZONE, a stretch where the
+# preflight refuses to start and the documented remedy, rebuilding, leaves the
+# certificates exactly as they were. A missing file here is a failure and not a
+# default: with no margin there is no check to make, and assuming one would be
+# inventing it.
+if [ ! -r "${GATE_DIR}/cert-margen.sh" ]; then
+	echo "gate: ${GATE_DIR}/cert-margen.sh is missing, and that is where the TLS margin lives" >&2
+	exit 2
+fi
+. "${GATE_DIR}/cert-margen.sh"
+case "${CERT_MARGEN_SEG:-}" in
+	''|*[!0-9]*)
+		echo "gate: CERT_MARGEN_SEG is not a number of seconds: '${CERT_MARGEN_SEG:-}'" >&2
+		exit 2
+		;;
+esac
 REPO_DIR="$(cd "${GATE_DIR}/.." && pwd)"
 OUT_DIR="${GATE_DIR}/out"
 
@@ -889,18 +908,18 @@ phase_build() {
 		# TLS handshake with no leader, which is exactly what gate/build.sh's own
 		# comment calls a slow thing to diagnose.
 		if [ ! -f "${CERT_DIR}/node-${id}.pem" ] || [ ! -f "${CERT_DIR}/node-${id}-key.pem" ] || \
-		   ! openssl x509 -in "${CERT_DIR}/node-${id}.pem" -noout -checkend 7200 >/dev/null 2>&1; then
+		   ! openssl x509 -in "${CERT_DIR}/node-${id}.pem" -noout -checkend "${CERT_MARGEN_SEG}" >/dev/null 2>&1; then
 			stale=1
 		fi
 	done
-	if [ ! -f "${CERT_DIR}/ca.pem" ] || ! openssl x509 -in "${CERT_DIR}/ca.pem" -noout -checkend 7200 >/dev/null 2>&1; then
+	if [ ! -f "${CERT_DIR}/ca.pem" ] || ! openssl x509 -in "${CERT_DIR}/ca.pem" -noout -checkend "${CERT_MARGEN_SEG}" >/dev/null 2>&1; then
 		stale=1
 	fi
 	if [ "${stale}" -eq 1 ]; then
-		note "certificates missing or within two hours of expiry: re-minting through gate/build.sh"
+		note "certificates missing or within ${CERT_MARGEN_SEG}s of expiry: re-minting through gate/build.sh"
 		( cd "${REPO_DIR}" && ./gate/build.sh ) >>"${OUT_LOCAL}/build.log" 2>&1 || stop "gate/build.sh failed while minting certificates"
 	else
-		note "certificates present and not expiring within two hours: reused"
+		note "certificates present and not expiring within ${CERT_MARGEN_SEG}s: reused"
 	fi
 	# P2.build EXISTS SO THAT `p2.sh build` CAN SUCCEED. Without it that
 	# subcommand ran, built correctly, and then closed with "the run began and
@@ -913,11 +932,11 @@ phase_build() {
 	for id in "${NODE_IDS[@]}" "${CLIENT_ID}"; do
 		[ -f "${CERT_DIR}/node-${id}.pem" ] || fail "P2.build: no certificate for id ${id}"
 		[ -f "${CERT_DIR}/node-${id}-key.pem" ] || fail "P2.build: no private key for id ${id}"
-		openssl x509 -in "${CERT_DIR}/node-${id}.pem" -noout -checkend 7200 >/dev/null 2>&1 \
-			|| fail "P2.build: the certificate for id ${id} is expired or expires within two hours"
+		openssl x509 -in "${CERT_DIR}/node-${id}.pem" -noout -checkend "${CERT_MARGEN_SEG}" >/dev/null 2>&1 \
+			|| fail "P2.build: the certificate for id ${id} is expired or expires within ${CERT_MARGEN_SEG}s"
 	done
 	[ -f "${CERT_DIR}/ca.pem" ] || fail "P2.build: no CA certificate"
-	[ "${CHECK_FAILED}" -eq 0 ] && pass "P2.build: naylampd built and the TLS material for ${#NODE_IDS[@]} nodes plus the client is present and not expiring within two hours"
+	[ "${CHECK_FAILED}" -eq 0 ] && pass "P2.build: naylampd built and the TLS material for ${#NODE_IDS[@]} nodes plus the client is present and not expiring within ${CERT_MARGEN_SEG}s"
 	end_check P2.build
 }
 

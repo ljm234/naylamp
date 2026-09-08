@@ -7,6 +7,25 @@
 set -euo pipefail
 
 GATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# THE MARGIN OF LIFE DEMANDED OF THE TLS MATERIAL LIVES IN ONE PLACE, and that is
+# not cosmetic: if this script and the two others that look at the same thing
+# ever carried different numbers there would be a DEAD ZONE, a stretch where the
+# preflight refuses to start and the documented remedy, rebuilding, leaves the
+# certificates exactly as they were. A missing file here is a failure and not a
+# default: with no margin there is no check to make, and assuming one would be
+# inventing it.
+if [ ! -r "${GATE_DIR}/cert-margen.sh" ]; then
+	echo "gate: ${GATE_DIR}/cert-margen.sh is missing, and that is where the TLS margin lives" >&2
+	exit 2
+fi
+. "${GATE_DIR}/cert-margen.sh"
+case "${CERT_MARGEN_SEG:-}" in
+	''|*[!0-9]*)
+		echo "gate: CERT_MARGEN_SEG is not a number of seconds: '${CERT_MARGEN_SEG:-}'" >&2
+		exit 2
+		;;
+esac
 REPO_DIR="$(cd "${GATE_DIR}/.." && pwd)"
 OUT_DIR="${GATE_DIR}/out"
 CERT_DIR="${OUT_DIR}/certs"
@@ -42,8 +61,12 @@ mint_certs() {
 # spare. The gate mints short-lived certificates, and a run that reuses an expired
 # or nearly-expired set fails as a broken mutual TLS handshake with no leader, not
 # as an obvious certificate error, which is a slow thing to diagnose on the hosts.
-# checkend 7200 rejects any certificate that is already expired or expires within
-# the next two hours, wide enough that one cannot lapse in the middle of a run. The
+# checkend rejects any certificate that is already expired or expires within the
+# margin, and the margin is NOT written here: it lives in gate/cert-margen.sh and
+# is sourced above, because this script and gate/p2-preflight.sh have to demand
+# the same thing or there is a window where one refuses to start and the other
+# refuses to re-mint. It reads 21600, six hours, since 2026-09-08; it was two
+# hours before, and two is shorter than an iron session. The
 # private keys (node-*-key.pem) are not certificates, so they are skipped.
 if [ ! -f "${CERT_DIR}/ca.pem" ]; then
 	mint_certs
@@ -84,7 +107,7 @@ else
 			missing="${missing} $(basename "${pem}")"
 			continue
 		fi
-		if ! openssl x509 -in "${pem}" -checkend 7200 -noout >/dev/null 2>&1; then
+		if ! openssl x509 -in "${pem}" -checkend "${CERT_MARGEN_SEG}" -noout >/dev/null 2>&1; then
 			stale="${pem}"
 			break
 		fi
@@ -94,11 +117,11 @@ else
 		rm -rf "${CERT_DIR}"
 		mint_certs
 	elif [ -n "${stale}" ]; then
-		echo "gate: certificate ${stale} is expired or expires within 2 hours; re-minting the whole set into ${CERT_DIR}"
+		echo "gate: certificate ${stale} is expired or expires within ${CERT_MARGEN_SEG}s; re-minting the whole set into ${CERT_DIR}"
 		rm -rf "${CERT_DIR}"
 		mint_certs
 	else
-		echo "gate: the CA and one certificate per id (${CERT_IDS}) are present in ${CERT_DIR} and valid for at least 2 hours, keeping them"
+		echo "gate: the CA and one certificate per id (${CERT_IDS}) are present in ${CERT_DIR} and valid for at least ${CERT_MARGEN_SEG}s, keeping them"
 	fi
 fi
 

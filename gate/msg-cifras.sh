@@ -48,7 +48,7 @@ set -eu
 
 if [ "$#" -lt 1 ]; then
 	echo "msg-cifras: usage: $0 <message file> <raw> [raw...]" >&2
-	exit 2
+	COMPLETO=1; exit 2
 fi
 
 MENSAJE="$1"
@@ -57,7 +57,7 @@ shift
 if [ ! -r "${MENSAJE}" ]; then
 	echo "msg-cifras: cannot read the message at ${MENSAJE}" >&2
 	echo "msg-cifras: that is not a pass, it is the step failing to run" >&2
-	exit 2
+	COMPLETO=1; exit 2
 fi
 
 # The reader of counted figures, shared by the message and the raws. Two orders
@@ -169,7 +169,21 @@ BEGIN {
 }'
 
 CAJA="$(mktemp -d "${TMPDIR:-/tmp}/msg-cifras.XXXXXX")"
-trap 'rm -rf -- "${CAJA}" 2>/dev/null || true' EXIT
+# THE COMPLETION FLAG, and it weighs more here than in a bench: an EXIT trap
+# SWALLOWS the exit status when the script dies under `set -e` or `set -u`,
+# measured in this machine's `/bin/sh`, which is bash 3.2. A guard dying halfway
+# exited ZERO, that is, saying it PASSES. Preserving `$?` inside the trap does
+# not fix it, because by then it is already 0; the flag does, and in every shell.
+COMPLETO=0
+limpia_y_cierra() {
+	if [ "${COMPLETO}" -ne 1 ]; then
+		echo "$(basename "$0"): ABORTED before deciding; this is NOT a pass" >&2
+		rm -rf -- "${CAJA}" 2>/dev/null || true
+		COMPLETO=1; exit 2
+	fi
+	rm -rf -- "${CAJA}" 2>/dev/null || true
+}
+trap limpia_y_cierra EXIT
 
 # Only the body git keeps, for the same reason msg-shas.sh cuts it: a figure
 # inside a comment or inside the diff of `git commit -v` is not a claim.
@@ -195,12 +209,12 @@ awk "${LECTOR}" "${CAJA}/cuerpo" | sort -u > "${CAJA}/del-mensaje"
 if [ ! -s "${CAJA}/del-mensaje" ]; then
 	if [ "$#" -eq 0 ]; then
 		echo "msg-cifras: OK, the message states no counted figure and no raw was named, so there is nothing to re-derive"
-		exit 0
+		COMPLETO=1; exit 0
 	fi
 	echo "msg-cifras: REFUSED, a raw was named and this step read NO counted figure in the message" >&2
 	echo "msg-cifras:   either the message does not quote that raw, or its figures are written in a form this step cannot read" >&2
 	echo "msg-cifras:   hundreds are not read in either language; that limit is known and declared" >&2
-	exit 1
+	COMPLETO=1; exit 1
 fi
 
 # The step cannot be skipped in silence. A message WITH figures and no raw named
@@ -210,7 +224,7 @@ if [ "$#" -eq 0 ]; then
 	echo "msg-cifras: what the message claims:" >&2
 	sed 's/^/msg-cifras:   /' "${CAJA}/del-mensaje" >&2
 	echo "msg-cifras: name the raw that sustains them: $0 ${MENSAJE} <raw>" >&2
-	exit 2
+	COMPLETO=1; exit 2
 fi
 
 # The anchor for a raw's own total, written out rather than guessed. These are
@@ -274,9 +288,9 @@ done
 
 if [ "${fuera}" -gt 0 ]; then
 	echo "msg-cifras: ${fuera} total(s) of the named raws are not in the message; re-derive before signing" >&2
-	exit 1
+	COMPLETO=1; exit 1
 fi
 
 n_tot="$(sort -u "${CAJA}/todos-los-totales" | grep -c . || true)"
 echo "msg-cifras: OK, the ${n_tot} total(s) of the named raw(s) all appear in the message"
-exit 0
+COMPLETO=1; exit 0

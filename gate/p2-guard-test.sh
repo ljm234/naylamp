@@ -176,7 +176,23 @@ retira_marca_banco() {
 
 mkdir -p "${SCRATCH}"
 
-trap retira_marca_banco EXIT
+# LA BANDERA DE TERMINACION, escrita el 8 de septiembre de 2026 y la trae un
+# lector adversarial. Una trampa EXIT se COME el estado de salida cuando el
+# guion muere por `set -e` o `set -u`: medido en el `/bin/sh` de esta maquina,
+# que es bash 3.2, un abortado pasa de rc 1 a rc 0. Preservar `$?` dentro de la
+# trampa no lo arregla, porque para entonces ya vale 0. Medido sobre este mismo
+# banco: abortado a mitad devolvia CERO, y dos de estos bancos corren en CI, o
+# sea que un banco muerto se leia como un paso verde.
+COMPLETO=0
+limpia_y_cierra() {
+	if [ "${COMPLETO}" -ne 1 ]; then
+		echo "test: ABORTADO antes del resumen; lo impreso arriba NO es un resultado" >&2
+		retira_marca_banco
+		exit 1
+	fi
+	retira_marca_banco
+}
+trap limpia_y_cierra EXIT
 
 FILAS=0
 ROJAS=0
@@ -685,5 +701,6 @@ RETIRADOS="$(barre_bancos_viejos)"
 QUEDAN="$(ls -d "${TMPDIR:-/tmp}"/naylamp-p2-guard-[0-9]* 2>/dev/null | wc -l | tr -d ' ')"
 echo "bancos de corridas anteriores retirados: ${RETIRADOS}; quedan ${QUEDAN} de un techo de ${CONSERVA}"
 
+COMPLETO=1
 [ "${MAL}" -eq 0 ] || exit 1
 exit 0

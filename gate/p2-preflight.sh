@@ -45,6 +45,25 @@
 set -euo pipefail
 
 GATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# EL MARGEN DE VIDA QUE SE LE EXIGE AL MATERIAL TLS VIVE EN UN SOLO SITIO, y no
+# es cosmetica: si este guion y los otros dos que miran lo mismo llevaran
+# numeros distintos habria una VENTANA MUERTA, un tramo en el que la lista
+# previa se niega a arrancar y el remedio documentado, re-construir, deja los
+# certificados exactamente como estaban. Un fichero ausente aqui es un fallo y
+# no un valor por defecto: sin margen no hay comprobacion que hacer, y suponer
+# uno seria inventarlo.
+if [ ! -r "${GATE_DIR}/cert-margen.sh" ]; then
+	echo "gate: falta ${GATE_DIR}/cert-margen.sh, donde vive el margen del material TLS" >&2
+	exit 2
+fi
+. "${GATE_DIR}/cert-margen.sh"
+case "${CERT_MARGEN_SEG:-}" in
+	''|*[!0-9]*)
+		echo "gate: CERT_MARGEN_SEG no es un numero de segundos: '${CERT_MARGEN_SEG:-}'" >&2
+		exit 2
+		;;
+esac
 REPO_DIR="$(cd "${GATE_DIR}/.." && pwd)"
 OUT_DIR="${GATE_DIR}/out"
 CERT_DIR="${OUT_DIR}/certs"
@@ -163,14 +182,14 @@ frio() {
 	for id in "${NODE_IDS[@]}" "${CLIENT_ID}"; do
 		[ -f "${CERT_DIR}/node-${id}.pem" ] || { mal "no hay certificado para el id ${id}"; falta=1; continue; }
 		[ -f "${CERT_DIR}/node-${id}-key.pem" ] || { mal "no hay clave privada para el id ${id}"; falta=1; continue; }
-		if ! openssl x509 -in "${CERT_DIR}/node-${id}.pem" -noout -checkend 7200 >/dev/null 2>&1; then
-			mal "el certificado del id ${id} esta caducado o le quedan menos de dos horas"; falta=1
+		if ! openssl x509 -in "${CERT_DIR}/node-${id}.pem" -noout -checkend "${CERT_MARGEN_SEG}" >/dev/null 2>&1; then
+			mal "el certificado del id ${id} esta caducado o le quedan menos de $((CERT_MARGEN_SEG/3600)) horas"; falta=1
 		fi
 	done
 	if [ -f "${CERT_DIR}/ca.pem" ]; then
 		dato "CA hasta $(openssl x509 -in "${CERT_DIR}/ca.pem" -noout -enddate | cut -d= -f2)"
-		openssl x509 -in "${CERT_DIR}/ca.pem" -noout -checkend 7200 >/dev/null 2>&1 \
-			|| { mal "el CA esta caducado o le quedan menos de dos horas"; falta=1; }
+		openssl x509 -in "${CERT_DIR}/ca.pem" -noout -checkend "${CERT_MARGEN_SEG}" >/dev/null 2>&1 \
+			|| { mal "el CA esta caducado o le quedan menos de $((CERT_MARGEN_SEG/3600)) horas"; falta=1; }
 	else
 		mal "no hay CA"; falta=1
 	fi
@@ -178,7 +197,7 @@ frio() {
 		dato "se arregla con:  cd ${REPO_DIR} && ./gate/build.sh"
 		dato "y se re-corre este paso; build.sh re-acuna el conjunto entero"
 	else
-		ok "material TLS completo y no caduca en las proximas dos horas"
+		ok "material TLS completo y no caduca en las proximas $((CERT_MARGEN_SEG/3600)) horas"
 	fi
 
 	paso "Los OCHO puertos de loopback que el ensayo enlaza"
@@ -453,11 +472,11 @@ caliente() {
 	paso "El material TLS, RE-LEIDO ahora que la flota esta arriba"
 	local id2 caduca=0
 	for id2 in "${NODE_IDS[@]}" "${CLIENT_ID}"; do
-		openssl x509 -in "${CERT_DIR}/node-${id2}.pem" -noout -checkend 7200 >/dev/null 2>&1 \
-			|| { mal "el certificado del id ${id2} caduca dentro de dos horas o ya caduco"; caduca=1; }
+		openssl x509 -in "${CERT_DIR}/node-${id2}.pem" -noout -checkend "${CERT_MARGEN_SEG}" >/dev/null 2>&1 \
+			|| { mal "el certificado del id ${id2} caduca dentro de $((CERT_MARGEN_SEG/3600)) horas o ya caduco"; caduca=1; }
 	done
-	openssl x509 -in "${CERT_DIR}/ca.pem" -noout -checkend 7200 >/dev/null 2>&1 \
-		|| { mal "el CA caduca dentro de dos horas o ya caduco"; caduca=1; }
+	openssl x509 -in "${CERT_DIR}/ca.pem" -noout -checkend "${CERT_MARGEN_SEG}" >/dev/null 2>&1 \
+		|| { mal "el CA caduca dentro de $((CERT_MARGEN_SEG/3600)) horas o ya caduco"; caduca=1; }
 	if [ "${caduca}" -eq 0 ]; then
 		ok "el material sigue vigente: CA hasta $(openssl x509 -in "${CERT_DIR}/ca.pem" -noout -enddate | cut -d= -f2)"
 		dato "esa fecha tiene que ser POSTERIOR al final previsto de la corrida, y una de Phase 2 no la ha cronometrado nadie"
@@ -584,7 +603,7 @@ case "${1:-}" in
 usage: p2-preflight.sh <cold|hot|cierre>
 
   cold    con la flota APAGADA y coste cero: arbol limpio, firmado y con CI verde;
-          material TLS que no caduca en dos horas; los ocho puertos libres; nada
+          material TLS con el margen de gate/cert-margen.sh por delante; los ocho puertos libres; nada
           del ensayo vivo; ningun snapshot de gate sin retirar; y el ensayo en
           localhost verde sobre este arbol.
   hot     con las tres VMs ARRIBA: que contestan por ssh, el bit de reinicio de

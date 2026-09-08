@@ -89,7 +89,7 @@ set -eu
 
 if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
 	echo "msg-shas: usage: $0 <message file> [repo dir]" >&2
-	exit 2
+	COMPLETO=1; exit 2
 fi
 
 MENSAJE="$1"
@@ -98,13 +98,13 @@ REPO="${2:-.}"
 if [ ! -r "${MENSAJE}" ]; then
 	echo "msg-shas: cannot read the message at ${MENSAJE}" >&2
 	echo "msg-shas: that is not a pass, it is the check failing to run" >&2
-	exit 2
+	COMPLETO=1; exit 2
 fi
 
 if ! git -C "${REPO}" rev-parse --git-dir >/dev/null 2>&1; then
 	echo "msg-shas: ${REPO} is not a git repository, so no sha can be judged" >&2
 	echo "msg-shas: that is not a pass, it is the check failing to run" >&2
-	exit 2
+	COMPLETO=1; exit 2
 fi
 
 # The comment character is read rather than assumed: `core.commentChar` can be
@@ -132,7 +132,23 @@ PUNTA="$(git -C "${REPO}" rev-parse --verify --quiet HEAD 2>/dev/null || true)"
 # not comment-prefixed, so without this cut a hex literal inside a patch would be
 # judged as a cited sha.
 CUERPO="$(mktemp "${TMPDIR:-/tmp}/msg-shas.XXXXXX")"
-trap 'rm -f -- "${CUERPO}" 2>/dev/null || true' EXIT
+# THE COMPLETION FLAG, and it weighs more here than in a bench: an EXIT trap
+# SWALLOWS the exit status when the script dies under `set -e` or `set -u`,
+# measured in this machine's `/bin/sh`, which is bash 3.2. A guard dying halfway
+# exited ZERO, that is, saying it PASSES. Measured before writing this: with an
+# undefined variable placed before a single token is looked at, rc 0. Preserving
+# `$?` inside the trap does not fix it, because by then it is already 0; the flag
+# does, and in every shell.
+COMPLETO=0
+limpia_y_cierra() {
+	if [ "${COMPLETO}" -ne 1 ]; then
+		echo "$(basename "$0"): ABORTED before deciding; this is NOT a pass" >&2
+		rm -f -- "${CUERPO}" 2>/dev/null || true
+		COMPLETO=1; exit 2
+	fi
+	rm -f -- "${CUERPO}" 2>/dev/null || true
+}
+trap limpia_y_cierra EXIT
 awk -v m="${MARCA}" '
 	index($0, m " ------------------------ >8 ------------------------") == 1 { exit }
 	index($0, m) == 1 { next }
@@ -158,7 +174,7 @@ TOKENS="$(tr -c '0-9a-zA-Z' '\n' < "${CUERPO}" | grep -xE '[0-9a-fA-F]{7,40}' | 
 
 if [ -z "${TOKENS}" ]; then
 	echo "msg-shas: OK, the message cites no sha"
-	exit 0
+	COMPLETO=1; exit 0
 fi
 
 fuera=0
@@ -267,8 +283,8 @@ done
 
 if [ "${fuera}" -gt 0 ]; then
 	echo "msg-shas: ${fuera} cited sha(s) are not on this branch; fix the message, not the check" >&2
-	exit 1
+	COMPLETO=1; exit 1
 fi
 
 echo "msg-shas: OK, ${juzgados} cited commit sha(s) on this branch, ${saltados} token(s) that name no commit here"
-exit 0
+COMPLETO=1; exit 0

@@ -82,7 +82,23 @@ CAJON=$(mktemp -d "${TMPDIR:-/tmp}/clean-guard-test.XXXXXX")
 # `git status --porcelain`: gate/p2-preflight.sh:135 falla duro con esa cifra y
 # gate/p2.sh:1077 la sella DENTRO del artefacto. Si este guion se interrumpe en
 # esa ventana, la copia se queda para siempre y la fila 13d no llega a correr.
-trap 'rm -rf -- "$CAJON" 2>/dev/null || true; rm -f -- "${AQUI}/banco-sin-guarda-de-prueba.sh" 2>/dev/null || true' EXIT
+# LA BANDERA DE TERMINACION, escrita el 8 de septiembre de 2026 y la trae un
+# lector adversarial. Una trampa EXIT se COME el estado de salida cuando el
+# guion muere por `set -e` o `set -u`: medido en el `/bin/sh` de esta maquina,
+# que es bash 3.2, un abortado pasa de rc 1 a rc 0. Preservar `$?` dentro de la
+# trampa no lo arregla, porque para entonces ya vale 0. Medido sobre este mismo
+# banco: abortado a mitad devolvia CERO, y dos de estos bancos corren en CI, o
+# sea que un banco muerto se leia como un paso verde.
+COMPLETO=0
+limpia_y_cierra() {
+	if [ "${COMPLETO}" -ne 1 ]; then
+		echo "test: ABORTADO antes del resumen; lo impreso arriba NO es un resultado" >&2
+		rm -rf -- "$CAJON" 2>/dev/null || true; rm -f -- "${AQUI}/banco-sin-guarda-de-prueba.sh" 2>/dev/null || true
+		exit 1
+	fi
+	rm -rf -- "$CAJON" 2>/dev/null || true; rm -f -- "${AQUI}/banco-sin-guarda-de-prueba.sh" 2>/dev/null || true
+}
+trap limpia_y_cierra EXIT
 
 cp "${MAKEFILE_REAL}" "${CAJON}/Makefile"
 
@@ -736,5 +752,6 @@ retira_marca_banco' 2>/dev/null || true
 	rm -f "${ARNES}" "${ARNES_LARGO}" "${ARNES_SOLAPA}" "${ARNES_SIN_GUARDA}" "${ARNES_SIN_RET}"
 fi
 
+COMPLETO=1
 [ "${fallos}" -eq 0 ] || { echo "test: ${fallos} fallo(s)" >&2; exit 1; }
 echo "test: la guarda se niega por forma y no por lista, respeta una corrida viva, barre el resto de una muerta, preserva, y las mitades rojas muerden"

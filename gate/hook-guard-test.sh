@@ -46,6 +46,17 @@ set -eu
 AQUI=$(cd "$(dirname "$0")" && pwd)
 RAIZ_REPO=$(cd "${AQUI}/.." && pwd)
 
+# Y SE TRABAJA DESDE LA RAIZ DEL REPOSITORIO, que es lo que la linea de uso
+# promete y no cumplia. Un lector lo corrio desde /tmp: el hook hace
+# `git rev-parse --show-toplevel` desde el directorio de trabajo, sin raiz sale
+# con uno, y la fila `limpio` salia FALLA. Peor que el rojo falso: corrido desde
+# OTRO repositorio, las filas de shas juzgarian contra la historia equivocada y
+# podrian salir verdes por la razon que no es.
+cd "${RAIZ_REPO}" || {
+	echo "test: no se pudo entrar en ${RAIZ_REPO}" >&2
+	exit 1
+}
+
 # El pin de la alternancia: sha256 de la lista de patrones del hook, 16 primeros.
 # Anclado el 1 de septiembre de 2026 sobre los siete patrones de entonces.
 # Y un aviso para quien escriba el proximo mensaje, medido y no teorico: el hook
@@ -73,7 +84,28 @@ if [ ! -x "${HOOK}" ]; then
 fi
 
 CAJON=$(mktemp -d "${TMPDIR:-/tmp}/hook-guard-test.XXXXXX")
-trap 'rm -rf -- "$CAJON" 2>/dev/null || true' EXIT
+# LA BANDERA DE TERMINACION, y la trae un lector adversarial del 8 de septiembre
+# de 2026. Una trampa EXIT se COME el estado de salida cuando el guion muere por
+# `set -e` o `set -u`: medido en el `/bin/sh` de esta maquina, que es bash 3.2,
+# un abortado pasa de rc 1 a rc 0 en cuanto hay trampa. Y preservar `$?` dentro
+# de la trampa NO lo arregla, porque para entonces ya vale 0. Medido sobre este
+# banco: con una variable sin definir a mitad, imprimia cuatro filas verdes,
+# ningun RESULTADO, y salia con CERO. Los tres guardias de vacuidad que este
+# fichero tiene quedaban anulados de golpe.
+#
+# Lo que si funciona en todos los shells es una bandera: la trampa comprueba si
+# el guion llego a su resumen, y si no, lo DICE y sale con uno. Un abortado deja
+# de ser indistinguible de un verde.
+COMPLETO=0
+limpia_y_cierra() {
+	if [ "${COMPLETO}" -ne 1 ]; then
+		echo "test: ABORTADO antes del resumen; lo impreso arriba NO es un resultado" >&2
+		rm -rf -- "$CAJON" 2>/dev/null || true
+		exit 1
+	fi
+	rm -rf -- "$CAJON" 2>/dev/null || true
+}
+trap limpia_y_cierra EXIT
 
 fallos=0
 # EL BANCO CUENTA SUS PROPIAS FILAS, y hasta hoy no lo hacia: el total que se
@@ -566,6 +598,175 @@ else
 fi
 
 # ======================================================================
+# EL PASO CERO: el mensaje esta donde la convencion lo pone.
+# ======================================================================
+#
+# Entra el 8 de septiembre de 2026 y lo trae una firma que no ocurrio. El
+# mensaje se escribio en `<repo>/mensajes/01`; la convencion es
+# `<workspace>/mensajes/NN-nombre-commit-msg.txt`, FUERA del repositorio. El
+# glob de la firma no caso nada, el `-F` salio vacio y `git commit` fallo con
+# HEAD quieto y los ficheros en el indice.
+#
+# TODAS LAS FILAS CORREN EN UN ARBOL DE MENTIRA, con la forma
+# <caja>/ws/repo/gate y <caja>/ws/mensajes, porque el guion deriva el directorio
+# de la convencion de su propia ruta y una fila que dependiera del workspace de
+# verdad mediria el estado de la maquina y no el codigo.
+
+SITIO="${RAIZ_REPO}/gate/msg-sitio.sh"
+if [ ! -r "${SITIO}" ]; then
+	echo "test: NO HAY GUARDA DEL SITIO en ${SITIO}" >&2
+	echo "test: la lista de firma la nombra, asi que ese paso no se puede dar" >&2
+	exit 1
+fi
+
+WS="${CAJON}/ws"
+mkdir -p "${WS}/repo/gate" "${WS}/mensajes"
+cp "${SITIO}" "${WS}/repo/gate/msg-sitio.sh"
+SIT="${WS}/repo/gate/msg-sitio.sh"
+SIT_OUT="${CAJON}/sitio.out"
+SIT_ERR="${CAJON}/sitio.err"
+corre_sitio() {
+	SIT_RC=0
+	sh "${SIT}" "$1" > "${SIT_OUT}" 2> "${SIT_ERR}" || SIT_RC=$?
+}
+
+# ---- LA FILA QUE LO TRAE: un glob que no casa nada ----
+corre_sitio "${WS}/mensajes/*-commit-msg.txt"
+if [ "${SIT_RC}" -eq 1 ] && grep -q 'matches no file' "${SIT_ERR}" && [ ! -s "${SIT_OUT}" ]; then
+	ok "sit-0:  OK, un glob que no casa nada sale RECHAZADO, lo dice, y NO imprime nada por salida"
+else
+	mal "sit-0:  FALLA, rc=${SIT_RC} sobre un glob vacio; es lo que dejo el -F sin argumento y la firma sin ocurrir"
+fi
+
+# ---- el control: exactamente uno, y lo imprime ----
+printf 'titulo\n\ncuerpo\n' > "${WS}/mensajes/01-prueba-commit-msg.txt"
+corre_sitio "${WS}/mensajes/*-commit-msg.txt"
+if [ "${SIT_RC}" -eq 0 ] && [ "$(grep -c . "${SIT_OUT}")" -eq 1 ]; then
+	ok "sit-1:  OK, con un solo fichero en el sitio pasa y devuelve esa unica ruta, que es lo que la firma consume"
+else
+	mal "sit-1:  FALLA, rc=${SIT_RC} con el fichero en su sitio; rechaza por rechazar"
+fi
+
+# ---- dos ficheros: la firma toma uno ----
+printf 'otro\n' > "${WS}/mensajes/02-otro-commit-msg.txt"
+corre_sitio "${WS}/mensajes/*-commit-msg.txt"
+if [ "${SIT_RC}" -eq 1 ] && grep -q 'matches 2 files' "${SIT_ERR}"; then
+	ok "sit-2:  OK, dos ficheros en el sitio se rechazan nombrando los dos, en vez de firmar uno al azar"
+else
+	mal "sit-2:  FALLA, rc=${SIT_RC} con dos ficheros; la firma tomaria uno sin decir cual"
+fi
+rm -f "${WS}/mensajes/02-otro-commit-msg.txt"
+
+# ---- LA TRAMPA: un mensajes/ dentro del repositorio ----
+# Muerde aunque el fichero de fuera este bien, porque la trampa no es de firma:
+# un git add -A commitea ese directorio como contenido del arbol.
+mkdir -p "${WS}/repo/mensajes"
+corre_sitio "${WS}/mensajes/*-commit-msg.txt"
+if [ "${SIT_RC}" -eq 1 ] && grep -q 'INSIDE the repository' "${SIT_ERR}"; then
+	ok "sit-3:  OK, un mensajes/ dentro del repositorio se rechaza AUNQUE el de fuera este bien: ignorado no es ausente"
+else
+	mal "sit-3:  FALLA, rc=${SIT_RC} con la trampa puesta; se firma con un directorio que un git add -A commitearia"
+fi
+rmdir "${WS}/repo/mensajes"
+
+# ---- un fichero legible pero fuera de la convencion ----
+# LA FIXTURE ESTA FUERA DEL REPOSITORIO A PROPOSITO, y la primera version no lo
+# estaba: un fichero dentro del arbol de trabajo lo rechaza la OTRA comprobacion,
+# la de la trampa, asi que la fila daba verde con la comprobacion del sitio
+# borrada. Medido rebobinandola. Este vive al lado de la convencion, no dentro,
+# asi que solo la comprobacion del sitio lo puede parar.
+printf 'titulo\n' > "${WS}/suelto-commit-msg.txt"
+corre_sitio "${WS}/suelto-commit-msg.txt"
+if [ "${SIT_RC}" -eq 1 ] && grep -q 'is not in' "${SIT_ERR}"; then
+	ok "sit-4:  OK, un mensaje fuera de la convencion y fuera del repo se rechaza igual: lo que decide es el SITIO"
+else
+	mal "sit-4:  FALLA, rc=${SIT_RC} sobre un mensaje fuera del sitio; la convencion no se esta comprobando"
+fi
+
+# ---- LA TRAMPA A CUALQUIER PROFUNDIDAD ----
+# sit-3 solo pone el directorio en la RAIZ. Un lector midio que `gate/mensajes/`
+# era invisible para la guarda Y commiteable por `git add -A`, o sea las dos
+# tapas fallando a la vez a un nivel de profundidad.
+mkdir -p "${WS}/repo/gate/mensajes"
+corre_sitio "${WS}/mensajes/*-commit-msg.txt"
+if [ "${SIT_RC}" -eq 1 ] && grep -q 'INSIDE the repository' "${SIT_ERR}"; then
+	ok "sit-4b: OK, un mensajes/ ANIDADO tambien se caza, no solo el de la raiz"
+else
+	mal "sit-4b: FALLA, rc=${SIT_RC} con gate/mensajes/ puesto; la trampa a un nivel de profundidad pasa"
+fi
+rmdir "${WS}/repo/gate/mensajes"
+
+# ---- UN ENLACE SIMBOLICO NO ES EL FICHERO ----
+# `-f` sigue el enlace, asi que un enlace en el sitio correcto apuntando a
+# cualquier parte pasaba: las comprobaciones juzgaban la ruta del ENLACE y la
+# firma habria leido el contenido del DESTINO. Medido por un lector con un
+# enlace hacia dentro del arbol de trabajo.
+printf 'contenido ajeno\n' > "${WS}/repo/ajeno.txt"
+ln -sf "${WS}/repo/ajeno.txt" "${WS}/mensajes/09-enlace-commit-msg.txt"
+corre_sitio "${WS}/mensajes/09-enlace-commit-msg.txt"
+if [ "${SIT_RC}" -eq 1 ] && grep -q 'symbolic link' "${SIT_ERR}"; then
+	ok "sit-6:  OK, un enlace simbolico se rechaza nombrando su destino, en vez de juzgar la ruta del enlace"
+else
+	mal "sit-6:  FALLA, rc=${SIT_RC} sobre un enlace; se firmaria con el contenido del destino"
+fi
+rm -f "${WS}/mensajes/09-enlace-commit-msg.txt"
+
+# ---- EXISTIR NO ES PODER LEERSE ----
+printf 'titulo\n' > "${WS}/mensajes/08-sinleer-commit-msg.txt"
+chmod 000 "${WS}/mensajes/08-sinleer-commit-msg.txt"
+corre_sitio "${WS}/mensajes/08-sinleer-commit-msg.txt"
+sit_leer="${SIT_RC}"
+chmod 644 "${WS}/mensajes/08-sinleer-commit-msg.txt"
+rm -f "${WS}/mensajes/08-sinleer-commit-msg.txt"
+if [ "${sit_leer}" -eq 1 ]; then
+	ok "sit-7:  OK, un fichero que existe y no se puede LEER se rechaza; la firma tiene que consumirlo, no solo encontrarlo"
+else
+	mal "sit-7:  FALLA, rc=${sit_leer} sobre un fichero sin permiso de lectura; se entrega un argumento que no se puede consumir"
+fi
+
+# ---- UN ESPACIO EN EL NOMBRE NO PARTE LA CUENTA ----
+# Con el IFS por defecto, `for c in ${PATRON}` parte por espacios antes de que el
+# glob se expanda: un unico fichero con un espacio se contaba como DOS, y la
+# misma ruta escrita literal salia rechazada mientras por glob pasaba.
+printf 'titulo\n' > "${WS}/mensajes/07-con espacio-commit-msg.txt"
+rm -f "${WS}/mensajes/01-prueba-commit-msg.txt"
+corre_sitio "${WS}/mensajes/07-con espacio-commit-msg.txt"
+sit_esp_lit="${SIT_RC}"
+corre_sitio "${WS}/mensajes/*-commit-msg.txt"
+sit_esp_glob="${SIT_RC}"
+rm -f "${WS}/mensajes/07-con espacio-commit-msg.txt"
+printf 'titulo\n\ncuerpo\n' > "${WS}/mensajes/01-prueba-commit-msg.txt"
+if [ "${sit_esp_lit}" -eq 0 ] && [ "${sit_esp_glob}" -eq 0 ]; then
+	ok "sit-8:  OK, un nombre con un espacio cuenta UNO, tanto por ruta literal como por glob"
+else
+	mal "sit-8:  FALLA, literal rc=${sit_esp_lit} y glob rc=${sit_esp_glob}; la cuenta se parte por el espacio"
+fi
+
+# ---- EL PATRON SIN COMILLAS, QUE EL SHELL YA EXPANDIO ----
+# No es un error de uso: es la respuesta. Devolver 2 ahi mezclaba "no pude
+# correr" con "casa varios", que son las dos cosas que este guion existe para
+# separar.
+printf 'titulo\n' > "${WS}/mensajes/06-otro-commit-msg.txt"
+sinq_rc=0
+sh "${SIT}" "${WS}/mensajes/01-prueba-commit-msg.txt" "${WS}/mensajes/06-otro-commit-msg.txt" > "${SIT_OUT}" 2> "${SIT_ERR}" || sinq_rc=$?
+rm -f "${WS}/mensajes/06-otro-commit-msg.txt"
+if [ "${sinq_rc}" -eq 1 ] && grep -q 'expanded by the caller' "${SIT_ERR}"; then
+	ok "sit-9:  OK, un patron que el shell ya expandio en varios sale con 1 y lo dice, no con 2 de 'no pude correr'"
+else
+	mal "sit-9:  FALLA, rc=${sinq_rc} con el patron sin comillas; se confunde no poder correr con casar varios"
+fi
+
+# ---- y el directorio de la convencion ausente ----
+mv "${WS}/mensajes" "${WS}/mensajes-guardado"
+corre_sitio "${WS}/mensajes/*-commit-msg.txt"
+if [ "${SIT_RC}" -eq 1 ] && grep -q 'convention directory' "${SIT_ERR}"; then
+	ok "sit-5:  OK, sin el directorio de la convencion se rechaza nombrandolo, en vez de leerlo como un glob vacio mas"
+else
+	mal "sit-5:  FALLA, rc=${SIT_RC} sin el directorio; no distingue 'no hay mensaje' de 'no hay sitio'"
+fi
+mv "${WS}/mensajes-guardado" "${WS}/mensajes"
+
+# ======================================================================
 # EL TERCER PASO: las cifras de un mensaje contra el crudo que las sostiene.
 # ======================================================================
 #
@@ -750,6 +951,7 @@ fi
 # crudo y el total que compare salga del banco y no de una mano.
 n_filas=$(grep -c . "${REGISTRO}" || true)
 n_falla=$(grep -c '^FALLA$' "${REGISTRO}" || true)
+COMPLETO=1
 echo "RESULTADO: ${n_filas} filas, ${n_falla} en FALLA"
 if [ "${n_filas}" -eq 0 ]; then
 	echo "test: VACIO. El registro de filas salio a cero, asi que este banco no ha probado nada" >&2

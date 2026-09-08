@@ -46,7 +46,23 @@ CORTADO="${A29}/red-relleno.txt"
 [ -r "${GUION}" ] || { echo "test: no encuentro ${GUION}" >&2; exit 2; }
 
 CAJON=$(mktemp -d "${TMPDIR:-/tmp}/redrow-guard-test.XXXXXX")
-trap 'find "$CAJON" -mindepth 1 -delete 2>/dev/null || true; rmdir "$CAJON" 2>/dev/null || true' EXIT
+# LA BANDERA DE TERMINACION, escrita el 8 de septiembre de 2026 y la trae un
+# lector adversarial. Una trampa EXIT se COME el estado de salida cuando el
+# guion muere por `set -e` o `set -u`: medido en el `/bin/sh` de esta maquina,
+# que es bash 3.2, un abortado pasa de rc 1 a rc 0. Preservar `$?` dentro de la
+# trampa no lo arregla, porque para entonces ya vale 0. Medido sobre este mismo
+# banco: abortado a mitad devolvia CERO, y dos de estos bancos corren en CI, o
+# sea que un banco muerto se leia como un paso verde.
+COMPLETO=0
+limpia_y_cierra() {
+	if [ "${COMPLETO}" -ne 1 ]; then
+		echo "test: ABORTADO antes del resumen; lo impreso arriba NO es un resultado" >&2
+		find "$CAJON" -mindepth 1 -delete 2>/dev/null || true; rmdir "$CAJON" 2>/dev/null || true
+		exit 1
+	fi
+	find "$CAJON" -mindepth 1 -delete 2>/dev/null || true; rmdir "$CAJON" 2>/dev/null || true
+}
+trap limpia_y_cierra EXIT
 
 # La funcion se saca del guion y no se copia aqui. Si alguien la renombra o la
 # borra, la extraccion sale vacia y la prueba se declara VACIA en vez de pasar.
@@ -155,5 +171,6 @@ else
 	fallos=$((fallos + 1))
 fi
 
+COMPLETO=1
 [ "${fallos}" -eq 0 ] || { di "test: ${fallos} fallo(s)" >&2; exit 1; }
 di "test: la guarda separa lo cortado de lo entero, las mitades muerden, y la llamada sigue en su sitio"
