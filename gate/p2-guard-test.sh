@@ -47,7 +47,136 @@ case "${RUN_ID}" in
 	*) echo "guard: refusing to run: the run id ${RUN_ID} is not the shape this script deletes by" >&2; exit 2 ;;
 esac
 SCRATCH="${TMPDIR:-/tmp}/naylamp-p2-guard-${RUN_ID}"
+
+# ---- DOS BANCOS A LA VEZ NO, y hasta hoy nada lo impedia ----------------------
+#
+# Lo levanta quien encarga el 7 de septiembre de 2026 leyendo su propio ps: vio
+# dos `bash ./gate/p2-guard-test.sh` y pregunto si la cifra de un banco podia
+# venir de una corrida con otra pisandole los puertos. Los dos que vio eran uno
+# solo, el banco y un subshell suyo al que ps le pinta el argv del padre, y esta
+# medido; pero la pregunta de fondo se queda en pie y la respuesta era que NO
+# habia nada que lo impidiera.
+#
+# QUE PASA HOY SI SE LANZAN DOS. Este guion no ata ningun puerto, asi que los dos
+# arrancan. Sus FILAS si atan: cada una corre una copia de p2.sh, y la guarda de
+# puertos de p2.sh, medida el mismo dia ocupando el 19411 a mano, rompe con rc 2
+# sin crear artefacto ni emitir veredicto. O sea que la colision se caza, pero se
+# caza abajo y una fila a la vez: cada fila perdida cuesta un ensayo entero y sale
+# como NO CUADRA, que se lee como un defecto del gate y no como dos bancos.
+#
+# Asi que la negativa sube aqui, donde es barata. El predicado es el PROCESO y no
+# un fichero: un marcador con el pid dentro, y la vida preguntada dos veces,
+# `kill -0` y `ps`, porque `kill -0` lee EPERM como muerto y un banco de otro
+# usuario dejaria pasar al segundo con un mensaje tranquilizador. Un marcador
+# cuyo pid ya no esta no bloquea nada: se retira y se dice.
+# EL NOMBRE NO LLEVA EL PREFIJO DE LOS DIRECTORIOS DEL BANCO, y eso no es
+# cosmetica. La version anterior se llamaba naylamp-p2-guard-EN-CURSO y casaba el
+# glob `naylamp-p2-guard-*` con el que este mismo fichero cuenta y barre sus
+# directorios: la cifra que publicaba al cerrar decia CINCO contandose a si
+# mismo, el anexo del crudo medido despues decia CUATRO, y las dos quedaron
+# archivadas juntas en la corrida del 7 de septiembre. Es la clausula 28 dentro
+# del bloque en que se escribio.
+MARCA_BANCO="${TMPDIR:-/tmp}/naylamp-p2-bench-EN-CURSO"
+
+# otro_banco_vivo: si hay OTRO banco corriendo, imprime su pid y devuelve 0.
+#
+# EL PID SOLO NO IDENTIFICA UN BANCO, y esa era la peor de las tres cosas que un
+# lector midio aqui. Con el marcador apuntando al pid 1 la negativa decia
+# "another bench is already running, pid 1" y su instruccion de recuperacion era
+# "stop it by its pid", o sea matar launchd. Y un pid reciclado, que en macOS
+# ocurre dentro de 99999, bloqueaba el banco para siempre. Ahora se cruza la
+# LINEA DE ORDEN: el proceso tiene que ser de verdad un p2-guard-test.sh.
+#
+# Los zombis quedan dicho que no los separa ninguno de los dos predicados:
+# medido, un proceso defunct contesta VIVO tanto a kill -0 como a ps -p. Lo que
+# los excluye es la linea de orden, que en un zombi ya no menciona el guion.
+otro_banco_vivo() {
+	local pid args
+	[ -f "${MARCA_BANCO}" ] || return 1
+	pid="$(sed -n 's/^pid: \([0-9][0-9]*\)$/\1/p' "${MARCA_BANCO}" 2>/dev/null | head -1)"
+	[ -n "${pid}" ] || { echo "guard: el marcador de banco no lleva pid legible; se retira" >&2; rm -f -- "${MARCA_BANCO}"; return 1; }
+	args="$(ps -p "${pid}" -o args= 2>/dev/null || true)"
+	case "${args}" in
+		*p2-guard-test.sh*)
+			printf '%s' "${pid}"
+			return 0
+			;;
+		"")
+			echo "guard: el marcador apunta al pid ${pid}, que ya no existe; se retira" >&2
+			;;
+		*)
+			echo "guard: el marcador apunta al pid ${pid}, que existe y NO es un banco; se retira" >&2
+			;;
+	esac
+	rm -f -- "${MARCA_BANCO}"
+	return 1
+}
+
+# EL CERROJO ES UN mkdir Y NO UN if, porque comprobar-y-luego-escribir deja una
+# ventana. Medida: unos 15 ms entre la lectura del marcador y su escritura, y con
+# los dos bancos entrando a la vez arrancaban los DOS, ocho de ocho. A partir de
+# 50 ms de desfase la negativa ya funcionaba, o sea que dos terminales a mano no
+# la cazan y un Makefile, un bucle o dos agentes en paralelo si. mkdir es atomico:
+# o lo crea uno o falla el otro, sin ventana.
+#
+# Y EL MARCADOR SE ESCRIBE CON RENOMBRADO, no con redireccion. `> fichero` trunca
+# antes de escribir, asi que habia un instante en que el marcador de un banco VIVO
+# estaba vacio, y quien lo leyera en ese instante lo daba por ilegible y lo
+# borraba. Eso si borraba estado ajeno.
+CERROJO="${MARCA_BANCO}.lock"
+if ! mkdir "${CERROJO}" 2>/dev/null; then
+	# EL PERDEDOR NO ROBA EL CERROJO POR NO VER TODAVIA EL MARCADOR, y esa era la
+	# fuga que caza la fila 13g del banco de guardas. La primera version hacia:
+	# mkdir falla -> pregunto por el marcador -> no esta -> lo doy por resto,
+	# rmdir, mkdir, sigo. Con dos bancos saliendo a la vez, el ganador toma el
+	# cerrojo y todavia no ha escrito su marcador, asi que el perdedor lo lee
+	# ausente y se cuela: pasaban los DOS, medido.
+	#
+	# La ventana entre tomar el cerrojo y escribir el marcador es de milisegundos,
+	# asi que el perdedor ESPERA a que aparezca, con cota, y solo despues de
+	# gastarla lo trata como resto. La cota va corta porque lo unico que se espera
+	# es un printf y un mv.
+	OTRO=""
+	i_cerrojo=0
+	while [ "${i_cerrojo}" -lt 30 ]; do
+		if OTRO="$(otro_banco_vivo)"; then break; fi
+		OTRO=""
+		[ -f "${MARCA_BANCO}" ] && break
+		sleep 0.1
+		i_cerrojo=$((i_cerrojo + 1))
+	done
+	if [ -z "${OTRO}" ]; then
+		# Gastada la cota sin marcador que nombre a un banco vivo: es un resto.
+		echo "guard: el cerrojo ${CERROJO} esta sin un banco vivo detras; se retira" >&2
+		rmdir "${CERROJO}" 2>/dev/null || true
+		mkdir "${CERROJO}" 2>/dev/null || { echo "guard: no pude tomar el cerrojo ${CERROJO}" >&2; exit 2; }
+	fi
+else
+	OTRO="$(otro_banco_vivo)" || OTRO=""
+fi
+if [ -n "${OTRO}" ]; then
+	echo "guard: refusing to run: another bench is already running, pid ${OTRO}" >&2
+	echo "guard: two benches share the eight loopback ports through their rows, and the" >&2
+	echo "guard: the loser of each row refuses with rc 2 and its row reports a mismatch," >&2
+	echo "guard: like a defect of the gate instead of like two benches." >&2
+	echo "guard: wait for it, or stop it by its pid." >&2
+	exit 2
+fi
+printf 'pid: %s\nrun: %s\nstarted: %s\n' "$$" "${RUN_ID}" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "${MARCA_BANCO}.tmp.$$"
+mv -f "${MARCA_BANCO}.tmp.$$" "${MARCA_BANCO}"
+retira_marca_banco() {
+	# Solo si el marcador es el de esta corrida. Se compara el pid, no la fecha,
+	# para que un banco no le borre el marcador a otro.
+	if [ -f "${MARCA_BANCO}" ] && grep -q "^pid: $$\$" "${MARCA_BANCO}" 2>/dev/null; then
+		rm -f -- "${MARCA_BANCO}"
+		rmdir "${CERROJO}" 2>/dev/null || true
+	fi
+	rm -f -- "${MARCA_BANCO}.tmp.$$" 2>/dev/null || true
+}
+
 mkdir -p "${SCRATCH}"
+
+trap retira_marca_banco EXIT
 
 FILAS=0
 ROJAS=0
@@ -227,15 +356,45 @@ echo
 
 echo "--- las que ni siquiera arrancan la flota ---"
 
+# LA FILA F0 CAMBIO DE OBJETO EL 7 DE SEPTIEMBRE DE 2026, y el cambio va escrito
+# porque una fila que sigue verde midiendo otra cosa es peor que una roja. Hasta
+# ese dia afirmaba que `p2.sh all` SIN NAYLAMP_P2_LOCAL imprimia "no iron path
+# yet" y se negaba. El camino de fierro existe desde entonces, asi que esa frase
+# ya no esta y la negativa correcta es OTRA: sin la identidad de la flota,
+# gate/common.sh se niega por su cuenta y nombra la variable que falta. Eso es lo
+# que esta fila mide ahora, y sigue exigiendo que no corra ninguna fase.
+unset NAYLAMP_GATE_HOSTS NAYLAMP_GATE_PRIVATE NAYLAMP_GATE_KEY 2>/dev/null || true
 set +e
-salida="$("${P2}" all 2>&1)"; rc=$?
+salida="$(env -u NAYLAMP_GATE_HOSTS -u NAYLAMP_GATE_PRIVATE -u NAYLAMP_GATE_KEY "${P2}" all 2>&1)"; rc=$?
 set -e
 FILAS=$((FILAS + 1))
-if [ "${rc}" -eq 2 ] && printf '%s' "${salida}" | grep -q 'no iron path yet' && ! printf '%s' "${salida}" | grep -q 'gate: verdict '; then
-	echo "F0-fierro-rechazado          sin NAYLAMP_P2_LOCAL             rc=2, ninguna fase corrio, ningun veredicto   OK"
+if [ "${rc}" -eq 2 ] && printf '%s' "${salida}" | grep -q 'NAYLAMP_GATE_HOSTS is required' && ! printf '%s' "${salida}" | grep -q 'gate: verdict '; then
+	echo "F0-fierro-sin-identidad      sin las variables de la flota     rc=2, ninguna fase corrio, ningun veredicto   OK"
 	NO_EMPIEZAN=$((NO_EMPIEZAN + 1))
 else
-	echo "F0-fierro-rechazado          NO CUADRA: rc=${rc}"; MAL=$((MAL + 1))
+	echo "F0-fierro-sin-identidad      NO CUADRA: rc=${rc}"; MAL=$((MAL + 1))
+fi
+
+# Y LA OTRA MITAD, que la fila vieja no tenia: CON la identidad puesta, el camino
+# de fierro arranca de verdad en vez de negarse. Sin esta mitad, un p2.sh que se
+# negara siempre pasaria la fila de arriba tan campante. La flota es la del rango
+# de documentacion y NAYLAMP_RED_ARM lo declara, asi que nada de esto toca una
+# maquina: se mira solo que el guion ELIGE el camino y nombra su artefacto p2-.
+FILAS=$((FILAS + 1))
+llave_falsa="${SCRATCH}/llave-de-mentira"
+: > "${llave_falsa}"; chmod 600 "${llave_falsa}"
+set +e
+salida="$(NAYLAMP_RED_ARM=1 \
+	NAYLAMP_GATE_HOSTS=192.0.2.1,192.0.2.2,192.0.2.3 \
+	NAYLAMP_GATE_PRIVATE=198.51.100.1,198.51.100.2,198.51.100.3 \
+	NAYLAMP_GATE_KEY="${llave_falsa}" \
+	NAYLAMP_P2_SOURCE_ONLY=1 bash -c "source '${P2}'; echo ES_FIERRO=\${ES_FIERRO}; basename \"\${OUT_LOCAL}\"" 2>&1)"; rc=$?
+set -e
+if [ "${rc}" -eq 0 ] && printf '%s' "${salida}" | grep -q 'ES_FIERRO=1' && printf '%s' "${salida}" | grep -qE '^p2-[0-9]'; then
+	echo "F0b-fierro-elegido           con la identidad de la flota      toma el camino de fierro y nombra p2-<run id>  OK"
+	NO_EMPIEZAN=$((NO_EMPIEZAN + 1))
+else
+	echo "F0b-fierro-elegido           NO CUADRA: rc=${rc} [$(printf '%s' "${salida}" | tr '\n' '|' | cut -c1-90)]"; MAL=$((MAL + 1))
 fi
 
 set +e
@@ -480,6 +639,51 @@ echo "salida, si la corrida llego a su final o aborto, y que una fila roja NO ci
 echo "'all rehearsal checks passed'."
 echo
 echo "el banco queda en ${SCRATCH} para que se puedan leer los logs de cada fila"
+
+# ---- Y LOS DE ANTES SE BARREN, que hasta hoy no los barria nadie -------------
+#
+# Este banco conserva su directorio SIEMPRE, no solo cuando falla, porque los
+# logs de cada fila son lo unico que queda de una fila roja. Lo que faltaba era
+# el otro extremo: nadie los retiraba. Medido el 7 de septiembre de 2026 al
+# cerrar la jornada, habia VEINTISIETE directorios acumulados desde el dia
+# anterior, 16560 KiB, y el mas viejo era del 6 de septiembre. Ninguna cifra los
+# vigilaba y ningun guion los tocaba.
+#
+# Se conservan los CONSERVA mas recientes y se retiran los demas, por su ruta
+# construida con el nombre literal que este guion usa, nunca con una variable
+# suelta ni con un comodin sobre TMPDIR entero.
+#
+# POR QUE CINCO Y NO OTRO NUMERO, con la medida al lado, que es lo que un lector
+# de estilo echo en falta: los veintisiete acumulados ocupaban 16560 KiB, o sea
+# 613 KiB de media por corrida, y cinco son unos 3 MiB. El numero sale de para
+# que sirven: los logs de una fila roja se miran el mismo dia o al dia siguiente,
+# y en esta jornada cupieron seis corridas del banco, asi que cinco cubre la
+# ultima sesion de trabajo entera sin cubrir la anterior. No es un techo de
+# tamano: es la ventana en la que alguien todavia va a mirar.
+CONSERVA=5
+barre_bancos_viejos() {
+	local base="${TMPDIR:-/tmp}" d n=0 retirados=0
+	# La lista sale ordenada por fecha, la mas nueva primero, y se salta las
+	# CONSERVA primeras. El propio directorio de esta corrida es la mas nueva, asi
+	# que nunca puede caer en la parte que se retira.
+	for d in $(ls -dt "${base}"/naylamp-p2-guard-[0-9]* 2>/dev/null); do
+		n=$((n + 1))
+		[ "${n}" -le "${CONSERVA}" ] && continue
+		case "${d}" in
+			"${base}"/naylamp-p2-guard-[0-9]*)
+				rm -rf -- "${d}"
+				retirados=$((retirados + 1))
+				;;
+			*)
+				echo "guard: NO retiro ${d}: no es un banco de este guion" >&2
+				;;
+		esac
+	done
+	printf '%s' "${retirados}"
+}
+RETIRADOS="$(barre_bancos_viejos)"
+QUEDAN="$(ls -d "${TMPDIR:-/tmp}"/naylamp-p2-guard-[0-9]* 2>/dev/null | wc -l | tr -d ' ')"
+echo "bancos de corridas anteriores retirados: ${RETIRADOS}; quedan ${QUEDAN} de un techo de ${CONSERVA}"
 
 [ "${MAL}" -eq 0 ] || exit 1
 exit 0

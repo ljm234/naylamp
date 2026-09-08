@@ -75,7 +75,14 @@ MAKEFILE_REAL="${RAIZ_REPO}/Makefile"
 [ -f "${MAKEFILE_REAL}" ] || { echo "test: no encuentro ${MAKEFILE_REAL}" >&2; exit 2; }
 
 CAJON=$(mktemp -d "${TMPDIR:-/tmp}/clean-guard-test.XXXXXX")
-trap 'rm -rf -- "$CAJON" 2>/dev/null || true' EXIT
+# LA TRAMPA CUBRE TAMBIEN LA COPIA SIN GUARDA, que vive en gate/ y no en el
+# cajon. Tiene que vivir ahi porque el banco resuelve su sitio por el dirname de
+# $0 y desde el cajon no encontraria p2.sh. Pero durante los veinte segundos que
+# dura, es un fichero sin trackear dentro del arbol, y TRES gates cuentan
+# `git status --porcelain`: gate/p2-preflight.sh:135 falla duro con esa cifra y
+# gate/p2.sh:1077 la sella DENTRO del artefacto. Si este guion se interrumpe en
+# esa ventana, la copia se queda para siempre y la fila 13d no llega a correr.
+trap 'rm -rf -- "$CAJON" 2>/dev/null || true; rm -f -- "${AQUI}/banco-sin-guarda-de-prueba.sh" 2>/dev/null || true' EXIT
 
 cp "${MAKEFILE_REAL}" "${CAJON}/Makefile"
 
@@ -476,6 +483,258 @@ else
 fi
 kill "${pid_vivo2}" 2>/dev/null || true
 wait "${pid_vivo2}" 2>/dev/null || true
+
+# ---- 13, 13b y 13c: LA GUARDA DE BANCO CONTRA BANCO -------------------------
+#
+# Misma familia que las de arriba: una negativa que protege una corrida en vuelo,
+# con el PROCESO como predicado y no un fichero. La trae quien encarga el 7 de
+# septiembre de 2026 al ver dos `bash ./gate/p2-guard-test.sh` en su ps y
+# preguntar si una cifra podia venir de dos bancos pisandose los puertos. Los dos
+# que vio eran uno solo, medido; pero nada impedia que fueran dos de verdad, y
+# entonces cada fila perdida cuesta un ensayo entero y sale como NO CUADRA.
+#
+# Las tres mitades se disparan aqui porque una negativa que solo se prueba por el
+# lado que niega deja sin ver el caso que importa mas: el marcador rancio que
+# bloquea para siempre.
+# AQUI se fija en la cabecera, ANTES del cd al cajon, asi que apunta al arbol de
+# verdad. La primera version uso ${PWD} y apuntaba al cajon, donde ese fichero no
+# existe: las dos filas salieron FALLA por no encontrar el guion y no por lo que
+# venian a medir, que es un falso rojo tan inutil como un falso verde.
+BANCO="${AQUI}/p2-guard-test.sh"
+# Si el banco no esta, las CUATRO filas se saltan con su fallo cada una. La
+# version anterior ponia BANCO="" y seguia: tres filas mas abajo, `sed ... ""`
+# devuelve 1 bajo set -e y mata el guion DESPUES de que la redireccion haya creado
+# gate/banco-sin-guarda-de-prueba.sh vacio, que se queda en el arbol sin que nadie
+# lo diga. Medido: rc 1 y el fichero creado igual.
+BANCO_OK=1
+if [ ! -x "${BANCO}" ]; then
+	BANCO_OK=0
+	mal "13 banco:   FALLA, no encuentro ${BANCO}"
+	mal "13b rancio: FALLA, sin banco no se puede medir"
+	mal "13c rojo:   FALLA, sin banco no se puede medir"
+	mal "13d limpia: FALLA, sin banco no se puede medir"
+fi
+
+if [ "${BANCO_OK}" -eq 1 ]; then
+	# UNA FILA QUE ARRANCA UN BANCO ENTERO PARA MIRAR SU PRIMERA LINEA ES BASURA.
+	# La primera version de 13b y 13c dejo correr el banco: diecisiete filas, tres
+	# replicas huerfanas al matarlo, un directorio nuevo por encima del techo y una
+	# copia sin guarda en TMPDIR. Se midio al cerrar y se arreglo. Estas dos leen la
+	# linea que les interesa, matan por PID, y barren lo que ese pid creo por su ruta
+	# literal, con el run id que el propio banco imprime en su banner.
+	espera_linea() {
+		# espera_linea <fichero> <patron> <cota en segundos>. La cota es obligatoria y
+		# lo que devuelve es si la vio, no cuanto espero.
+		espera_i=0
+		while [ "${espera_i}" -lt "$3" ]; do
+			if [ -f "$1" ] && grep -q "$2" "$1" 2>/dev/null; then return 0; fi
+			sleep 1
+			espera_i=$((espera_i + 1))
+		done
+		return 1
+	}
+	para_banco_y_barre() {
+		# para_banco_y_barre <pid> <fichero de salida>. Mata el banco por pid, mata lo
+		# que quede de su ensayo por el CAMPO DEL EJECUTABLE, y retira su directorio
+		# por la ruta literal que sale de SU PROPIO run id, nunca por un comodin.
+		# El `wait` se traga el aviso de trabajo terminado que el shell imprime al
+		# matar un proceso en segundo plano. Sin el, la salida de este banco lleva
+		# lineas 'Killed: 9' que se leen como un fallo y no lo son.
+		kill -9 "$1" 2>/dev/null || true
+		wait "$1" 2>/dev/null || true
+		sleep 1
+		# EL FILTRO ANTERIOR ERA CODIGO MUERTO Y NUNCA MATO NADA. Preguntaba por el
+		# campo comm de `ps -Ao pid,comm,args`, y en macOS ese campo CON cabecera se
+		# trunca a 16 columnas: 893 de 898 procesos de esta maquina lo tienen de
+		# exactamente esa longitud. El binario del ensayo vive en una ruta de 77
+		# caracteres, asi que su comm es `/Users/jordanmon` y la regex `/p2-naylampd$/`
+		# no podia casar jamas. Nadie lo noto porque en el camino verde las filas matan
+		# el banco antes de que levante ninguna flota y no hay huerfanos que matar: la
+		# linea solo hace falta cuando espera_linea agota su cota, que es justo cuando
+		# no funcionaba. Ahora pregunta por el CAMPO DEL EJECUTABLE sobre
+		# `pid,ppid,etime,command`, que es la forma de la clausula 28 y la que este
+		# arbol ya usa en gate/p2-preflight.sh.
+		huerfanos=$(ps -Ao pid,ppid,etime,command | awk '$4 ~ /naylampd$|naylampd-mutante$|p2-naylampd$/ && $5 == "node" { print $1 }')
+		for h in ${huerfanos}; do kill -9 "${h}" 2>/dev/null || true; done
+		corrida_b=$(sed -n 's/.*corrida \([0-9]\{8\}T[0-9]\{6\}Z-[0-9]*\).*/\1/p' "$2" 2>/dev/null | head -1)
+		if [ -n "${corrida_b}" ]; then
+			rm -rf -- "${TMPDIR:-/tmp}/naylamp-p2-guard-${corrida_b}"
+		fi
+	}
+
+	MARCA_B="${TMPDIR:-/tmp}/naylamp-p2-bench-EN-CURSO"
+	CERROJO_B="${MARCA_B}.lock"
+	rm -f "${MARCA_B}"; rmdir "${CERROJO_B}" 2>/dev/null || true
+
+	# ---- EL ARNES, que es el prologo REAL del banco con la marca desviada -----
+	#
+	# Las filas de aqui abajo NO arrancan un banco entero: cortan el guion en el
+	# punto en que su prologo termina, o sea justo despues de la definicion de
+	# retira_marca_banco, y le desvian el marcador a un fichero del cajon. Asi se
+	# ejercita el codigo DE VERDAD, cerrojo incluido, sin levantar ninguna flota.
+	#
+	# Y EL CEBO DE LA FILA 13 TIENE QUE SER UN BANCO, no un sleep. La version
+	# anterior ponia el pid de un `sleep 120` en el marcador, y desde que la guarda
+	# cruza la linea de orden ese pid ya no es un banco: la negativa no salta y la
+	# fila salia FALLA por su propio cebo. El cebo es ahora otro arnes vivo.
+	# LOS CUATRO ARNESES LLEVAN p2-guard-test.sh EN EL NOMBRE, y eso es una
+	# consecuencia directa del arreglo de la guarda, no una mania. Desde que
+	# otro_banco_vivo cruza la LINEA DE ORDEN del pid, un proceso que no se llame
+	# asi no es un banco para ella, y hace bien. La primera version de estas filas
+	# uso un arnes llamado arnes-prologo.sh y la fila de los dos a la vez salio
+	# FALLA con el mensaje "existe y NO es un banco": el cerrojo funcionaba y el
+	# CEBO era el que no valia. Medido antes de tocar la guarda.
+	ARNES="${CAJON}/corto-p2-guard-test.sh"
+	ARNES_LARGO="${CAJON}/cebo-p2-guard-test.sh"
+	MARCA_A="${CAJON}/marca-arnes"
+	fin_prologo=$(grep -n '^}' "${BANCO}" | awk -F: '$1 > '"$(grep -n '^retira_marca_banco() {' "${BANCO}" | cut -d: -f1)"' {print $1; exit}')
+	# GATE_DIR se fija tambien, y no es un detalle: el banco resuelve su sitio por
+	# el dirname de BASH_SOURCE, y desde el cajon no encontraria p2.sh. La primera
+	# version del arnes no lo fijaba y las seis filas salieron FALLA por
+	# "guard: no encuentro .../p2.sh", o sea midiendo otra cosa. Es el mismo
+	# tropiezo que ya costo la ruta de ${PWD} unas horas antes.
+	sed -n "1,${fin_prologo}p" "${BANCO}" \
+		| sed "s|\${TMPDIR:-/tmp}/naylamp-p2-bench-EN-CURSO|${MARCA_A}|" \
+		| sed "s|^GATE_DIR=.*|GATE_DIR=\"${AQUI}\"|" > "${ARNES}"
+	printf '\necho "ARNES: pase el prologo con pid $$"\nretira_marca_banco\necho "ARNES: retire"\n' >> "${ARNES}"
+	chmod +x "${ARNES}"
+	# El mismo, pero se queda vivo: es el CEBO de la fila 13.
+	sed "s|^retira_marca_banco\$|echo \"ARNES: pase el prologo con pid \$\$\"; sleep 90|" "${ARNES}" > "${ARNES_LARGO}"
+	chmod +x "${ARNES_LARGO}"
+	# Y un tercero que pasa, SE QUEDA UN INSTANTE y retira. Sin esa pausa los dos
+	# de la fila 13g no llegan a solaparse: el primero termina y suelta el cerrojo
+	# antes de que el segundo lo mire, y pasan los dos legitimamente, en serie. La
+	# primera version de esa fila usaba el arnes corto y salia FALLA acusando al
+	# cerrojo de no excluir cuando lo que no habia era concurrencia.
+	ARNES_SOLAPA="${CAJON}/solapa-p2-guard-test.sh"
+	sed "s|^retira_marca_banco\$|sleep 2; retira_marca_banco|" "${ARNES}" > "${ARNES_SOLAPA}"
+	chmod +x "${ARNES_SOLAPA}"
+
+	limpia_arnes() { rm -f "${MARCA_A}" "${MARCA_A}".tmp.* 2>/dev/null || true; rmdir "${MARCA_A}.lock" 2>/dev/null || true; }
+
+	# 13: con OTRO BANCO vivo, se niega y no crea su directorio
+	limpia_arnes
+	bash "${ARNES_LARGO}" > "${CAJON}/a13-cebo.txt" 2>&1 &
+	pid_cebo=$!
+	espera_linea "${CAJON}/a13-cebo.txt" "pase el prologo" 15 || true
+	antes_dirs=$(ls -d "${TMPDIR:-/tmp}"/naylamp-p2-guard-2* 2>/dev/null | wc -l | tr -d ' ')
+	rc=0
+	salida_b="$(bash "${ARNES}" 2>&1)" || rc=$?
+	despues_dirs=$(ls -d "${TMPDIR:-/tmp}"/naylamp-p2-guard-2* 2>/dev/null | wc -l | tr -d ' ')
+	if [ "${rc}" -eq 2 ] && [ "${antes_dirs}" = "${despues_dirs}" ] \
+	   && echo "${salida_b}" | grep -q "another bench is already running" \
+	   && ! echo "${salida_b}" | grep -q "pase el prologo"; then
+		echo "13 banco:   OK, se niega con rc=2 ante otro banco vivo, PARA antes del prologo y no crea directorio"
+	else
+		mal "13 banco:   FALLA, rc=${rc}, directorios ${antes_dirs}->${despues_dirs}"
+	fi
+	# 13a: y el marcador del cebo SIGUE, que es lo que la negativa tiene que respetar
+	if grep -q "^pid: ${pid_cebo}\$" "${MARCA_A}" 2>/dev/null; then
+		echo "13a respeta: OK, la negativa no toco el marcador del banco vivo"
+	else
+		mal "13a respeta: FALLA, el marcador del cebo (pid ${pid_cebo}) ya no esta"
+	fi
+	kill -9 "${pid_cebo}" 2>/dev/null || true
+	wait "${pid_cebo}" 2>/dev/null || true
+	limpia_arnes
+
+	# 13b: con un pid MUERTO dentro, retira el marcador, SIGUE, y lo sustituye
+	printf 'pid: 999999\nrun: prueba\nstarted: prueba\n' > "${MARCA_A}"
+	mkdir -p "${MARCA_A}.lock"
+	salida_b="$(bash "${ARNES}" 2>&1)" || true
+	if ! echo "${salida_b}" | grep -q "ya no existe; se retira"; then
+		mal "13b rancio: FALLA, el marcador con pid muerto no se retiro"
+	elif ! echo "${salida_b}" | grep -q "pase el prologo"; then
+		mal "13b rancio: FALLA, retiro el marcador y NO siguio; la pregunta del flujo dice que tiene que seguir"
+	elif echo "${salida_b}" | grep -q "another bench is already running"; then
+		mal "13b rancio: FALLA, se nego pese a que el marcador estaba rancio"
+	elif ! echo "${salida_b}" | grep -q "ARNES: retire"; then
+		mal "13b rancio: FALLA, no llego a su retirada"
+	else
+		echo "13b rancio: OK, retira el rancio, SIGUE hasta el final y retira el suyo"
+	fi
+	limpia_arnes
+
+	# 13c ROJO: sin la negativa, el segundo banco pasa con el primero vivo
+	ARNES_SIN_GUARDA="${CAJON}/singuarda-p2-guard-test.sh"
+	sed 's|^if \[ -n "${OTRO}" \]; then|if false; then|' "${ARNES}" > "${ARNES_SIN_GUARDA}"
+	chmod +x "${ARNES_SIN_GUARDA}"
+	if cmp -s "${ARNES}" "${ARNES_SIN_GUARDA}"; then
+		mal "13c rojo:   FALLA, la mutacion no cambio nada, asi que no muta la negativa"
+	else
+		limpia_arnes
+		bash "${ARNES_LARGO}" > "${CAJON}/a13c-cebo.txt" 2>&1 &
+		pid_cebo3=$!
+		espera_linea "${CAJON}/a13c-cebo.txt" "pase el prologo" 15 || true
+		salida_c="$(bash "${ARNES_SIN_GUARDA}" 2>&1)" || true
+		if echo "${salida_c}" | grep -q "pase el prologo"; then
+			echo "13c rojo:   OK, MUERDE: sin la negativa el segundo banco pasa el prologo con el primero vivo"
+		else
+			mal "13c rojo:   FALLA, el mutante no paso; la fila 13 no prueba la negativa"
+		fi
+		kill -9 "${pid_cebo3}" 2>/dev/null || true
+		wait "${pid_cebo3}" 2>/dev/null || true
+		limpia_arnes
+	fi
+
+	# 13d: un banco que termina BIEN deja su marcador retirado
+	limpia_arnes
+	salida_d="$(bash "${ARNES}" 2>&1)" || true
+	if echo "${salida_d}" | grep -q "ARNES: retire" && [ ! -e "${MARCA_A}" ] && [ ! -d "${MARCA_A}.lock" ]; then
+		echo "13d retira: OK, al terminar bien no deja marcador ni cerrojo"
+	else
+		mal "13d retira: FALLA, quedan marcador=$([ -e "${MARCA_A}" ] && echo si || echo no) cerrojo=$([ -d "${MARCA_A}.lock" ] && echo si || echo no)"
+	fi
+
+	# 13e ROJO: sin la retirada, el marcador sobrevive al banco
+	ARNES_SIN_RET="${CAJON}/sinretirada-p2-guard-test.sh"
+	sed 's|^retira_marca_banco$|: # retirada quitada a proposito|' "${ARNES}" > "${ARNES_SIN_RET}"
+	chmod +x "${ARNES_SIN_RET}"
+	limpia_arnes
+	bash "${ARNES_SIN_RET}" > "${CAJON}/a13e.txt" 2>&1 || true
+	if [ -e "${MARCA_A}" ]; then
+		echo "13e rojo(f): OK, MUERDE: sin la retirada el marcador sobrevive al banco"
+	else
+		mal "13e rojo(f): FALLA, el marcador se fue igual, asi que 13d no prueba la retirada"
+	fi
+	limpia_arnes
+
+	# 13f: la retirada NO borra el marcador de otro banco
+	printf 'pid: 999998\nrun: de-otro\nstarted: prueba\n' > "${MARCA_A}"
+	mkdir -p "${MARCA_A}.lock"
+	bash -c 'MARCA_BANCO="'"${MARCA_A}"'"; CERROJO="'"${MARCA_A}"'.lock"
+retira_marca_banco() {
+	if [ -f "${MARCA_BANCO}" ] && grep -q "^pid: $$\$" "${MARCA_BANCO}" 2>/dev/null; then
+		rm -f -- "${MARCA_BANCO}"; rmdir "${CERROJO}" 2>/dev/null || true
+	fi
+}
+retira_marca_banco' 2>/dev/null || true
+	if [ -e "${MARCA_A}" ] && grep -q "^pid: 999998\$" "${MARCA_A}"; then
+		echo "13f ajeno:  OK, la retirada respeta el marcador de otro banco"
+	else
+		mal "13f ajeno:  FALLA, borro un marcador que no era suyo"
+	fi
+	limpia_arnes
+
+	# 13g: DOS bancos entrando A LA VEZ. Es el caso que la guarda existe para negar
+	# y que ninguna fila lanzaba. Con el cerrojo por mkdir, uno tiene que perder
+	# aunque salgan en el mismo instante; con el if de antes pasaban los dos.
+	limpia_arnes
+	bash "${ARNES_SOLAPA}" > "${CAJON}/a13g-1.txt" 2>&1 &
+	pa=$!
+	bash "${ARNES_SOLAPA}" > "${CAJON}/a13g-2.txt" 2>&1 &
+	pb=$!
+	wait "${pa}" 2>/dev/null || true
+	wait "${pb}" 2>/dev/null || true
+	llegaron=$(cat "${CAJON}/a13g-1.txt" "${CAJON}/a13g-2.txt" 2>/dev/null | grep -c "pase el prologo")
+	if [ "${llegaron}" -le 1 ]; then
+		echo "13g a-la-vez: OK, con los dos entrando juntos solo ${llegaron} paso el prologo"
+	else
+		mal "13g a-la-vez: FALLA, pasaron ${llegaron}; el cerrojo no excluye"
+	fi
+	limpia_arnes
+	rm -f "${ARNES}" "${ARNES_LARGO}" "${ARNES_SOLAPA}" "${ARNES_SIN_GUARDA}" "${ARNES_SIN_RET}"
+fi
 
 [ "${fallos}" -eq 0 ] || { echo "test: ${fallos} fallo(s)" >&2; exit 1; }
 echo "test: la guarda se niega por forma y no por lista, respeta una corrida viva, barre el resto de una muerta, preserva, y las mitades rojas muerden"
