@@ -302,6 +302,55 @@ jobs:
       - name: Order guard
         working-directory: .
         run: ./gate/order-guard-test.sh
+      # THE TLS MARGIN GUARD, and it is here for a reason that its sibling
+      # gate/hook-guard-test.sh cannot claim. That one depends on
+      # .git/hooks/commit-msg, which is not versioned, so a runner would have
+      # nothing to test and it would be red always; clause 16 of the backlog
+      # protocol is written about exactly that. This one reads files of the tree
+      # and mints throwaway certificates with openssl, which every runner has.
+      # It powers nothing on, touches no cloud and writes only inside its own
+      # temporary directory.
+      #
+      # WHAT IT DEFENDS is not the number but the AGREEMENT. gate/build.sh
+      # re-mints only when the material fails the margin and gate/p2-preflight.sh
+      # refuses to open a session on the same margin; if the two ever carry
+      # different numbers there is a window where one says no and the other hands
+      # back the same expiring set. The number lives in gate/cert-margen.sh and
+      # this step is what keeps a literal from creeping back into any of the
+      # three scripts that read it.
+      - name: TLS margin guard
+        working-directory: .
+        run: ./gate/cert-margen-test.sh
+
+      # WHY THIS STEP EXISTS, and it is the only defender of a claim about an
+      # artifact that outlives the run that wrote it. gate/p1.sh seals its iron
+      # artifact from phase_hygiene, while the run is still alive, so that the run
+      # can check its own seal and go red in the same invocation. seal_artifact
+      # never rewrites, so until 2026-09-08 that first seal was also the last one,
+      # and it was written BEFORE P1.hygiene emitted its verdict: the three iron
+      # artifacts in the archive all carry 19 expected and 18 verdicts, missing the
+      # verdict of the one phase that talks about the artifact itself. A run killed
+      # by -9 between the seal and the end left exactly the same shape as a
+      # complete one, so the artifact could not tell the two apart. cleanup now
+      # completes the seal, and this bench is what keeps that true, including the
+      # guard that stops a standalone `p1.sh hygiene <run id>` from overwriting a
+      # finished run's verdicts with its own two.
+      #
+      # ONE OF ITS FIFTEEN ROWS DOES NOT RUN HERE and says so out loud: it measures
+      # the real archived seal, and gate/out/ is in .gitignore. Fourteen rows run;
+      # the fifteenth declares itself absent rather than counting as a pass.
+      #
+      # FIVE OF THE FIFTEEN ARE THERE BECAUSE A READER MEASURED THAT THE FIRST TEN
+      # WERE NOT ENOUGH. All ten ran through the happy path, so a failure branch
+      # rewritten to DELETE the seal instead of the temporary file beside it still
+      # gave ten rows and zero failures, and so did removing any of the conditions
+      # that decide whether the rewrite is published. Rows 11, 12 and 15 force a
+      # refusal by three different routes, one of them real and not a mutation, and
+      # all three demand the same thing: the seal survives byte for byte, no
+      # leftover file remains, and it says so.
+      - name: Seal completion guard
+        working-directory: .
+        run: ./gate/sello-test.sh
       - name: Hygiene tool
         working-directory: .
         run: |
