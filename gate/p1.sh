@@ -224,6 +224,14 @@ PROV_DIRTY=""
 PROV_SHAS=""
 RUN_STARTED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 SEALED_THIS_RUN=0
+# ESCRITO AQUI NO ES LO MISMO QUE ENCONTRADO, y SEALED_THIS_RUN confunde las dos:
+# se pone a 1 tanto cuando esta corrida escribe el sello como cuando se topa con
+# uno que ya estaba (seal_artifact, la linea del `[ -e ... ] && return 0`). Para
+# terminar un sello hace falta saber que lo escribimos NOSOTROS, porque
+# `p1.sh hygiene <run id>` adopta el id de otra corrida y apunta OUT_LOCAL a un
+# artefacto ya completo: reescribir alli los veredictos con los de una higiene
+# suelta borraria diecinueve veredictos y pondria dos.
+SELLO_ESCRITO_AQUI=0
 CHECK_FAILED=0
 RUN_STARTED=0
 HOSTS_REACHABLE=0
@@ -458,7 +466,151 @@ seal_artifact() {
 		echo "it never retires anything."
 	} > "${OUT_LOCAL}/SEALED"
 	SEALED_THIS_RUN=1
+	SELLO_ESCRITO_AQUI=1
 	note "sealed the artifact: ${OUT_LOCAL}/SEALED"
+}
+
+# EL SELLO SE TERMINA EN cleanup, y hasta el 8 de septiembre de 2026 no se
+# terminaba nunca. seal_artifact no reescribe: su primera guarda es
+# `[ -e SEALED ] && return 0`, asi que el sello que vale es el que escribe
+# phase_hygiene mientras la corrida sigue viva, y en ese instante P1.hygiene
+# todavia no ha emitido su veredicto. Consecuencia MEDIDA sobre el archivo, no
+# razonada: de los CUATRO artefactos de fierro de gate/out, los TRES que llevan
+# esas dos lineas dan 19 esperados y 18
+# veredictos, y el que falta es siempre P1.hygiene. El artefacto guardaba el
+# resultado de todas las comprobaciones menos la unica que habla de el mismo.
+#
+# Y ESO ADEMAS CEGABA LA SENAL. La pregunta del 8 de septiembre era si la corrida
+# puede morir despues de sellar y antes de su veredicto final. Puede, solo por
+# SIGKILL o por perdida de maquina, porque las senales atrapables llegan diferidas
+# hasta que cleanup acaba. La defensa que propuse entonces era que el sello se
+# delata solo, comparando `expected:` con `verdicts:`. No se delataba: la corrida
+# COMPLETA daba tambien 19 contra 18, o sea exactamente la misma forma que una
+# matada en la ventana. Una senal que vale lo mismo en los dos casos no es una
+# senal. Terminando el sello aqui, una corrida completa cierra con las dos cuentas
+# iguales y una matada se queda corta, que es lo que se queria poder leer.
+#
+# LO QUE NO ARREGLA, dicho aqui para que no se lea como un cierre: la ventana
+# SIGUE EXISTIENDO. Un -9 entre el sello que escribe phase_hygiene y la entrada en
+# la trampa deja el sello a medias igual, y ademas deja el marcador RUNNING
+# puesto, que es la otra mitad de la evidencia y ya estaba escrita en el
+# comentario de retira_running. Esto no cierra la ventana: la hace legible desde
+# el artefacto.
+#
+# Y LA VENTANA SE NOMBRA POR LA FUNCION Y NO POR UN NUMERO DE LINEA, que es como
+# se escribio primero. Decia "entre la 1645 y la trampa", y las ediciones de esa
+# misma pasada la movieron a la 1753: una cita a un numero de linea de un fichero
+# que se esta editando caduca antes de que se seque la tinta.
+completa_el_sello() {
+	# LA BANDERA ES LA DE LA ESCRITURA Y NO LA OTRA, por la razon escrita arriba
+	# del todo: con SEALED_THIS_RUN, una `p1.sh hygiene <run id>` sobre una corrida
+	# de fierro terminada le habria machacado los veredictos con los suyos.
+	[ "${SELLO_ESCRITO_AQUI}" -eq 1 ] || return 0
+	[ -f "${OUT_LOCAL}/SEALED" ] || return 0
+	# UNA SOLA FORMA DE NOMBRE, y no dos. El ensayo no llega hasta aqui porque
+	# seal_artifact devuelve en su primera linea con NAYLAMP_P1_LOCAL=1, asi que la
+	# bandera se queda en cero y una rama para p1-local seria codigo muerto con
+	# aspecto de defensa. Lo que no sea el nombre de fierro lo dice en voz alta.
+	case "${OUT_LOCAL}" in
+		"${OUT_DIR}/p1-${RUN_ID}") ;;
+		*)
+			echo "gate: the seal was written but NOT completed: ${OUT_LOCAL} is not p1-${RUN_ID}" >&2
+			return 0 ;;
+	esac
+	local esperada marca linea vistas
+	# UN .a-medias HUERFANO SE BARRE ANTES, y existe: si el proceso muere a mitad
+	# de la escritura de al lado (SIGXFSZ con un limite de fichero, o un -9), el
+	# fichero temporal sobrevive dentro de un artefacto que el sello protege de
+	# make clean. No hace dano, porque el sello quedo intacto, pero se queda para
+	# siempre. Medido por un lector con `ulimit -f`.
+	rm -f -- "${OUT_DIR}/p1-${RUN_ID}/SEALED.a-medias"
+	esperada="$(grep -m1 '^expected:' "${OUT_DIR}/p1-${RUN_ID}/SEALED" 2>/dev/null)"
+	marca="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+	# SE RECONSTRUYE LEYENDO, no con un sed sobre el sitio. Un sed en el sitio no
+	# es atomico: si muere a medias deja el sello truncado, y un sello truncado
+	# sigue frenando a make clean mientras pierde lo que decia. Aqui se escribe al
+	# lado, se comprueba, y solo entonces se mueve encima de una sola vez.
+	#
+	# Y SE ESCRIBE CON UNA REDIRECCION Y NO CON UNA SUSTITUCION DE COMANDO, que es
+	# como estaba escrito primero y no funcionaba. Un `case` dentro de `$( )` es un
+	# error de sintaxis en bash 3.2, que es el bash de esta maquina y el que este
+	# guion usa por su shebang: el parser toma el `)` del patron por el cierre de la
+	# sustitucion. Medido con las dos formas, la del patron simple y la de aqui.
+	#
+	# LAS DOS COSAS QUE LO HACEN PEOR QUE UN FALLO DE SINTAXIS NORMAL, las dos
+	# medidas hoy. `bash -n` NO lo caza, porque el cuerpo de una sustitucion no se
+	# parsea hasta que se ejecuta, asi que el fichero pasaba las dos comprobaciones
+	# de sintaxis. Y al correr el guion NO MUERE: el error va a stderr, la
+	# sustitucion devuelve el texto suelto que quedaba detras del parentesis, y la
+	# ejecucion sigue con rc 0. Aqui lo unico que evito publicar un sello de basura
+	# fue la comprobacion de `expected:` de tres lineas mas abajo, que no cuadro y
+	# mando el fichero a la rama del rechazo.
+	# EL `|| [ -n "${linea}" ]` NO SOBRA, y lo trajo un lector midiendolo. Sin el,
+	# `read` devuelve falso en una ultima linea que no termina en salto y el bucle
+	# la TIRA. Peor: el `closed:` que se anade compensa exactamente el uno que se
+	# pierde, asi que el recuento de lineas de abajo da el visto bueno y el sello
+	# se publica con una linea de menos. Hoy no se alcanza, porque los sellos los
+	# escribe seal_artifact con echo, pero el Makefile invita a escribir un sello a
+	# mano y la guarda que tendria que frenarlo es justo la que se deja enganar.
+	vistas=0
+	{
+		while IFS= read -r linea || [ -n "${linea}" ]; do
+			case "${linea}" in
+				verdicts:*)
+					vistas=$((vistas + 1))
+					printf 'verdicts:    %s\n' "${VERDICTS# }"
+					printf 'closed:      %s\n' "${marca}" ;;
+				closed:*) ;;
+				*) printf '%s\n' "${linea}" ;;
+			esac
+		done < "${OUT_DIR}/p1-${RUN_ID}/SEALED"
+	} > "${OUT_DIR}/p1-${RUN_ID}/SEALED.a-medias"
+	# UN SELLO SIN LINEA `verdicts:` NO SE DA POR TERMINADO EN SILENCIO, que es lo
+	# que hacia. La reescritura salia identica al original, pasaba las tres
+	# condiciones, se movia encima y no se anadia `closed:`; el artefacto quedaba
+	# entonces descrito por el subcomando seals como escrito por una version que no
+	# terminaba sus sellos, que es exactamente la confusion que la rama de abajo se
+	# molesta en confesar cuando falla. Aqui tambien se confiesa.
+	# EL ORDEN DE ESTAS PREGUNTAS IMPORTA, y la primera version lo tenia mal.
+	# Preguntaba por `vistas` ANTES de comprobar que el fichero de al lado llego a
+	# escribirse, y con el directorio sin permiso de escritura la redireccion falla,
+	# el bucle no corre, `vistas` se queda en cero y la funcion anunciaba que el
+	# sello NO TIENE linea de veredictos, que es falso y ademas describe mal la
+	# causa. Medido con el directorio en modo 500. Primero se pregunta si hay
+	# fichero, luego que trae, y solo al final si cuadra.
+	#
+	# Y LA DE `expected:` ES LA QUE IMPORTA de las dos ultimas: es la linea que el
+	# subcomando seals compara entre dos sellos para proponer que uno sustituye a
+	# otro. Si esta reescritura la tocara, seals empezaria a proponer al azar. Tiene
+	# que salir identica byte a byte.
+	if [ ! -s "${OUT_DIR}/p1-${RUN_ID}/SEALED.a-medias" ]; then
+		# ESTA RAMA DEJA UN SELLO INDISTINGUIBLE DE UNO ANTIGUO, y hay que decirlo
+		# aqui porque no se puede arreglar desde aqui. Sin `closed:`, el subcomando
+		# seals lo describe como escrito por una version que no terminaba sus sellos,
+		# que es FALSO para una corrida de esta version cuya terminacion fallo. Y no
+		# hay remedio dentro de la funcion: el camino que llega aqui es no poder
+		# escribir al lado del sello, asi que tampoco se puede anotar nada dentro de
+		# el. Medido con el directorio en modo 500, bajo bash y con `set +e` como
+		# corre de verdad: el sello sobrevive byte a byte y no queda ningun
+		# `.a-medias`. Fila 12 del banco.
+		rm -f -- "${OUT_DIR}/p1-${RUN_ID}/SEALED.a-medias"
+		echo "gate: the seal could not be completed; it keeps the verdicts phase_hygiene wrote" >&2
+		echo "gate: nothing could be written beside it, so that seal now looks like one from a version that did not finish its seals, and there is no way to say otherwise from inside a directory that cannot be written" >&2
+	elif [ "${vistas}" -eq 0 ]; then
+		# UN SELLO SIN LINEA `verdicts:` NO SE DA POR TERMINADO EN SILENCIO, que es lo
+		# que hacia: la reescritura salia identica, pasaba las condiciones, se movia
+		# encima y no se anadia `closed:`, con lo que el artefacto quedaba descrito por
+		# seals como de una version que no terminaba sus sellos. Fila 13 del banco.
+		rm -f -- "${OUT_DIR}/p1-${RUN_ID}/SEALED.a-medias"
+		echo "gate: the seal has no verdicts line, so it was left exactly as it was and carries no closed line" >&2
+	elif [ "$(grep -m1 '^expected:' "${OUT_DIR}/p1-${RUN_ID}/SEALED.a-medias" 2>/dev/null)" = "${esperada}" ] \
+		&& [ "$(grep -c '' "${OUT_DIR}/p1-${RUN_ID}/SEALED.a-medias" 2>/dev/null)" -ge "$(grep -c '' "${OUT_DIR}/p1-${RUN_ID}/SEALED" 2>/dev/null)" ]; then
+		mv -f -- "${OUT_DIR}/p1-${RUN_ID}/SEALED.a-medias" "${OUT_DIR}/p1-${RUN_ID}/SEALED"
+	else
+		rm -f -- "${OUT_DIR}/p1-${RUN_ID}/SEALED.a-medias"
+		echo "gate: the seal could not be completed; it keeps the verdicts phase_hygiene wrote" >&2
+		echo "gate: the rewrite did not match the seal it came from, so nothing was moved on top of it" >&2
+	fi
 }
 
 # The half of the hygiene claim that faces THIS machine. phase_hygiene already
@@ -539,6 +691,7 @@ cleanup() {
 	# hygiene: every subcommand other than all and hygiene, plus any abort. Sealing
 	# here too is why a run that dies mid-phase keeps what it managed to write.
 	seal_artifact
+	completa_el_sello
 	retira_running
 	if ! emit_final_verdict; then
 		[ "${rc}" -eq 0 ] && rc=1
@@ -1826,6 +1979,40 @@ if [ "${cmd}" = seals ]; then
 		is_iron_artifact "${b}" || continue
 		[ -e "${d}/SEALED" ] || continue
 		echo "gate: sealed  ${b}"
+		# AND WHETHER THAT SEAL IS FINISHED, which is a different question from
+		# whether it exists. A seal carries the checks the run EXPECTED and the
+		# verdicts it recorded; cleanup completes it, so on a run that did every
+		# check the two counts match.
+		#
+		# WHAT UNEQUAL COUNTS MEAN, AND WHAT THEY DO NOT. The first version of this
+		# said "a run that died between its seal and its last verdict, which can only
+		# be a -9 or a lost machine". That is FALSE and a reader measured why:
+		# EXPECTED is set in one go when the subcommand starts, all nineteen of them
+		# for `all`, while VERDICTS grows phase by phase. So ANY run that did not
+		# reach every phase closes with unequal counts, and Ctrl-C is the ordinary
+		# case: the trap carries INT and TERM, cleanup runs, the seal is completed,
+		# and it is short. Unequal counts say the run did not record a verdict for
+		# every check it expected. They do NOT say why.
+		#
+		# AND THIS DOES NOT REDDEN THE SUBCOMMAND, which the first version did. An
+		# unsealed artifact is a fixable state and reddening it is a call to act. A
+		# short seal is HISTORY: the artifact survives make clean and only a person
+		# removes it, so a rc of 1 here would be a red that nobody can clear, on a
+		# subcommand whose own header says it answers and acts on neither.
+		#
+		# THE OLD ONES ARE NOT ACCUSED OF THAT, and the line that separates them is
+		# structural and not a date. A seal written before this existed has no
+		# `closed:` line at all, so it is reported as what it is: written by a
+		# version that never finished its seals. The three iron artifacts in the
+		# archive are all of that kind, each one verdict short, and every one of
+		# those runs ended properly.
+		n_esp="$(grep -m1 '^expected:' "${d}/SEALED" 2>/dev/null | sed 's/^expected: *//' | tr ' ' '\n' | grep -c . || true)"
+		n_ver="$(grep -m1 '^verdicts:' "${d}/SEALED" 2>/dev/null | sed 's/^verdicts: *//' | tr ' ' '\n' | grep -c . || true)"
+		if ! grep -q '^closed:' "${d}/SEALED" 2>/dev/null; then
+			echo "gate:         seal written by a version that did not complete its seals: ${n_ver} verdicts of ${n_esp} expected, which is that version's normal shape"
+		elif [ "${n_esp}" -ne "${n_ver}" ]; then
+			echo "gate:         SHORT: ${n_ver} verdicts of ${n_esp} expected, so that run did not record a verdict for every check it expected; the reason is not in the file"
+		fi
 		[ "${b}" \> "${newest}" ] && newest="${b}"
 	done
 	for d in "${OUT_DIR}"/*; do
