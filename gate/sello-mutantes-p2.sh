@@ -80,7 +80,7 @@ echo "arbol: $(cd "${REPO}" && git rev-parse --short HEAD), $(cd "${REPO}" && gi
 echo "taller: ${TALLER}"
 echo
 
-CONTROL=0; MUTANTES=0; MUDOS=0
+CONTROL=0; MUTANTES=0; MUDOS=0; MITADES=0; MITADES_MAL=0
 corre() {
 	# NINGUNA RUTA DE ESTA MAQUINA AQUI, y la primera version llevaba una: el
 	# directorio del toolchain de quien lo escribio, pegado al PATH. Un guion
@@ -104,31 +104,63 @@ control() {
 	printf 'CONTROL   sin mutar: %s filas en FALLA, y el banco llega a su resumen\n' "${n}"
 	echo
 }
+# LA MUTACION SE APLICA EN UN SOLO SITIO, y antes vivia copiada dentro de `mutante`.
+# Al entrar `mitad` habria hecho falta una segunda copia del mismo heredoc, y dos
+# copias de un predicado son dos sitios donde corregirlo: la clase que este registro
+# persigue con nombre propio. Se saca a funcion y las dos la llaman.
+aplica_mutacion() {
+	/usr/bin/python3 - "$1" "$2" "$3" <<'FINDELPYTHON'
+import sys
+p, viejo, nuevo = sys.argv[1], sys.argv[2], sys.argv[3]
+s = open(p, encoding='utf-8').read()
+if s.count(viejo) != 1:
+    sys.stderr.write('la mutacion no muerde donde este barrido cree: %d apariciones\n' % s.count(viejo))
+    raise SystemExit(3)
+open(p, 'w', encoding='utf-8').write(s.replace(viejo, nuevo))
+FINDELPYTHON
+}
+
+# UN TERCER DESENLACE, y entra el 8 de septiembre de 2026 porque los dos que habia
+# no bastaban para decir la verdad. Una propiedad puede estar defendida por DOS
+# guardas independientes, y entonces un mutante que quita SOLO UNA sale mudo sin que
+# eso signifique que nadie la vigila: significa que la otra la para. Contarlo como
+# FALLA es la clausula 15 otra vez, un instrumento que contesta lo contrario de lo
+# que pasa. `mitad` declara ese caso: se ESPERA mudo, y lo que si es un hallazgo es
+# que MUERDA, porque entonces la defensa no era doble y la prosa que lo dice esta
+# mal. La mitad que rompe la propiedad de verdad, quitando las dos, va aparte y como
+# mutante ordinario.
+mitad() {
+	local etiqueta="$1" viejo="$2" nuevo="$3" glosa="$4" salida caidas
+	MUTANTES=$((MUTANTES + 1))
+	MITADES=$((MITADES + 1))
+	cp "${REPO}/gate/p2.sh" "${TALLER}/gate/p2.sh"
+	if ! aplica_mutacion "${TALLER}/gate/p2.sh" "${viejo}" "${nuevo}"; then
+		printf '%-5s FALLO DE MONTAJE: la mutacion no se pudo aplicar   %s\n' "${etiqueta}" "${glosa}"
+		MITADES_MAL=$((MITADES_MAL + 1))
+		return
+	fi
+	salida="$(corre)"
+	caidas="$(printf '%s' "${salida}" | grep -E '^FILA .* FALLA ' | awk '{print $2}' | tr '\n' ' ')"
+	if ! printf '%s' "${salida}" | grep -q '^RESULTADO: '; then
+		printf '%-5s INESPERADO  el banco ABORTA con media guarda quitada   %s\n' "${etiqueta}" "${glosa}"
+		MITADES_MAL=$((MITADES_MAL + 1))
+	elif [ -z "${caidas}" ]; then
+		printf '%-5s MITAD  mudo COMO SE ESPERA: la otra guarda sola lo para   %s\n' "${etiqueta}" "${glosa}"
+	else
+		printf '%-5s INESPERADO  MUERDE, caen: %-14s la defensa NO era doble   %s\n' "${etiqueta}" "${caidas}" "${glosa}"
+		MITADES_MAL=$((MITADES_MAL + 1))
+	fi
+}
+
 mutante() {
 	local etiqueta="$1" viejo="$2" nuevo="$3" caidas
 	MUTANTES=$((MUTANTES + 1))
 	cp "${REPO}/gate/p2.sh" "${TALLER}/gate/p2.sh"
-	if ! /usr/bin/python3 - "${TALLER}/gate/p2.sh" "${viejo}" "${nuevo}" <<'PY'
-import sys
-p,v,n=sys.argv[1],sys.argv[2],sys.argv[3]
-s=open(p,encoding='utf-8').read()
-if s.count(v)!=1:
-    sys.stderr.write('la mutacion no muerde donde este barrido cree: %d apariciones\n' % s.count(v))
-    raise SystemExit(3)
-open(p,'w',encoding='utf-8').write(s.replace(v,n))
-PY
-	then
+	if ! aplica_mutacion "${TALLER}/gate/p2.sh" "${viejo}" "${nuevo}"; then
 		printf '%-5s FALLO DE MONTAJE: la mutacion no se pudo aplicar   %s\n' "${etiqueta}" "$4"
 		MUDOS=$((MUDOS + 1))
 		return
 	fi
-	# UN BANCO QUE ABORTA NO ES UN BANCO QUE NO VE NADA, y la primera version de este
-	# barrido los confundia. Solo buscaba filas en FALLA, asi que un mutante que
-	# MATA al banco -y uno lo hacia- no dejaba ninguna FALLA que contar y salia
-	# clasificado como MUDO: exactamente al reves de lo que pasa. Es la clase 15,
-	# cometida por el instrumento que existe para medir instrumentos. Ahora la
-	# salida se guarda, se mira si trae la marca de terminacion del banco, y un
-	# aborto se declara como lo que es, una deteccion.
 	local salida
 	salida="$(corre)"
 	caidas="$(printf '%s' "${salida}" | grep -E '^FILA .* FALLA ' | awk '{print $2}' | tr '\n' ' ')"
@@ -253,6 +285,81 @@ mutante M17 '	if [ ! -s "${OUT_LOCAL}/SEALED" ]; then
 	fi' '	:' \
 'seal_artifact anuncia el sello sin comprobar que llego a escribirse'
 
+# M19 A M23: EL TECHO DE LOS ARTEFACTOS DE ENSAYO, que entra el 8 de septiembre de
+# 2026 con la decision de quien encarga. Cada uno rebobina una mitad distinta y la
+# fila que lo caza va escrita al lado.
+mutante M19 '		[ "${nombre}" = "${propio}" ] && continue' '		:' \
+'el techo puede llevarse el artefacto de la corrida EN CURSO'
+
+mutante M20 '		[ "${n}" -le "${CONSERVA_ENSAYOS}" ] && continue' '		[ "${n}" -le 0 ] && continue' \
+'el techo baja a cero y se lleva todo lo que no sea de esta corrida'
+
+mutante M21 '	[ "${ES_FIERRO}" -eq 1 ] && { printf '"'"'0'"'"'; return 0; }' '	:' \
+'el barrido del ensayo tambien corre en una corrida de fierro'
+
+# M22 TIENE QUE QUITAR LAS DOS GUARDAS A LA VEZ, y las dos versiones anteriores
+# quitaban una cada una y salieron MUDAS las dos. Eso no era un agujero: la
+# propiedad "el techo nunca toca un artefacto de fierro" la defienden DOS guardas
+# INDEPENDIENTES, el patron del `ls` que decide que se mira y el `case` que decide
+# que se borra, y con cualquiera de las dos en pie el fierro sobrevive. Ensanchar el
+# patron sola deja el `case` refusando con su aviso; quitar el `case` sola deja el
+# patron sin traer un solo nombre de fierro al bucle. **Que un mutante salga mudo
+# porque OTRA guarda lo para no es lo mismo que salir mudo porque nadie mira**, y la
+# unica forma de separar las dos cosas es un mutante que las quite juntas. Este las
+# quita, y la fila 17x cae. Las dos versiones mudas van nombradas aqui en vez de
+# borradas, porque la conclusion util es que esa propiedad tiene defensa doble y eso
+# solo se sabe habiendolo medido.
+mitad M22 '	for nombre in $(cd "${OUT_DIR}" 2>/dev/null && ls -dt p2-local-[0-9]*Z-[0-9]* 2>/dev/null); do
+		d="${OUT_DIR}/${nombre}"
+		[ -d "${d}" ] || continue' '	for nombre in $(cd "${OUT_DIR}" 2>/dev/null && ls -dt p2-[0-9a-z]*Z-[0-9]* 2>/dev/null); do
+		d="${OUT_DIR}/${nombre}"
+		[ -d "${d}" ] || continue' \
+'PRIMERA MITAD: el patron del techo se ensancha y trae los artefactos de FIERRO al bucle'
+
+mitad M22b '		case "${nombre}" in
+			p2-local-[0-9]*Z-[0-9]*)
+				rm -rf -- "${OUT_DIR}/${nombre}"
+				retirados=$((retirados + 1)) ;;
+			*)
+				echo "gate: NO retiro ${d}: no es un artefacto de ensayo de este gate" >&2 ;;
+		esac' '		rm -rf -- "${OUT_DIR}/${nombre}"
+		retirados=$((retirados + 1))' \
+'SEGUNDA MITAD: se quita el case que refusa lo que no es un nombre de ensayo'
+
+mutante M22c '	for nombre in $(cd "${OUT_DIR}" 2>/dev/null && ls -dt p2-local-[0-9]*Z-[0-9]* 2>/dev/null); do
+		d="${OUT_DIR}/${nombre}"
+		[ -d "${d}" ] || continue
+		# EL DE ESTA CORRIDA NUNCA, y se excluye POR NOMBRE y no por confiar en que
+		# sea el mas reciente. El banco se apoya en que el suyo es el mas nuevo; eso
+		# es cierto hasta el dia que dos corridas se solapan, y entonces una borra el
+		# artefacto vivo de la otra. Una exclusion explicita no tiene ese dia.
+		[ "${nombre}" = "${propio}" ] && continue
+		n=$((n + 1))
+		[ "${n}" -le "${CONSERVA_ENSAYOS}" ] && continue
+		# Clausula 23: la ruta se compone de OUT_DIR mas un nombre que se acaba de
+		# comprobar contra la forma exacta por la que este guion borra, y lo que no
+		# sea esa forma se dice en voz alta en vez de borrarse.
+		case "${nombre}" in
+			p2-local-[0-9]*Z-[0-9]*)
+				rm -rf -- "${OUT_DIR}/${nombre}"
+				retirados=$((retirados + 1)) ;;
+			*)
+				echo "gate: NO retiro ${d}: no es un artefacto de ensayo de este gate" >&2 ;;
+		esac
+	done' '	for nombre in $(cd "${OUT_DIR}" 2>/dev/null && ls -dt p2-[0-9a-z]*Z-[0-9]* 2>/dev/null); do
+		d="${OUT_DIR}/${nombre}"
+		[ -d "${d}" ] || continue
+		[ "${nombre}" = "${propio}" ] && continue
+		n=$((n + 1))
+		[ "${n}" -le "${CONSERVA_ENSAYOS}" ] && continue
+		rm -rf -- "${OUT_DIR}/${nombre}"
+		retirados=$((retirados + 1))
+	done' \
+'LAS DOS A LA VEZ: el techo mira todo lo que empiece por p2- y borra sin comprobar la forma'
+
+mutante M23 '		[ -d "${OUT_DIR}/p2-local-${id}" ] && continue' '		:' \
+'la flota se retira aunque su artefacto siga ahi'
+
 echo
 # LA LINEA DE RESULTADO EN LA FORMA DE LA CASA, `RESULTADO: <n> filas, <n> en
 # FALLA`, y no en una propia. Una fila de este barrido es UN MUTANTE, y una FALLA
@@ -262,9 +369,12 @@ echo
 # resumen con forma propia le daba un total de cero y el paso rechazaba el
 # mensaje por una cifra que el crudo si tiene y decia de otra manera.
 echo "y el CONTROL sin mutar dio ${CONTROL} filas en FALLA sobre el banco entero"
+if [ "${MITADES}" -ne 0 ]; then
+	echo "${MITADES} de esos son MITADES de una defensa doble: se esperan mudos, y ${MITADES_MAL} salieron de otra forma"
+fi
 T_FIN="$(/usr/bin/python3 -c 'import time; print("%.3f" % time.time())' 2>/dev/null || echo 0)"
 /usr/bin/python3 -c "print('reloj: %.1f s de punta a punta, %s corridas del banco, la del control incluida' % (${T_FIN} - ${T_INICIO}, ${MUTANTES} + 1))" 2>/dev/null || true
-echo "RESULTADO: ${MUTANTES} filas, ${MUDOS} en FALLA"
+echo "RESULTADO: ${MUTANTES} filas, $((MUDOS + MITADES_MAL)) en FALLA"
 rm -rf -- "${PADRE}/naylamp-sello-mutantes-$$"
-[ "${MUDOS}" -eq 0 ] && [ "${CONTROL}" -eq 0 ] || exit 1
+[ "${MUDOS}" -eq 0 ] && [ "${MITADES_MAL}" -eq 0 ] && [ "${CONTROL}" -eq 0 ] || exit 1
 exit 0

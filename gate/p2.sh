@@ -1202,6 +1202,110 @@ artefactos_de_fierro_sin_sello() {
 # corre es el barrido. Eso es deliberado. El barrido es lo que convierte un
 # artefacto de fierro sin sello en una linea roja, y un ensayo que corre en esta
 # maquina todos los dias es quien mas veces va a pasar por delante de uno.
+# ---- el techo de los artefactos de ENSAYO -------------------------------------
+#
+# POR QUE EXISTE, y la medida va delante de la decision. El 8 de septiembre de 2026
+# habia bajo gate/out DIECIOCHO directorios de ensayo, diecisiete artefactos y una
+# flota huerfana, del 7 de septiembre a las 02:19 al 8 a las 12:14 en hora local, o
+# sea DOS jornadas. Ninguno lleva sello y ninguno puede llevarlo: seal_artifact
+# devuelve en su primera linea con ES_FIERRO distinto de 1. Nada los vigilaba y nada
+# los retiraba.
+#
+# Y LO QUE NO ERA CIERTO, dicho porque la decision se tomo sobre lo contrario y la
+# medida la corrigio: NO estaban protegidos por el sello, ni antes ni despues del
+# arreglo de esta manana. La guarda de `make clean` excluye `p[0-9]-local-*` por
+# FORMA, asi que se los llevaria los dieciocho de una vez. Lo que faltaba no era la
+# distincion entre ensayo y fierro, que ya vive en TRES sitios -aqui, en
+# es_artefacto_de_fierro y en el Makefile-, sino un techo del lado del ensayo.
+#
+# POR QUE UN TECHO Y NO LA REGLA DE DEFER-097. Ese item dice que ningun barrido de
+# limpieza toca gate/out mientras siga abierto, y esa regla se escribio para lo que
+# cuesta VM y no se puede reconstruir: un artefacto de FIERRO mide un arbol y una
+# segunda corrida mide otro. Un ensayo de localhost no es eso, y la cifra lo dice:
+# medido sobre los `whole_run_s` de sus dieciseis timings.txt archivados, un ensayo
+# entero cuesta de 120.66 a 128.37 segundos y no cuesta dinero. La regla se lee
+# ahora como lo que protege, el fierro, y el ensayo queda fuera. La decision es de
+# quien encarga y esta fechada el 8 de septiembre de 2026.
+#
+# POR QUE CINCO, con la medida al lado y no por simetria con el banco. Cada
+# artefacto ocupa 108 KiB medidos con `du -sk`, asi que cinco son 540 KiB contra los
+# 1752 de hoy. Las dos jornadas medidas corrieron NUEVE y OCHO ensayos, o sea que
+# cinco NO cubre una sesion entera, y eso es deliberado: para lo que se miran estos
+# artefactos, que son los logs de los nodos de una corrida que acaba de ponerse
+# roja, la ventana es de minutos y la de la sesion de al lado ya no sirve porque el
+# arbol se movio.
+#
+# LO QUE EL TECHO CUESTA, dicho y no escondido: reproducir un ensayo da una corrida
+# contra el arbol de HOY, no contra el que midio el que se retiro. Lo que se pierde
+# no es el tiempo, son 126 segundos, sino la posibilidad de leer un ensayo de un
+# arbol que ya no existe. Es el intercambio que se acepta a proposito, y es el mismo
+# que esta casa NO acepta para el fierro.
+CONSERVA_ENSAYOS=5
+
+barre_ensayos_viejos() {
+	# SOLO EN EL ENSAYO. Una corrida de fierro cuesta horas de VM y no esta ahi para
+	# hacer limpieza; y lo unico que este barrido borra son nombres de ensayo, asi
+	# que en fierro no tendria nada que hacer de todas formas. Se dice con una guarda
+	# en vez de dejarlo a que los patrones no casen.
+	#
+	# Y LA SALIDA TEMPRANA IMPRIME SU CERO, que la primera version no hacia: devolvia
+	# rc 0 y NADA por la salida, asi que quien la leyera recibia una cadena vacia
+	# donde el resto de los caminos le da un numero. Lo caza la fila 17z del banco,
+	# que esperaba `0` y recibia ``. Una funcion que a veces contesta una cifra y a
+	# veces nada obliga a todo el que la llame a defenderse de las dos formas, y esa
+	# defensa es justo la que se olvida un dia.
+	[ "${ES_FIERRO}" -eq 1 ] && { printf '0'; return 0; }
+	local nombre d n=0 retirados=0 propio
+	propio="$(basename "${OUT_LOCAL}")"
+	# EL BUCLE PARTE NOMBRES Y NO RUTAS, que es una mejora sobre la version de
+	# gate/p2-guard-test.sh y no una copia. Alli el `for` parte la salida de `ls -dt`
+	# sobre rutas enteras, y esa forma asume que ningun componente del camino lleva un
+	# espacio; la suposicion va escrita alli. Aqui el `ls` corre DENTRO del directorio
+	# y lo que se parte son nombres, que este guion valida por forma antes de crear
+	# nada, asi que la suposicion desaparece en vez de declararse.
+	for nombre in $(cd "${OUT_DIR}" 2>/dev/null && ls -dt p2-local-[0-9]*Z-[0-9]* 2>/dev/null); do
+		d="${OUT_DIR}/${nombre}"
+		[ -d "${d}" ] || continue
+		# EL DE ESTA CORRIDA NUNCA, y se excluye POR NOMBRE y no por confiar en que
+		# sea el mas reciente. El banco se apoya en que el suyo es el mas nuevo; eso
+		# es cierto hasta el dia que dos corridas se solapan, y entonces una borra el
+		# artefacto vivo de la otra. Una exclusion explicita no tiene ese dia.
+		[ "${nombre}" = "${propio}" ] && continue
+		n=$((n + 1))
+		[ "${n}" -le "${CONSERVA_ENSAYOS}" ] && continue
+		# Clausula 23: la ruta se compone de OUT_DIR mas un nombre que se acaba de
+		# comprobar contra la forma exacta por la que este guion borra, y lo que no
+		# sea esa forma se dice en voz alta en vez de borrarse.
+		case "${nombre}" in
+			p2-local-[0-9]*Z-[0-9]*)
+				rm -rf -- "${OUT_DIR}/${nombre}"
+				retirados=$((retirados + 1)) ;;
+			*)
+				echo "gate: NO retiro ${d}: no es un artefacto de ensayo de este gate" >&2 ;;
+		esac
+	done
+	# Y LAS FLOTAS HUERFANAS, que es un invariante y no un segundo techo: una flota
+	# NUNCA sobrevive a su artefacto. limpia_flota retira la de la corrida en curso,
+	# asi que una que siga ahi es de una corrida muerta; si su artefacto ya no esta,
+	# lo que queda no lo cita nadie. Hay una en el arbol desde el 7 de septiembre de
+	# 2026, p2-local-fleet-20260907T161431Z-86419, y es la prueba de que el caso
+	# ocurre.
+	local flota id
+	for flota in $(cd "${OUT_DIR}" 2>/dev/null && ls -d p2-local-fleet-[0-9]*Z-[0-9]* 2>/dev/null); do
+		[ -d "${OUT_DIR}/${flota}" ] || continue
+		id="${flota#p2-local-fleet-}"
+		[ -d "${OUT_DIR}/p2-local-${id}" ] && continue
+		case "${flota}" in
+			p2-local-fleet-[0-9]*Z-[0-9]*)
+				rm -rf -- "${OUT_DIR}/${flota}"
+				retirados=$((retirados + 1)) ;;
+			*)
+				echo "gate: NO retiro ${OUT_DIR}/${flota}: no es una flota de ensayo de este gate" >&2 ;;
+		esac
+	done
+	printf '%s' "${retirados}"
+}
+
 veredicto_del_sello() {
 	seal_artifact
 	# LA CONDICION PREGUNTA SI HABIA ALGO QUE SELLAR. Sin eso, una corrida de fierro
@@ -2786,6 +2890,18 @@ al_salir() {
 	seal_artifact
 	completa_el_sello
 	retira_running
+	# Y EL TECHO DE LOS ENSAYOS, AL FINAL DEL TODO Y NO ANTES. Va detras del sello y
+	# de la retirada del marcador por dos razones que se separan: el sello es lo que
+	# decide si el artefacto de ESTA corrida se queda, y barrer antes de sellar seria
+	# barrer con la pregunta a medio contestar; y el marcador es lo que dice a un
+	# `make clean` concurrente que aqui hay una corrida viva, asi que se retira
+	# cuando ya no queda nada que proteger. En fierro esta llamada devuelve en su
+	# primera linea.
+	local retirados_ensayo
+	retirados_ensayo="$(barre_ensayos_viejos)"
+	if [ "${retirados_ensayo:-0}" -ne 0 ]; then
+		note "rehearsal artifacts retired by the ceiling: ${retirados_ensayo}; the ceiling is ${CONSERVA_ENSAYOS} plus this run's own"
+	fi
 	if [ "${RUN_STARTED}" -eq 1 ] && [ "${EMITIDO}" -eq 0 ]; then
 		echo "gate: the run ABORTED before reaching its verdict block, so nothing above is a result" >&2
 		emit_final_verdict || true

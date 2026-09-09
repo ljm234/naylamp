@@ -656,6 +656,93 @@ set -e
 roja 17r "1" "$(grep -c 'p2 iron artifacts under gate/out' "${BANCO}/17r.out")" "phase_hygiene_fierro se recorre ENTERA bajo set -e y llega a su ultima linea, el barrido de sellos: con un ask_on desnudo el 'no' normal del primer bucle mataba la fase y todo lo de abajo era codigo muerto en fierro"
 CHECK_FAILED=0
 
+# ---- 17v a 17z: EL TECHO DE LOS ARTEFACTOS DE ENSAYO -------------------------
+#
+# POR QUE ESTAS FILAS ESTAN AQUI Y NO EN gate/p2-guard-test.sh, con la medida que
+# lo decide. Aquel banco es el brazo rojo del ensayo y seria el sitio natural; el
+# problema es el precio. Para probar un techo de CINCO hay que tener SEIS
+# artefactos, y alli cada uno sale de una corrida entera del ensayo, que cuesta de
+# 120.66 a 128.37 segundos medidos sobre sus propios timings.txt: seis son trece
+# minutos para medir una condicion que aqui se monta con seis `mkdir`. Alli entra
+# UNA fila, la de punta a punta, que pregunta lo que este banco no puede: que
+# despues de dieciocho ensayos de verdad el techo se cumplio.
+#
+# Y SE MONTA UN gate/out DE MENTIRA. El barrido borra directorios, asi que una fila
+# que lo corriera contra el gate/out de verdad se llevaria por delante los
+# artefactos de esta maquina para probar que sabe llevarselos. OUT_DIR se mueve al
+# taller del banco, que la trampa ya barre.
+GUARDA_OUTDIR="${OUT_DIR}"; GUARDA_OUT="${OUT_LOCAL}"; GUARDA_FIERRO="${ES_FIERRO}"
+OUT_DIR="${BANCO}/techo"
+ES_FIERRO=0
+
+# siembra_ensayos <cuantos>: crea artefactos con marcas de tiempo crecientes y con
+# contenido, y devuelve el nombre del ultimo, que hace de corrida en curso.
+siembra_ensayos() {
+	local i=1 n="$1" nombre
+	rm -rf -- "${BANCO}/techo"; mkdir -p "${OUT_DIR}"
+	while [ "${i}" -le "${n}" ]; do
+		nombre="p2-local-2026090${i}T000000Z-${i}00"
+		mkdir -p "${OUT_DIR}/${nombre}"
+		printf 'manifiesto de la corrida %s\n' "${i}" > "${OUT_DIR}/${nombre}/manifest.txt"
+		# El orden por fecha es lo que el barrido usa, y `ls -dt` mira mtime, asi que
+		# se fija a mano en vez de confiar en el orden en que se crearon.
+		touch -t "20260${i}010000" "${OUT_DIR}/${nombre}"
+		i=$((i + 1))
+	done
+	printf '%s' "${nombre}"
+}
+cuenta_ensayos() { ls -1d "${OUT_DIR}"/p2-local-[0-9]*Z-[0-9]* 2>/dev/null | wc -l | tr -d ' '; }
+
+# 17v: SEIS artefactos y el de la corrida en curso es uno de ellos. Quedan CINCO
+#      mas el propio, y el que se va es el mas VIEJO, no uno cualquiera.
+ULTIMO="$(siembra_ensayos 7)"
+OUT_LOCAL="${OUT_DIR}/${ULTIMO}"
+RETIRADOS="$(barre_ensayos_viejos)"
+fila 17v "1|6|no|si" "${RETIRADOS}|$(cuenta_ensayos)|$([ -d "${OUT_DIR}/p2-local-20260901T000000Z-100" ] && echo si || echo no)|$([ -d "${OUT_LOCAL}" ] && echo si || echo no)" "con siete artefactos el techo retira UNO, deja cinco mas el de esta corrida, se lleva el MAS VIEJO y no toca el propio"
+
+# 17w: por DEBAJO del techo no se toca nada. Una fila que solo probara el corte
+#      pasaria con un barrido que borrase siempre.
+ULTIMO="$(siembra_ensayos 3)"
+OUT_LOCAL="${OUT_DIR}/${ULTIMO}"
+RETIRADOS="$(barre_ensayos_viejos)"
+fila 17w "0|3" "${RETIRADOS}|$(cuenta_ensayos)" "por debajo del techo no se retira nada: el barrido no borra por costumbre, borra por cuenta"
+
+# 17x: EL ARTEFACTO DE FIERRO NO SE TOCA, ni sellado ni sin sellar, y esta es la
+#      fila que separa las dos clases. Es la mitad que la decision del 8 de
+#      septiembre de 2026 hace obligatoria: el techo es del ensayo y el fierro
+#      queda fuera.
+ULTIMO="$(siembra_ensayos 7)"
+OUT_LOCAL="${OUT_DIR}/${ULTIMO}"
+mkdir -p "${OUT_DIR}/p2-20260901T000000Z-999" "${OUT_DIR}/p2-20260902T000000Z-998"
+printf 'de fierro, sellado\n' > "${OUT_DIR}/p2-20260901T000000Z-999/manifest.txt"
+printf 'Phase 2 iron gate artifact\n' > "${OUT_DIR}/p2-20260901T000000Z-999/SEALED"
+printf 'de fierro, SIN sello\n' > "${OUT_DIR}/p2-20260902T000000Z-998/manifest.txt"
+touch -t 202601010000 "${OUT_DIR}/p2-20260901T000000Z-999" "${OUT_DIR}/p2-20260902T000000Z-998"
+barre_ensayos_viejos >/dev/null
+roja 17x "si|si" "$([ -d "${OUT_DIR}/p2-20260901T000000Z-999" ] && echo si || echo no)|$([ -d "${OUT_DIR}/p2-20260902T000000Z-998" ] && echo si || echo no)" "los artefactos de FIERRO sobreviven al techo, el sellado y el que no lo esta, aunque sean los mas viejos de todos: el techo es del ensayo y esa es la decision entera"
+
+# 17y: la flota huerfana se va con su artefacto y NO antes. Una flota cuyo
+#      artefacto sigue ahi es de una corrida viva.
+ULTIMO="$(siembra_ensayos 3)"
+OUT_LOCAL="${OUT_DIR}/${ULTIMO}"
+mkdir -p "${OUT_DIR}/p2-local-fleet-20260901T000000Z-100" "${OUT_DIR}/p2-local-fleet-20260999T000000Z-777"
+printf 'x\n' > "${OUT_DIR}/p2-local-fleet-20260901T000000Z-100/node1.log"
+printf 'x\n' > "${OUT_DIR}/p2-local-fleet-20260999T000000Z-777/node1.log"
+barre_ensayos_viejos >/dev/null
+roja 17y "si|no" "$([ -d "${OUT_DIR}/p2-local-fleet-20260901T000000Z-100" ] && echo si || echo no)|$([ -d "${OUT_DIR}/p2-local-fleet-20260999T000000Z-777" ] && echo si || echo no)" "una flota cuyo artefacto SIGUE ahi se queda, y la huerfana se va: es un invariante, una flota nunca sobrevive a su artefacto, y no un segundo techo"
+
+# 17z: EN FIERRO EL BARRIDO NO CORRE. Sin esta fila, la guarda de la primera linea
+#      seria una decision que nadie mira.
+ULTIMO="$(siembra_ensayos 7)"
+OUT_LOCAL="${OUT_DIR}/${ULTIMO}"
+ES_FIERRO=1
+RETIRADOS="$(barre_ensayos_viejos)"
+ES_FIERRO=0
+roja 17z "0|7" "${RETIRADOS}|$(cuenta_ensayos)" "en una corrida de FIERRO el barrido devuelve en su primera linea y no retira nada: una corrida que cuesta horas de VM no esta ahi para hacer limpieza"
+
+rm -rf -- "${BANCO}/techo"
+OUT_DIR="${GUARDA_OUTDIR}"; OUT_LOCAL="${GUARDA_OUT}"; ES_FIERRO="${GUARDA_FIERRO}"
+
 # ---- 18 a 21: las primitivas de fierro contra el stub ------------------------
 fila 18 "aaaa-bbbb-cccc-0002" "$(boot_id_de 2)" "boot_id_de lee el boot id por el canal de tres estados"
 : > "${BANCO}/estado/2.muerto"

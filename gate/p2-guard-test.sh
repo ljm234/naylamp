@@ -259,6 +259,13 @@ NO_EMPIEZAN=0
 SIGUEN=0
 ABORTAN=0
 SUPERVIV=0
+# LA QUINTA CATEGORIA, y entra el 8 de septiembre de 2026 con el techo de los
+# artefactos de ensayo. Podria haberse metido en SUPERVIV, que es la de las filas
+# que miran lo que queda DESPUES, y no se hace: aquella pregunta que no quede nada
+# VIVO y esta que no quede demasiado ESCRITO, y son dos preguntas distintas con dos
+# remedios distintos. Meterlas juntas habria dejado el reparto del epilogo diciendo
+# una cosa por dos.
+TECHO=0
 
 # corta_workload shortens the loop in a copy, so a row costs seconds and not a
 # minute. It is applied to the control too.
@@ -345,6 +352,43 @@ sin_supervivientes() {
 	else
 		anota_fila FALLA
 		printf '%-26s %s\n' "${etiqueta}-sin-supervivientes" "NO CUADRA: ${n} nodos siguen vivos tras terminar el guion"
+		MAL=$((MAL + 1))
+	fi
+}
+
+# techo_de_ensayos pregunta lo que el veredicto no puede: despues de que este banco
+# haya corrido el ensayo entero DIECIOCHO veces, cuantos artefactos de ensayo quedan
+# bajo gate/out. Es la mitad de punta a punta del techo que entra con DEFER-098; las
+# otras cinco filas viven en gate/p2-iron-test.sh, contra un gate/out de mentira,
+# porque montar alli seis artefactos cuesta seis mkdir y aqui costaria seis corridas
+# del ensayo, o sea trece minutos medidos, para probar lo mismo.
+#
+# LO QUE ESTA FILA ANADE Y LAS OTRAS CINCO NO PUEDEN: alli el barrido se llama a
+# mano; aqui se llega a el por donde se llega de verdad, que es la trampa de salida
+# de gate/p2.sh al terminar una corrida. Si alguien quitara esa llamada, las cinco
+# de alli seguirian verdes y esta caeria.
+#
+# EL TECHO SE LEE DEL GUION Y NO SE TECLEA AQUI. Un cardinal copiado de otro fichero
+# se queda viejo el dia que aquel cambia, que es la clase que este banco persigue
+# por nombre.
+techo_de_ensayos() {
+	local techo quedan
+	FILAS=$((FILAS + 1))
+	TECHO=$((TECHO + 1))
+	techo="$(sed -n 's/^CONSERVA_ENSAYOS=\([0-9]*\)$/\1/p' "${P2}" | head -1)"
+	if [ -z "${techo}" ]; then
+		anota_fila FALLA
+		printf '%-26s %s\n' "techo-de-ensayos" "NO CUADRA: no se puede leer CONSERVA_ENSAYOS de ${P2}, asi que esta fila no mide nada"
+		MAL=$((MAL + 1))
+		return
+	fi
+	quedan="$(ls -1d "${REPO_DIR}"/gate/out/p2-local-[0-9]*Z-[0-9]* 2>/dev/null | wc -l | tr -d ' ')"
+	if [ "${quedan}" -le "${techo}" ]; then
+		anota_fila OK
+		printf '%-26s %s\n' "techo-de-ensayos" "quedan ${quedan} artefactos de ensayo bajo un techo de ${techo}, tras 18 corridas del ensayo   OK"
+	else
+		anota_fila FALLA
+		printf '%-26s %s\n' "techo-de-ensayos" "NO CUADRA: quedan ${quedan} artefactos de ensayo y el techo de gate/p2.sh es ${techo}"
 		MAL=$((MAL + 1))
 	fi
 }
@@ -720,6 +764,7 @@ sin_supervivientes F9 "tras un corte que dejo una replica viva"
 # escuchando en loopback despues de que el guion hubiera terminado. Los pid viven
 # ahora fuera de ese directorio, y esta comprobacion es la que lo sostiene.
 sin_supervivientes F8 "al cerrar el banco, tras las filas de higiene y de corte parcial"
+techo_de_ensayos
 
 echo
 # LA LINEA DE RESULTADO, y NO es uniforme en los siete: son SEIS con la forma de
@@ -742,7 +787,7 @@ echo
 # crudo archivado decia "0 en FALLA" y el guion salia con 1. La marca de
 # terminacion mentia sobre el color de su propia corrida, que es la clase que
 # este registro persigue por nombre.
-if [ "$((NO_EMPIEZAN + SIGUEN + ABORTAN + SUPERVIV))" -ne "${FILAS}" ]; then
+if [ "$((NO_EMPIEZAN + SIGUEN + ABORTAN + SUPERVIV + TECHO))" -ne "${FILAS}" ]; then
 	echo "guard: el reparto por categorias no suma las filas corridas" >&2
 	anota_fila FALLA
 	MAL=$((MAL + 1))
@@ -787,7 +832,9 @@ printf '  %d fila PARA, y es la que hacia falta: hasta que existio, todas espera
 printf '  y la pregunta se contestaba con una constante.\n'
 printf '  %d filas no miran veredicto sino lo que queda vivo despues, porque un rojo correcto\n' "${SUPERVIV}"
 printf '  y tres daemons huerfanos caben en la misma corrida.\n'
-printf '  suma: %d, y FILAS dice %d\n' "$((NO_EMPIEZAN + SIGUEN + ABORTAN + SUPERVIV))" "${FILAS}"
+printf '  %d fila no mira lo que queda vivo sino lo que queda ESCRITO: que el techo de\n' "${TECHO}"
+printf '  artefactos de ensayo se cumplio despues de correr el ensayo dieciocho veces.\n'
+printf '  suma: %d, y FILAS dice %d\n' "$((NO_EMPIEZAN + SIGUEN + ABORTAN + SUPERVIV + TECHO))" "${FILAS}"
 echo
 echo "LO QUE ESTE BANCO COMPRUEBA DE CADA FILA, y no solo el veredicto: el codigo de"
 echo "salida, si la corrida llego a su final o aborto, y que una fila roja NO cierre con"
