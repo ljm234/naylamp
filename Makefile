@@ -162,10 +162,15 @@ PRUNE := -name .git -o -path ./gate/out/certs -o \( -type d -exec test -e {}/SEA
 # to avoid: "so that it scales without a list somebody has to remember to
 # update". The rehearsal exclusion follows the same shape, p[0-9]-local-.
 #
-# There is no p2 iron artifact yet, because gate/p2.sh's iron path refuses to
-# run, so this is written before the first one exists rather than after losing
-# it. Row 8 of gate/clean-guard-test.sh puts the old p1-only predicate back and
-# measures that the loss was real.
+# It was written before the first p2 iron artifact existed rather than after
+# losing one, and that sentence used to end "because gate/p2.sh's iron path
+# refuses to run". It does not refuse any more: the iron path landed on
+# 2026-09-07, and until 2026-09-08 it created gate/out/p2-<run id> and wrote
+# SEALED zero times, so every run of it would have arrived at this guard and
+# stopped a clean for ever. That is DEFER-098, and it is closed in gate/p2.sh and
+# not here: this target reads seals and never writes one. Row 8 of
+# gate/clean-guard-test.sh puts the old p1-only predicate back and measures that
+# the loss was real.
 #
 # THE EMPTY ONES ARE NOT CAUGHT, and the first version of this guard did catch
 # them and left no way out. A p1-<run id> that a phase created and never wrote to

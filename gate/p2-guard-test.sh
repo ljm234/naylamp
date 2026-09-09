@@ -28,12 +28,20 @@
 # out loud because it is the anti-vacuity of this test: control and mutants
 # differ by the mutation and by nothing else.
 #
-# AND NOT EVERY ROW LAUNCHES THE SCRIPT, which an earlier version of the line
-# above got wrong: of the twenty three rows, seventeen do and rebuild
-# gate/out/p2-naylampd, four refuse before creating anything, and two only ask
-# what is still running when everything else has finished. The full rehearsal writes 30 puts
-# and 3 deletes; here it writes 3 and 1, which is enough for every guard below to
-# have something to be wrong about.
+# AND NOT EVERY ROW LAUNCHES THE SCRIPT. An earlier version of this line said
+# "each guard"; the version after it wrote the split out by hand, "of the twenty
+# three rows, seventeen do, four refuse before creating anything, and two only
+# ask what is still running", and that cardinal was WRONG the day after it was
+# written: F0b entered on 2026-09-07 and the four became five, with nobody to
+# notice. So the split is not recited here any more. THE EPILOGUE COUNTS IT, one
+# accumulator per category, and refuses to publish the RESULTADO line unless the
+# four add up to the rows actually run. A cardinal kept outside the thing it
+# counts moves every time the thing is edited, which is the same lesson this file
+# already carries about the count of its own rows.
+#
+# What is true of all of them regardless of the split: the full rehearsal writes
+# 30 puts and 3 deletes; here it writes 3 and 1, which is enough for every guard
+# below to have something to be wrong about.
 set -euo pipefail
 
 # QUIEN ES ESTE BANCO, dicho en su PRIMERA linea de salida y en una forma que no
@@ -55,6 +63,34 @@ case "${RUN_ID}" in
 	[0-9]*Z-[0-9]*) ;;
 	*) echo "guard: refusing to run: the run id ${RUN_ID} is not the shape this script deletes by" >&2; exit 2 ;;
 esac
+
+# LA PRECONDICION QUE ESTE BANCO NO TENIA, y entra el 8 de septiembre de 2026 con
+# el barrido de sellos de DEFER-098. Desde que P2.hygiene barre gate/out buscando
+# artefactos de fierro sin sellar, TODAS las filas de este banco dependen de lo que
+# haya ahi dentro: un solo p2-<run id> sin sello -una corrida de fierro matada, o
+# gate/p2-iron-test.sh corriendo a la vez- pone P2.hygiene roja en las diecinueve
+# filas y deja la de control en NO CUADRA. Un lector lo midio.
+#
+# SE DECLARA EN VEZ DE PADECERSE. Un banco que se pone rojo por el entorno ensena
+# a ignorar sus rojos; uno que se NIEGA nombrando lo que le estorba se arregla en
+# un minuto. Sale con 2, que en esta casa no es ni pase ni rechazo: es que la
+# comprobacion no se pudo hacer.
+if [ -d "${REPO_DIR}/gate/out" ]; then
+	estorban=""
+	for d in "${REPO_DIR}"/gate/out/p2-[0-9]*Z-[0-9]*; do
+		[ -d "${d}" ] || continue
+		[ -e "${d}/SEALED" ] && continue
+		[ -n "$(ls -A "${d}" 2>/dev/null | grep -vx RUNNING)" ] || continue
+		estorban="${estorban} $(basename "${d}")"
+	done
+	if [ -n "${estorban}" ]; then
+		echo "guard: refusing to run: gate/out holds p2 iron artifacts with no SEALED file:${estorban}" >&2
+		echo "guard: P2.hygiene barre gate/out, asi que esos artefactos pondrian roja la fila de" >&2
+		echo "guard: control y todas las demas por una razon que no es la que cada fila mide." >&2
+		echo "guard: sellalos, retiralos, o espera a que termine el banco que los este creando." >&2
+		exit 2
+	fi
+fi
 SCRATCH="${TMPDIR:-/tmp}/naylamp-p2-guard-${RUN_ID}"
 
 # ---- DOS BANCOS A LA VEZ NO, y hasta hoy nada lo impedia ----------------------
@@ -532,6 +568,31 @@ copia="$(prepara higiene-que-no-mata \
 	'	: # mutacion: la higiene no mata a nadie, ni con senal ni con -9')"
 fila higiene-que-no-mata fail carry P2.hygiene "${copia}" 1
 
+# EL BARRIDO DE SELLOS, que entra con DEFER-098 el 8 de septiembre de 2026 y es la
+# mitad de P2.hygiene que mira ESTA maquina en vez de los tres hosts. Su objeto es
+# la exclusion del prefijo del ensayo dentro de es_artefacto_de_fierro: un sello es
+# la marca que dice "guarda esto, es evidencia", y dejar que aparezca dentro de un
+# p2-local- deshace por dentro las tres capas que juran que un ensayo no puede
+# leerse como evidencia de gate. La mutacion la rebobina, o sea que el propio
+# artefacto del ensayo pasa a leerse como de fierro, no lleva sello y el barrido lo
+# nombra.
+#
+# POR QUE ESTA FILA SE MIDE AQUI Y EL SELLO EN SI NO. Este banco corre el ENSAYO y
+# el ensayo NO sella nunca: seal_artifact devuelve en su primera linea con
+# ES_FIERRO distinto de 1. Lo que si corre aqui es el BARRIDO, y a proposito, porque
+# el ensayo es lo que mas veces pasa por delante de gate/out en esta maquina. Las
+# diecisiete filas del sello mismo viven en gate/p2-iron-test.sh, que es donde
+# p2.sh esta cargado en modo fierro y el artefacto existe de verdad.
+#
+# Y LA PREGUNTA DEL FLUJO ES `carry`, dicha y no heredada, que es la clausula 20:
+# un artefacto sin sello NO es razon para parar una corrida de fierro que ya se
+# pago. Es un veredicto rojo que se lee al final y se arregla sellando o barriendo
+# a mano; parar ahi tiraria las fases que quedan por delante y con ellas la
+# evidencia que este mismo barrido protege.
+copia="$(prepara sello-que-cuenta-el-ensayo 	'		p2-local-*) return 1 ;;' \
+	'		p2-local-*) return 0 ;;')"
+fila sello-que-cuenta-el-ensayo fail carry P2.hygiene "${copia}" 1
+
 # La identidad de binario. Una replica ejecutando otra cosa tiene que verse, y la
 # primera version de esa comprobacion no podia verlo porque comparaba una
 # variable consigo misma: se lanzo el nodo 3 con otro binario y salio PASS igual.
@@ -713,9 +774,11 @@ fi
 echo "filas: ${FILAS}, veredictos rojos obtenidos: ${ROJAS}, filas que no cuadran: ${MAL}"
 echo
 printf 'LA PREGUNTA DEL FLUJO, contestada fila a fila y contada, no recitada:\n'
-printf '  %d filas NO EMPIEZAN, y deben: rechazan antes de crear un directorio, encender un\n' "${NO_EMPIEZAN}"
-printf '  nodo o registrar un veredicto. Las cuatro se comprueban por rc=2 y por la ausencia\n'
-printf '  de una sola linea "gate: verdict".\n'
+printf '  %d filas NO EMPIEZAN, y deben: ninguna crea un directorio, enciende un nodo ni\n' "${NO_EMPIEZAN}"
+printf '  registra un veredicto, y todas lo comprueban por la ausencia de una sola linea\n'
+printf '  "gate: verdict". La forma de la negativa NO es la misma en todas y decir que si\n'
+printf '  era falso: las que se niegan salen con rc=2, y F0b sale con rc=0 porque su objeto\n'
+printf '  es el contrario, que CON la identidad de la flota el camino de fierro se elige.\n'
 printf '  %d filas SIGUEN hasta su propio final, y deben. Este gate registra un veredicto por\n' "${SIGUEN}"
 printf '  clausula y su valor es el de la clausula, no el del guion: parar en el primer rojo\n'
 printf '  se llevaria por delante los veredictos de las fases de detras. Es la misma\n'

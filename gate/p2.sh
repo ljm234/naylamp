@@ -33,11 +33,16 @@
 # it is the choice, and the banner below carries it in one sentence rather than
 # leaving it to an item nobody opens.
 #
-# TODAY THIS SCRIPT IS THE REHEARSAL AND NOTHING ELSE. The iron path refuses to
-# run and names what is missing, which is clause 15's shape: an instrument that
+# THIS SCRIPT WAS THE REHEARSAL AND NOTHING ELSE UNTIL 2026-09-07, and this
+# paragraph said so until 2026-09-08. The iron path exists now: without
+# NAYLAMP_P2_LOCAL=1 this script cuts three hosts with sysrq, and the usage block
+# at the foot says how. What is still true, and is the reason the rehearsal is not
+# a scaffold to be thrown away, is its job: to exercise THIS SCRIPT before it costs
+# VM time, and to time three of the five terms the design could not put a number
+# on. What the iron path refuses without is its fleet identity, which gate/common.sh
+# checks on its own, and that refusal is clause 15's shape: an instrument that
 # breaks stops whoever is measuring, and one that answers falsely lets them carry
-# on. The rehearsal's job is to exercise THIS SCRIPT before it costs VM time, and
-# to time three of the five terms the design could not put a number on.
+# on.
 #
 # WHAT THE REHEARSAL CANNOT DO, and this is why its banner says it attests
 # nothing about durability: on this machine there is no sysrq-b. Its cut is
@@ -208,6 +213,18 @@ COMPLETED=0
 RUN_STARTED=0
 CHECK_FAILED=0
 EMITIDO=0
+# LO QUE EL SELLO NECESITA SABER DE LA CORRIDA, y va aqui arriba con el resto del
+# estado en vez de dentro de la funcion que lo escribe, por la misma razon que
+# VERDICTS: el sello se escribe desde phase_hygiene_fierro y se termina desde
+# al_salir, o sea desde dos sitios que no se llaman entre si, y un dato que solo
+# existiera en uno de los dos no llegaria al otro. SELLO_ESCRITO_AQUI es la
+# bandera de la clausula 30 y su unicidad esta razonada en el bloque del sello.
+SELLO_ESCRITO_AQUI=0
+SUBCOMANDO=""
+ARRANCO_A=""
+PROV_HEAD=""
+PROV_DIRTY=""
+PROV_SHA=""
 
 note() { printf 'gate: %s\n' "$*" >&2; }
 pass() { printf 'gate: PASS %s\n' "$*" >&2; }
@@ -872,6 +889,351 @@ retira_running() {
 	return 0
 }
 
+# ---- el sello, DEFER-098 ------------------------------------------------------
+#
+# WHY THIS EXISTS, and it is not gate/p1.sh's block copied over: it is the same
+# defect measured in THIS file. The iron path creates gate/out/p2-<run id> and
+# wrote SEALED zero times; the only appearance of the word above was a comment.
+# The Makefile's clean guard has asked by SHAPE since 2026-09-06,
+# `p[0-9]-* ! p[0-9]-local-*`, which is on purpose and covers Phase 2, so every
+# iron run of this gate left a directory that `make clean` refuses to sweep and
+# that nothing ever sealed: neither cleanable nor kept by anyone's decision. Row
+# 5b of gate/clean-guard-test.sh had already measured that refusal and certified
+# it as correct behaviour, which is exactly how the cost stayed unwritten: the
+# half that says "and something has to write the seal" was nobody's row.
+#
+# AND IT IS BORN FINISHED, which is the half gate/p1.sh had to learn afterwards
+# and is why DEFER-098 named it before this was written. Clause 30: an artifact
+# sealed while the run is ALIVE has to be TERMINATED when the run ends, or its
+# seal describes a run that had not happened yet. p1.sh sealed from phase_hygiene
+# and never rewrote, so its three archived artifacts all carry 19 expected against
+# 18 verdicts and the missing one is always P1.hygiene, the only check that talks
+# about the artifact itself. Worse, a run killed by -9 in that window left exactly
+# the same shape as a complete one, so the artifact could not tell them apart.
+# Here the seal closes in al_salir from the first day: a complete run leaves the
+# two counts equal and a killed one leaves them short.
+#
+# UNA SOLA BANDERA, y la diferencia con gate/p1.sh va escrita en vez de heredada.
+# La clausula 30 pide una bandera que distinga HABER ESCRITO el sello de
+# HABERTELO ENCONTRADO. En p1.sh esa distincion es cara y hace falta, porque tiene
+# un subcomando, `p1.sh hygiene <run id>`, que ADOPTA el id de otra corrida y
+# entra en su directorio: alli, terminar un sello que no escribiste le machaca sus
+# diecinueve veredictos con los dos tuyos. Este guion no tiene esa puerta. Sus
+# cinco subcomandos son all, build, pre, provenance y red, NINGUNO toma un run id,
+# y RUN_ID se acuna con la fecha y el pid de ESTE proceso. Asi que la bandera de
+# la escritura es la unica que puede valer algo aqui, y el caso "el sello ya
+# estaba" SI es alcanzable, porque seal_artifact se llama dos veces por corrida,
+# en phase_hygiene_fierro y en al_salir: se separa EN VOZ ALTA y no con una
+# segunda bandera que hoy no podria diferir nunca de la primera. Una guarda contra
+# una puerta que no existe es codigo muerto con aspecto de defensa, que es lo que
+# p1.sh dice de si mismo al negarse a escribir una rama para p1-local.
+#
+# THE PREDICATE IS NOT NEW. This script already separates an iron artifact,
+# p2-<run id>, from a rehearsal's, p2-local-<run id>, and says in the block that
+# builds the two names that the prefix is what decides whether `make clean` sweeps
+# the directory or refuses to. Everything below rests on that and invents nothing.
+es_artefacto_de_fierro() {
+	# $1 is a basename. The rehearsal prefix is excluded FIRST and as its own case
+	# arm rather than left to the digit that follows, which would exclude it too.
+	# It is written this way because the reason is not the shape: a seal is the
+	# mark that says "keep this, it is evidence", and letting one appear inside a
+	# p2-local- would undo from the inside the three places that swear a rehearsal
+	# can never read as gate evidence.
+	#
+	# THE FLEET DIRECTORIES FALL OUT OF THE SECOND ARM ON THEIR OWN, because what
+	# follows p2- there is not a digit, AND THAT IS NOT THE SAME AS SAFE. A reader
+	# measured what it costs and the first version of this comment presented it as
+	# a tidy outcome. p2-fleet-<run id> matches the Makefile's refusal pattern,
+	# `p[0-9]-* ! p[0-9]-local-*`, and is invisible to this predicate, so a -9
+	# between phase_build and the removal in phase_hygiene_fierro leaves a directory
+	# that no P2.hygiene line will ever name and that nothing can ever seal. What it
+	# does NOT do is block a clean for ever, and saying so would be the opposite
+	# error: `make clean UNSEALED_OK=1` takes it, and the Makefile writes down why it
+	# refuses in that direction rather than the other, "a predicate that refuses too
+	# much costs a run of make clean UNSEALED_OK=1; one that refuses too little costs
+	# the artifact". So the cost is one typed override after a killed iron run, it is
+	# the declared trade and not an oversight, and it is written here so the next
+	# reader does not have to re-derive it. The rehearsal's p2-local-fleet-<run id>
+	# is excluded by the Makefile too and costs nothing.
+	case "$1" in
+		p2-local-*) return 1 ;;
+		p2-[0-9]*Z-[0-9]*) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+seal_artifact() {
+	# THE REHEARSAL NEVER SEALS, and this is the first line for the same reason it
+	# is the first line in gate/p1.sh: everything below it would otherwise have to
+	# remember. A p2-local- directory is swept by an ordinary make clean and that is
+	# what it is for.
+	[ "${ES_FIERRO}" -eq 1 ] || return 0
+	[ "${RUN_STARTED}" -eq 1 ] || return 0
+	es_artefacto_de_fierro "$(basename "${OUT_LOCAL}")" || return 0
+	[ -d "${OUT_LOCAL}" ] || return 0
+	# EMPTY MEANS NO SEAL, AND THE RUNNING MARKER DOES NOT COUNT AS CONTENT. Both
+	# halves are gate/p1.sh's, measured there and inherited here on purpose. A phase
+	# that writes no raw output still mkdirs its artifact, and sealing an empty
+	# directory would keep it for ever; and the seal is written while the run is
+	# alive, so its own marker is still inside, and counting it would let a run that
+	# wrote nothing else seal a directory whose only file then disappears, leaving a
+	# SEALED EMPTY directory that no sweep can ever take.
+	#
+	# AND THE OTHER THREE PLACES THAT ASK THE SAME QUESTION ARE
+	# artefactos_de_fierro_sin_sello below, veredicto_del_sello below that, and the
+	# guard in the Makefile. p1.sh paid twice for having them out of step: a
+	# directory whose sole file is RUNNING is empty to the one that would seal it
+	# and full to the ones that refuse to clean it, so it becomes neither sealable
+	# nor cleanable.
+	#
+	# THE CARDINAL SAID TWO AND THE SITES WERE THREE, and a reader measured it in the
+	# same change that added the third: this comment was inherited from p1.sh at a
+	# stage of ITS history that had already been superseded there, so it arrived
+	# saying "before adding a fourth" in a file where the fourth was going in
+	# fourteen lines below. The four predicates are byte-identical today; what was
+	# wrong was the number in front of them. The way to keep them in step is to grep
+	# for `ls -A` across this file and the Makefile before adding a fifth, and to
+	# re-count rather than to trust this sentence.
+	[ -n "$(ls -A "${OUT_LOCAL}" 2>/dev/null | grep -vx RUNNING)" ] || return 0
+	if [ -e "${OUT_LOCAL}/SEALED" ]; then
+		# LA SEGUNDA LLAMADA DE LA MISMA CORRIDA ES EL CASO NORMAL y sale por aqui en
+		# silencio: phase_hygiene_fierro sella, y al_salir vuelve a llamar por las
+		# corridas que nunca llegan a la higiene. Lo que NO es normal es encontrarse
+		# un sello en el propio directorio sin haberlo escrito, porque RUN_ID se acuna
+		# por corrida y nadie mas puede haber estado ahi; se dice y no se toca nada.
+		[ "${SELLO_ESCRITO_AQUI}" -eq 1 ] && return 0
+		echo "gate: ${OUT_LOCAL}/SEALED exists and THIS run did not write it, so nothing here is touched and no seal is completed" >&2
+		return 0
+	fi
+	{
+		echo "Phase 2 iron gate artifact, sealed by gate/p2.sh."
+		echo
+		echo "run id:      ${RUN_ID}"
+		echo "subcommand:  ${SUBCOMANDO:-unknown}"
+		echo "started:     ${ARRANCO_A:-not recorded}"
+		echo "sealed:      $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+		echo "HEAD:        ${PROV_HEAD:-not recorded}"
+		echo "uncommitted: ${PROV_DIRTY:-not recorded}"
+		echo "hosts:       ${NAYLAMP_GATE_HOSTS:-not recorded}"
+		echo "naylampd:    ${PROV_SHA:-not recorded}"
+		echo "expected:    ${EXPECTED:-not recorded}"
+		echo "verdicts:    ${VERDICTS# }"
+		echo
+		echo "This file is what keeps make clean from taking the directory. It is"
+		echo "written on RED as well as on green, because a red run is evidence and"
+		echo "this house archives the output of a red arm. The verdicts line above is"
+		echo "rewritten once, when the run closes, and the closed: line is that"
+		echo "moment: a seal with no closed: line was written by a run that did not"
+		echo "reach its own end. Remove this file when the run stops being cited,"
+		echo "which is a decision for a person and not for make clean."
+	} > "${OUT_LOCAL}/SEALED" || true
+	# EL `|| true` ES POR PORTABILIDAD Y NO POR DESCUIDO. Medido en el bash 3.2 de
+	# esta maquina, un grupo `{ ...; } > fichero` cuya redireccion falla devuelve 1 y
+	# NO dispara `set -e`; en el bash 5 del runner esa semantica no esta medida, y de
+	# las dos posibles la mala es que aborte, porque esta llamada corre dentro de
+	# phase_hygiene_fierro, que no lleva `set +e`, y un aborto ahi se llevaria por
+	# delante la fase entera. Con el `|| true` la respuesta es la misma en los dos
+	# shells y la decide la comprobacion de abajo, que es donde tiene que decidirse.
+	#
+	# Y SE COMPRUEBA QUE EL SELLO ESTA, en vez de darlo por hecho porque la
+	# redireccion no se quejo. Medido en el bash 3.2 de esta maquina: un grupo
+	# `{ ...; } > fichero` cuyo destino no se puede crear imprime su error, devuelve
+	# 1 y NO dispara `set -e`. Sin esta comprobacion, la bandera se ponia a 1 y la
+	# consola decia "sealed the artifact" sin que existiera fichero ninguno, que es
+	# la clase 15 entera: un instrumento que contesta en falso es peor que uno que se
+	# rompe. Y el caso a medias, con el fichero creado y la escritura cortada por
+	# disco lleno, es peor todavia, porque un SEALED vacio pasa cualquier `-e` y la
+	# corrida cerraria verde sobre un sello sin contenido: por eso la pregunta es
+	# `-s` y no `-e`.
+	if [ ! -s "${OUT_LOCAL}/SEALED" ]; then
+		rm -f -- "${OUT_LOCAL}/SEALED"
+		echo "gate: the seal could NOT be written at ${OUT_LOCAL}/SEALED, so this run's artifact is unsealed and make clean will refuse to sweep gate/out" >&2
+		return 0
+	fi
+	SELLO_ESCRITO_AQUI=1
+	note "sealed the artifact: ${OUT_LOCAL}/SEALED"
+}
+
+# EL SELLO SE TERMINA EN al_salir, y nace terminandose. gate/p1.sh llego a esta
+# funcion el 8 de septiembre de 2026 despues de tres artefactos archivados que no
+# la tenian; este guion la trae desde su primer sello porque DEFER-098 lo exigio
+# por nombre antes de que existiera ninguno.
+#
+# LO QUE NO ARREGLA, dicho aqui para que el bloque no se lea como un cierre: la
+# ventana SIGUE EXISTIENDO. Un -9 entre el sello que escribe phase_hygiene_fierro
+# y la entrada en la trampa deja el sello a medias igual, y ademas deja el
+# marcador RUNNING puesto, que es la otra mitad de la evidencia. Esto no cierra la
+# ventana: la hace legible desde el artefacto, que es lo que la clausula 30 pide.
+completa_el_sello() {
+	[ "${SELLO_ESCRITO_AQUI}" -eq 1 ] || return 0
+	[ -f "${OUT_LOCAL}/SEALED" ] || return 0
+	# UNA SOLA FORMA DE NOMBRE, y no dos. El ensayo no llega hasta aqui porque
+	# seal_artifact devuelve en su primera linea con ES_FIERRO distinto de 1, asi
+	# que la bandera se queda en cero y una rama para p2-local seria codigo muerto
+	# con aspecto de defensa. Lo que no sea el nombre de fierro lo dice en voz alta.
+	case "${OUT_LOCAL}" in
+		"${OUT_DIR}/p2-${RUN_ID}") ;;
+		*)
+			echo "gate: the seal was written but NOT completed: ${OUT_LOCAL} is not p2-${RUN_ID}" >&2
+			return 0 ;;
+	esac
+	local esperada marca linea vistas
+	# UN .a-medias HUERFANO SE BARRE ANTES, y existe: si el proceso muere a mitad de
+	# la escritura de al lado, el fichero temporal sobrevive dentro de un artefacto
+	# que el sello protege de make clean. No hace dano, porque el sello quedo
+	# intacto, pero se queda para siempre. Medido en p1.sh con `ulimit -f`.
+	rm -f -- "${OUT_DIR}/p2-${RUN_ID}/SEALED.a-medias"
+	esperada="$(grep -m1 '^expected:' "${OUT_DIR}/p2-${RUN_ID}/SEALED" 2>/dev/null)"
+	marca="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+	# SE RECONSTRUYE LEYENDO, no con un sed sobre el sitio. Un sed en el sitio no es
+	# atomico: si muere a medias deja el sello truncado, y un sello truncado sigue
+	# frenando a make clean mientras pierde lo que decia. Aqui se escribe al lado,
+	# se comprueba, y solo entonces se mueve encima de una sola vez.
+	#
+	# Y SE ESCRIBE CON UNA REDIRECCION Y NO CON UNA SUSTITUCION DE COMANDO, que es
+	# la clausula 31: un `case` dentro de `$( )` es un error de sintaxis en bash 3.2
+	# que `bash -n` NO caza, porque el cuerpo de una sustitucion no se parsea hasta
+	# que se ejecuta, y al correr no mata el guion: el error va a stderr, la
+	# sustitucion devuelve el texto suelto de detras del parentesis y la ejecucion
+	# sigue con rc 0. Se cometio en p1.sh el 8 de septiembre y lo unico que evito
+	# publicar un sello de basura fue la comprobacion de `expected:` de abajo.
+	#
+	# EL `|| [ -n "${linea}" ]` NO SOBRA. Sin el, `read` devuelve falso en una
+	# ultima linea que no termina en salto y el bucle la TIRA; y el `closed:` que se
+	# anade compensa exactamente el uno que se pierde, asi que el recuento de lineas
+	# da el visto bueno y el sello se publica con una linea de menos.
+	vistas=0
+	{
+		while IFS= read -r linea || [ -n "${linea}" ]; do
+			case "${linea}" in
+				verdicts:*)
+					vistas=$((vistas + 1))
+					printf 'verdicts:    %s\n' "${VERDICTS# }"
+					printf 'closed:      %s\n' "${marca}" ;;
+				closed:*) ;;
+				*) printf '%s\n' "${linea}" ;;
+			esac
+		done < "${OUT_DIR}/p2-${RUN_ID}/SEALED"
+	} > "${OUT_DIR}/p2-${RUN_ID}/SEALED.a-medias" || true
+	# EL `|| true` ES EL MISMO DE seal_artifact Y POR LA MISMA RAZON: que la respuesta
+	# a una redireccion que falla no dependa de la version del shell. Aqui hay ademas
+	# un `set +e` en la trampa que llama, pero apoyarse en eso es apoyarse en el
+	# llamador, y esta funcion tiene mas de uno.
+	#
+	# EL ORDEN DE ESTAS PREGUNTAS IMPORTA. Primero si hay fichero de al lado, porque
+	# con el directorio sin permiso de escritura la redireccion falla, el bucle no
+	# corre y `vistas` se queda en cero: preguntar por `vistas` antes anunciaria que
+	# el sello NO TIENE linea de veredictos, que es falso y ademas describe mal la
+	# causa. Luego que trae, y solo al final si cuadra.
+	#
+	# Y LA DE `expected:` ES LA QUE IMPORTA de las dos ultimas: es la linea por la
+	# que dos sellos se comparan para decir que uno sustituye a otro, asi que esta
+	# reescritura no puede tocarla. Tiene que salir identica byte a byte.
+	if [ ! -s "${OUT_DIR}/p2-${RUN_ID}/SEALED.a-medias" ]; then
+		rm -f -- "${OUT_DIR}/p2-${RUN_ID}/SEALED.a-medias"
+		echo "gate: the seal could not be completed; it keeps the verdicts the hygiene phase wrote" >&2
+		echo "gate: nothing could be written beside it, so that seal now looks like one from a run that did not reach its end, and there is no way to say otherwise from inside a directory that cannot be written" >&2
+	elif [ "${vistas}" -eq 0 ]; then
+		rm -f -- "${OUT_DIR}/p2-${RUN_ID}/SEALED.a-medias"
+		echo "gate: the seal has no verdicts line, so it was left exactly as it was and carries no closed line" >&2
+	elif [ "$(grep -m1 '^expected:' "${OUT_DIR}/p2-${RUN_ID}/SEALED.a-medias" 2>/dev/null)" = "${esperada}" ] \
+		&& [ "$(grep -c '' "${OUT_DIR}/p2-${RUN_ID}/SEALED.a-medias" 2>/dev/null)" -ge "$(grep -c '' "${OUT_DIR}/p2-${RUN_ID}/SEALED" 2>/dev/null)" ]; then
+		# Y EL `mv` SE COMPRUEBA, que es la unica de las cuatro salidas que no decia
+		# nada cuando fallaba. Un `mv` que falla deja el `.a-medias` DENTRO de un
+		# artefacto que el sello protege de make clean, y ahi se queda para siempre:
+		# el barrido de huerfanos de arriba no puede volver a alcanzarlo, porque
+		# RUN_ID es unico por corrida y ninguna otra entrara en este directorio.
+		# Heredado tal cual de gate/p1.sh y corregido aqui.
+		if ! mv -f -- "${OUT_DIR}/p2-${RUN_ID}/SEALED.a-medias" "${OUT_DIR}/p2-${RUN_ID}/SEALED"; then
+			rm -f -- "${OUT_DIR}/p2-${RUN_ID}/SEALED.a-medias"
+			echo "gate: the seal could not be completed; the rewrite was correct but could not be moved on top of it, and the leftover beside it was removed" >&2
+		fi
+	else
+		rm -f -- "${OUT_DIR}/p2-${RUN_ID}/SEALED.a-medias"
+		echo "gate: the seal could not be completed; it keeps the verdicts the hygiene phase wrote" >&2
+		echo "gate: the rewrite did not match the seal it came from, so nothing was moved on top of it" >&2
+	fi
+}
+
+# EL BARRIDO, y mira SOLO los artefactos de esta phase. Podria mirar cualquier
+# p<n>-, que es lo que hace la guarda del Makefile, y no lo hace: esa guarda
+# decide si BORRAR, asi que un nombre que no reconoce tiene que pararla; esta
+# funcion produce un VEREDICTO de Phase 2, y hacer que P2.hygiene se ponga roja
+# por como haya quedado el archivo de Phase 1 seria colgar el veredicto de una
+# corrida de la limpieza de otra. Lo que la casa no pierde por eso esta medido:
+# el Makefile sigue negandose ante cualquier p<n>- sin sello, y gate/p1.sh barre
+# los suyos con la funcion gemela.
+#
+# IMPRIME LA CUENTA DE LOS QUE VISITO, y no es decoracion: sin ella la frase "todos
+# los artefactos de fierro llevan su sello" se publica igual habiendo visitado
+# NINGUNO, que es una afirmacion exhaustiva sobre el conjunto vacio con la misma
+# forma que la de verdad. Vuelve por la salida y no por una global porque quien la
+# llama la lee dentro de una sustitucion, o sea en un subshell donde una
+# asignacion global no sobreviviria.
+artefactos_de_fierro_sin_sello() {
+	local d b out="" vistos=0
+	if [ -d "${OUT_DIR}" ]; then
+		for d in "${OUT_DIR}"/*; do
+			[ -d "${d}" ] || continue
+			b="$(basename "${d}")"
+			es_artefacto_de_fierro "${b}" || continue
+			# LA MISMA PREGUNTA SOBRE EL VACIO QUE seal_artifact, y el marcador se
+			# descuenta aqui tambien. Con una de las dos fuera de paso, un directorio
+			# cuyo unico fichero es RUNNING queda ni sellable ni limpiable.
+			[ -n "$(ls -A "${d}" 2>/dev/null | grep -vx RUNNING)" ] || continue
+			vistos=$((vistos + 1))
+			[ -e "${d}/SEALED" ] && continue
+			out="${out} ${b}"
+		done
+	fi
+	printf '%s%s' "${vistos}" "${out}"
+}
+
+# EL ORDEN ES TODO EL PUNTO Y POR ESO ES UNA FUNCION Y NO DOS LINEAS SUELTAS:
+# SELLAR PRIMERO, BARRER DESPUES, para que el barrido incluya el sello que esta
+# misma corrida acaba de escribir. Una corrida que no consigue sellarse se pone
+# roja AQUI y AHORA, en la misma invocacion, en vez de que la evidencia se
+# descubra ausente meses despues cuando alguien vaya a citarla. Es la razon por la
+# que gate/p1.sh sella desde phase_hygiene y no solo desde su trampa, y la
+# heredamos entera.
+#
+# LA LLAMAN LAS DOS HIGIENES, la de fierro y la del ensayo, y no hacen lo mismo
+# dentro: en el ensayo seal_artifact devuelve en su primera linea y lo unico que
+# corre es el barrido. Eso es deliberado. El barrido es lo que convierte un
+# artefacto de fierro sin sello en una linea roja, y un ensayo que corre en esta
+# maquina todos los dias es quien mas veces va a pasar por delante de uno.
+veredicto_del_sello() {
+	seal_artifact
+	# LA CONDICION PREGUNTA SI HABIA ALGO QUE SELLAR. Sin eso, una corrida de fierro
+	# que murio antes de escribir un solo fichero crudo se pondria roja diciendo
+	# "esta corrida escribio un artefacto", que no es verdad. Un artefacto vacio es
+	# el unico caso en que no sellar es lo correcto.
+	# LA PREGUNTA ES POR EL FICHERO Y NO POR LA BANDERA, y la primera version de esta
+	# linea preguntaba por la bandera. La diferencia la trajo un lector con su caso:
+	# si el artefacto YA lleva un sello que esta corrida no escribio, seal_artifact
+	# se niega en voz alta y deja la bandera en cero, y con la bandera como predicado
+	# esta linea gritaba "esta corrida no sello" sobre un artefacto que SI esta
+	# sellado. Veredicto equivocado y remedio equivocado. gate/p1.sh no cae en eso
+	# porque en su sitio pregunta por SEALED_THIS_RUN, que tambien vale 1 cuando el
+	# sello simplemente se encuentra; aqui, con una sola bandera, la salida limpia es
+	# no preguntar por ninguna y mirar el objeto.
+	if [ "${ES_FIERRO}" -eq 1 ] && [ ! -e "${OUT_LOCAL}/SEALED" ] \
+		&& [ -d "${OUT_LOCAL}" ] && [ -n "$(ls -A "${OUT_LOCAL}" 2>/dev/null | grep -vx RUNNING)" ]; then
+		fail "P2.hygiene: this run wrote an artifact and did not seal it, so make clean will refuse to sweep gate/out until somebody seals it by hand"
+	fi
+	local sin vistos
+	sin="$(artefactos_de_fierro_sin_sello)"
+	vistos="${sin%% *}"
+	sin="${sin#"${vistos}"}"
+	if [ -n "${sin}" ]; then
+		fail "P2.hygiene: p2 iron artifacts under gate/out with no SEALED file, which make clean will refuse to sweep:${sin}"
+	elif [ "${vistos}" -eq 0 ]; then
+		note "P2.hygiene: there is no p2 iron artifact under gate/out, so this phase attests nothing about seals. A rehearsal writes p2-local-* and this is its normal answer"
+	else
+		note "P2.hygiene: all ${vistos} p2 iron artifacts under gate/out carry their seal, counted one by one"
+	fi
+}
+
 phase_build() {
 	begin_check
 	mkdir -p "${OUT_DIR}" "${OUT_LOCAL}" "${FLEET}"
@@ -1094,17 +1456,37 @@ phase_provenance() {
 	# which is the shape clause 15 calls worse than a break.
 	head="$(cd "${REPO_DIR}" && git rev-parse HEAD 2>/dev/null || true)"
 	dirty="$(cd "${REPO_DIR}" && git status --porcelain 2>/dev/null | wc -l | tr -d ' ' || true)"
+	# Y SE GUARDAN, porque el sello los cita y el sello se escribe dos fases mas
+	# tarde. Se guarda lo que ya se derivo aqui en vez de que seal_artifact vuelva a
+	# leer provenance.txt: un fichero se puede quedar a medias, y entonces el sello
+	# describiria la corrida por un crudo roto en vez de por lo que la corrida midio.
+	# Las tres quedan vacias en los subcomandos que no pasan por esta fase, y el
+	# sello imprime "not recorded" con el subcomando al lado para que se sepa cual.
+	PROV_HEAD="${head}"
+	PROV_DIRTY="${dirty}"
 	note "HEAD ${head}"
 	note "uncommitted entries: ${dirty}"
 	note "toolchain $(go version)"
 	note "run id ${NOMBRE_CORRIDA}"
+	# LA HUELLA SE CALCULA UNA VEZ Y SE USA DOS, y no dos veces por dos sitios: el
+	# crudo y el sello tienen que decir el mismo numero, y dos lecturas del mismo
+	# binario separadas por una fase admiten un dia en que no lo digan.
+	# EL `|| true` NO SOBRA, y su ausencia era una regresion de esta misma pasada.
+	# `VAR="$(tuberia)"` toma el estado de la tuberia, y con `pipefail` un `shasum`
+	# que falla lo vuelve no-cero, o sea que bajo `set -e` mata la corrida entera y
+	# la deja sin un solo veredicto: la forma que la clausula 15 llama peor que una
+	# rotura, y que el comentario de doce lineas mas arriba prohibe con esas
+	# palabras. Lo que habia antes vivia dentro de un `echo`, donde el estado de la
+	# sustitucion se descarta; sacarlo a una asignacion lo convirtio en fatal. Las
+	# dos lecturas de arriba llevan su `|| true` por lo mismo, y esta faltaba.
+	PROV_SHA="$(shasum -a 256 "${BIN}" 2>/dev/null | cut -d' ' -f1 || true)"
 	{
 		echo "run: ${NOMBRE_CORRIDA}"
 		echo "head: ${head}"
 		echo "uncommitted: ${dirty}"
 		echo "toolchain: $(go version)"
 		echo "repo: ${REPO_DIR}"
-		echo "naylampd sha256: $(shasum -a 256 "${BIN}" | cut -d' ' -f1)"
+		echo "naylampd sha256: ${PROV_SHA}"
 		echo "machine: $(uname -sr) $(sysctl -n hw.model 2>/dev/null || echo unknown)"
 		echo "load at start: $(uptime | sed 's/.*load averages*: //')"
 	} > "${OUT_LOCAL}/provenance.txt"
@@ -1858,9 +2240,9 @@ MUTPY
 #
 # The loopback version is VACUOUS here and a reader measured it: it reads
 # ${OUT_LOCAL}/node<n>.pid, which only launch_node writes and which the iron path
-# never calls, so left comes out 0 by construction and the verdict published "no
-# node left running and the fleet directory is gone" about a local directory that
-# never held anything. Meanwhile the three hosts kept naylamp/bin/naylampd-mutante,
+# never calls, so it finds nothing to complain about by construction and the
+# verdict published "no node left running and the fleet directory is gone" about a
+# local directory that never held anything. Meanwhile the three hosts kept naylamp/bin/naylampd-mutante,
 # naylamp/data-mutante, naylamp/testigo-corte.bin, and the SANE FLEET STOPPED,
 # because phase_red_fierro takes it down with cluster.sh stop-node and nothing
 # brought it back.
@@ -1874,9 +2256,25 @@ phase_hygiene_fierro() {
 	for n in "${NODE_IDS[@]}"; do
 		ask_on "$n" 'if [ -f naylamp/naylampd-mutante.pid ]; then pid=$(cat naylamp/naylampd-mutante.pid); kill -TERM "$pid" 2>/dev/null || true; sleep 1; kill -9 "$pid" 2>/dev/null || true; fi; true' >/dev/null 2>&1 || true
 	done
+	# EL rc SE CAPTURA DENTRO DE LA SUSTITUCION Y NO CON UN `$?` DETRAS, y esta linea
+	# es una correccion del 8 de septiembre de 2026 que se lleva por delante toda la
+	# fase. `ask_on` tiene TRES salidas, 0 si, 1 no, 2 ilegible, y aqui la respuesta
+	# NORMAL es 1: el paso de arriba acaba de matar esos daemons, asi que ninguno
+	# esta vivo. Escrita como orden desnuda seguida de `rc_a=$?`, ese 1 es un fallo
+	# a los ojos de `set -e` y **mataba el guion en la primera vuelta del bucle**,
+	# antes de asignar `rc_a` siquiera. Todo lo que hay debajo era codigo muerto en
+	# fierro: los pasos 2, 3 y 4, el barrido del sello, la linea de PASS y el propio
+	# `end_check`, con lo que P2.hygiene salia `none` y la corrida cerraba diciendo
+	# que aborto. Reproducido en el bash 3.2 de esta maquina con una funcion que
+	# devuelve 1: el bucle muere en la vuelta uno sin imprimir nada.
+	#
+	# LA FORMA ES LA QUE ESTE MISMO FICHERO YA USA BIEN mas arriba, en el censo de
+	# hosts vivos: la sustitucion corre en un subshell y lo que se lee es lo que
+	# `echo $?` imprime, no el estado de la orden. De los ocho `ask_on` de este
+	# guion, seis estaban ya en forma segura (dentro de un `if`, con `|| true`, o
+	# como ultima orden de su funcion) y este era el unico desnudo.
 	for n in "${NODE_IDS[@]}"; do
-		ask_on "$n" 'pid=$(cat naylamp/naylampd-mutante.pid 2>/dev/null); [ -n "${pid}" ] && kill -0 "${pid}"'
-		rc_a=$?
+		rc_a="$(ask_on "$n" 'pid=$(cat naylamp/naylampd-mutante.pid 2>/dev/null); [ -n "${pid}" ] && kill -0 "${pid}"'; echo $?)"
 		case "${rc_a}" in
 			0) vivos=$((vivos + 1)); fail "P2.hygiene: node ${n} still has a mutant daemon alive" ;;
 			1) ;;
@@ -1910,7 +2308,14 @@ phase_hygiene_fierro() {
 	fi
 	# 4. and the local side, same as the rehearsal
 	rm -rf -- "${OUT_DIR}/p2-fleet-${RUN_ID}"
-	[ "${CHECK_FAILED}" -eq 0 ] && pass "P2.hygiene: the three hosts carry nothing this run put there, no mutant daemon is alive, and the sane fleet is back up on ${levantados} of ${#NODE_IDS[@]}"
+	# 5. AND THE SEAL, which is the half of this claim that faces THIS machine.
+	#    Points 1 to 3 say the three hosts carry nothing this run put there; without
+	#    this one, nothing says that what the run produced HERE survives the next
+	#    make clean. The order inside is the whole point and it is written in the
+	#    function: seal first, then sweep, so the sweep includes the artifact this
+	#    very run just wrote and a run that fails to seal itself reddens here.
+	veredicto_del_sello
+	[ "${CHECK_FAILED}" -eq 0 ] && pass "P2.hygiene: the three hosts carry nothing this run put there, no mutant daemon is alive, the sane fleet is back up on ${levantados} of ${#NODE_IDS[@]}, and this run's artifact carries its seal"
 	end_check P2.hygiene
 }
 
@@ -2214,7 +2619,7 @@ phase_hygiene() {
 		return
 	fi
 	begin_check
-	local n left=0
+	local n
 	for n in "${NODE_IDS[@]}"; do
 		if node_alive "$n"; then
 			kill "$(node_pid "$n")" 2>/dev/null || true
@@ -2228,7 +2633,7 @@ phase_hygiene() {
 	done
 	sleep 0.5
 	for n in "${NODE_IDS[@]}"; do
-		node_alive "$n" && { left=$((left + 1)); fail "P2.hygiene: node ${n} is still running"; }
+		node_alive "$n" && fail "P2.hygiene: node ${n} is still running"
 	done
 	# AND THE MUTANT DAEMONS, which this verdict did not look at until 2026-09-07.
 	# phase_red launches three of them and writes their pids to pids-mut.txt, and
@@ -2249,7 +2654,6 @@ phase_hygiene() {
 	local mut_vivos
 	mut_vivos="$(mut_barre "")"
 	if [ "${mut_vivos}" -ne 0 ]; then
-		left=$((left + mut_vivos))
 		fail "P2.hygiene: ${mut_vivos} mutant daemons are still running after this phase tried to stop them"
 	fi
 	# The removal is written against a LITERAL prefix with the run id appended
@@ -2273,9 +2677,22 @@ phase_hygiene() {
 	fi
 	if [ -d "${FLEET}" ]; then
 		fail "P2.hygiene: the fleet directory survived its own removal"
-	elif [ "${left}" -eq 0 ]; then
-		pass "P2.hygiene: no node left running and the fleet directory is gone"
 	fi
+	# Y EL BARRIDO DE SELLOS TAMBIEN AQUI. En el ensayo seal_artifact devuelve en su
+	# primera linea, asi que lo unico que corre es el barrido, y eso es deliberado:
+	# el barrido es lo que convierte un artefacto de fierro sin sello en una linea
+	# roja, y el ensayo es lo que mas veces pasa por delante de gate/out.
+	veredicto_del_sello
+	# EL VERDE CUELGA DE CHECK_FAILED, y hasta este cambio colgaba de un contador
+	# propio, `left`, que solo subia en los sitios que cuentan nodos. Los dos decian
+	# lo mismo mientras cada sitio que lo subia llamaba tambien a fail, que era el
+	# caso; el barrido de sellos de arriba rompe esa igualdad, porque falla sin
+	# tocar ningun nodo. Con la condicion vieja, una corrida con un artefacto de
+	# fierro sin sello habria impreso su linea de PASS justo encima de su propio
+	# veredicto rojo. El contador se ha ido entero en vez de quedarse asignado y sin
+	# leer: fail ya lleva la cuenta que decide, y una segunda que nadie lee es la
+	# clase de adorno que este fichero le quita a otros.
+	[ "${CHECK_FAILED}" -eq 0 ] && pass "P2.hygiene: no node left running, the fleet directory is gone, and no p2 iron artifact is left unsealed"
 	end_check P2.hygiene
 }
 
@@ -2326,7 +2743,48 @@ limpia_flota() {
 # can never come out zero.
 al_salir() {
 	local rc=$?
+	# `set +e` EN LA TRAMPA, y entra el 8 de septiembre de 2026 con el sello. No es
+	# relajar la guardia: es que una trampa que se muere a mitad es peor que una que
+	# sigue. Sin esta linea, `completa_el_sello` puede matar la salida: su
+	# `esperada="$(grep -m1 '^expected:' ...)"` es una ASIGNACION cuya sustitucion
+	# falla si el sello no lleva esa linea, y bajo `set -e` eso mata al shell DENTRO
+	# de la trampa, o sea que se saltan `retira_running` y el bloque de veredictos y
+	# la corrida se cierra sin decir nada. `cleanup` de gate/p1.sh lleva este `set +e`
+	# desde su primera version y por esta misma razon; esta trampa no lo llevaba
+	# porque hasta hoy ninguna de sus lineas podia fallar.
+	#
+	# LO QUE NO LO VIGILA, dicho: ninguna fila de banco. gate/p2-guard-test.sh corre
+	# cada copia con `set -e` puesto y llegaria hasta aqui, pero el sello NO se
+	# escribe en el ensayo, asi que la rama no se alcanza desde alli; y
+	# gate/p2-iron-test.sh sourcea este fichero bajo su propio `set -uo pipefail`,
+	# sin `-e`, o sea que reproduce la version indulgente. Va escrito en vez de
+	# fingir que una fila lo cubre.
+	set +e
 	limpia_flota
+	# EL SELLO DE RESPALDO, y es un respaldo y no el sitio al que el sello
+	# pertenece. phase_hygiene_fierro sella primero, con la corrida viva, para que
+	# la corrida pueda comprobar su propio sello y ponerse roja. Esto recoge las
+	# corridas que nunca llegan a la higiene: todos los subcomandos menos all y red,
+	# mas cualquier aborto. Sellar tambien aqui es por lo que una corrida que muere a
+	# mitad de fase conserva lo que alcanzo a escribir.
+	#
+	# Y VA DESPUES DE limpia_flota A PROPOSITO, con la razon corregida por un lector:
+	# esa funcion COPIA los logs de los nodos dentro del artefacto, no los mueve, y
+	# lo que la ordena antes no es el valor de esos logos como cita. Es la prueba del
+	# VACIO: seal_artifact se niega a sellar un artefacto cuyo unico fichero sea el
+	# marcador, asi que una corrida que murio antes de escribir nada propio solo
+	# tiene algo que sellar DESPUES de que los logs esten dentro. En los caminos
+	# `all` y `red` esto no decide nada, porque el sello ya lo escribio
+	# phase_hygiene_fierro; decide en los que nunca llegan a la higiene, que son
+	# justo los que este respaldo existe para recoger.
+	#
+	# EL MARCADOR SE RETIRA AL FINAL Y NO AL PRINCIPIO, que es la forma de p1.sh y
+	# su razon es la ventana: entre la retirada y el sello el artefacto no lleva
+	# ninguna de las dos guardas, ni marcador vivo ni sello, y un barrido que caiga
+	# ahi se lo lleva. Hoy esa ventana son tres llamadas; el dia que al_salir crezca,
+	# y en fierro crecera, deja de ser gratis.
+	seal_artifact
+	completa_el_sello
 	retira_running
 	if [ "${RUN_STARTED}" -eq 1 ] && [ "${EMITIDO}" -eq 0 ]; then
 		echo "gate: the run ABORTED before reaching its verdict block, so nothing above is a result" >&2
@@ -2401,6 +2859,13 @@ main() {
 	trap 'exit 130' INT
 	trap 'exit 143' TERM
 	banner
+	# LAS DOS COSAS QUE EL SELLO CITA DE LA INVOCACION, y se guardan JUNTO a
+	# RUN_STARTED y no antes: un sello solo se escribe cuando la corrida empezo, asi
+	# que estos dos datos no pueden existir en una invocacion que no llego a
+	# empezar. La hora es la del arranque en UTC y no `ahora`, que devuelve
+	# segundos epoch con tres decimales para restar tiempos y no para leerse.
+	SUBCOMANDO="${sub}"
+	ARRANCO_A="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 	RUN_STARTED=1
 	case "${sub}" in
 		all)

@@ -13,8 +13,9 @@
 # documentation address unless NAYLAMP_RED_ARM is set, so a real gate that found
 # this stub in front of the real ssh would die at its first probe.
 #
-# The workspace is gate/out/p2-iron-test, a literal path, rebuilt from zero every
-# run and removed when the rows are green. It is swept by make clean either way.
+# The workspace is gate/out/banco-iron-p2, a literal path, rebuilt from zero every
+# run and removed when the rows are green. It is swept by make clean either way,
+# and that is true because of the name: see the block beside the definition.
 set -uo pipefail
 
 # QUIEN ES ESTE BANCO, dicho en su PRIMERA linea de salida y en una forma que no
@@ -29,11 +30,42 @@ set -uo pipefail
 echo "BANCO: p2-iron-test"
 
 GATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BANCO="${GATE_DIR}/out/p2-iron-test"
+# EL TALLER NO SE LLAMA p2-ALGO, y el nombre viejo, gate/out/p2-iron-test, era un
+# defecto medido por un lector. La guarda de `make clean` refuse por FORMA,
+# `p[0-9]-* ! p[0-9]-local-*`, asi que aquel nombre casaba: mientras el banco
+# corria, un `make clean` en otra terminal se negaba, y un banco matado dejaba un
+# directorio que la guarda protege y que nada puede sellar. La cabecera de este
+# fichero decia "It is swept by make clean either way", que era FALSO con ese
+# nombre y es cierto con este. El dia que este banco entra en CI, o sea hoy, eso
+# deja de ser una molestia de esta maquina.
+BANCO="${GATE_DIR}/out/banco-iron-p2"
 
 FALLAS=0
 ROJAS=0
 FILAS=0
+# LA BANDERA DE TERMINACION, y entra el 8 de septiembre de 2026 con este banco: el
+# dia que pasa a correr en CI. Una trampa EXIT se come el estado de salida cuando
+# el guion muere a mitad, asi que un banco abortado se lee como un paso verde. Este
+# tenia la trampa y no la bandera, o sea justo la mitad que hace falta para que el
+# fallo sea silencioso.
+#
+# LA CUENTA VA RE-DERIVADA Y NO RECITADA, porque la primera version de este
+# comentario decia "los otros tres bancos" y "un cuarto sitio", y las dos cifras
+# eran falsas; las cazo un lector contando. En gate/ hay OCHO bancos y SIETE ya
+# llevaban la bandera: este era el unico sin ella. Y en ci.yml ya corren CUATRO
+# pasos de banco, no tres, asi que este es el QUINTO. La orden que lo re-deriva es
+# `grep -c "ABORTADO antes del resumen" gate/*-test.sh` fichero a fichero, y
+# `grep 'run: ./gate/' .github/workflows/ci.yml` para los pasos.
+COMPLETO=0
+# UNA FILA PUEDE NO APLICAR EN ESTA MAQUINA, y entonces no se cuenta como fila.
+# Es la misma forma que gate/sello-test.sh: contarla como OK seria publicar un pase
+# que nadie corrio, y contarla como FALLA pondria roja a CI por la ausencia de algo
+# que ese entorno no puede dar. Se declara, se cuenta aparte y se dice el motivo.
+OMITIDAS=0
+no_aplica() {
+	OMITIDAS=$((OMITIDAS + 1))
+	printf 'FILA %-4s NO APLICA %s\n' "$1" "$2"
+}
 fila() {
 	local id="$1" quiero="$2" tengo="$3" porque="$4"
 	FILAS=$((FILAS + 1))
@@ -65,20 +97,46 @@ barre_el_banco() {
 	# El artefacto con nombre de fierro que este banco crea se retira SIEMPRE, con
 	# su ruta literal y el run id dentro, falle o no: si se quedara, `make clean`
 	# se negaria a barrer gate/out entero hasta que alguien lo sellara a mano.
-	if [ -n "${OUT_LOCAL:-}" ] && [ -n "${RUN_ID:-}" ] && [ "${OUT_LOCAL}" = "${GATE_DIR}/out/p2-${RUN_ID}" ]; then
-		rm -rf -- "${GATE_DIR}/out/p2-${RUN_ID}"
-	elif [ -n "${OUT_LOCAL:-}" ]; then
-		echo "p2-iron-test: NO retiro ${OUT_LOCAL}: no es la ruta que este banco sabe borrar" >&2
+	# LA TRAMPA MIRA ARTEFACTO_REAL Y NO OUT_LOCAL, y esto es una correccion del 8 de
+	# septiembre de 2026 que trajo un lector matando el banco a proposito. Las filas
+	# del sello MUEVEN OUT_LOCAL, OUT_DIR y RUN_ID a talleres de mentira para montar
+	# sus casos, y los devuelven a mano al terminar. Un `exit` dentro de una de esas
+	# ventanas dejaba a la trampa comparando la ruta de mentira contra la de verdad:
+	# la guarda no casaba, se imprimia "NO retiro" nombrando la ruta EQUIVOCADA, y el
+	# artefacto de fierro de verdad se quedaba en gate/out con su SEALED dentro y sin
+	# linea `closed:`. O sea un artefacto FABRICADO que se lee como una corrida de
+	# fierro matada, y que `make clean` no barre nunca por llevar sello. Medido: el
+	# banco muerto a mitad del bloque 17n-17q dejaba
+	# gate/out/p2-<run id>/{RUNNING,hygiene.log,SEALED}.
+	#
+	# ARTEFACTO_REAL se fija UNA vez, justo despues de cargar p2.sh, y ninguna fila
+	# lo toca. La guarda de forma se queda, porque lo que justifica un `rm -rf` no es
+	# de donde salio la variable sino que la ruta se haya comprobado antes de usarla.
+	if [ -n "${ARTEFACTO_REAL:-}" ] && [ "${ARTEFACTO_REAL}" = "${GATE_DIR}/out/$(basename "${ARTEFACTO_REAL}")" ] \
+		&& [ "$(basename "${ARTEFACTO_REAL}" | cut -c1-3)" = "p2-" ]; then
+		rm -rf -- "${GATE_DIR}/out/$(basename "${ARTEFACTO_REAL}")"
+	elif [ -n "${ARTEFACTO_REAL:-}" ]; then
+		echo "p2-iron-test: NO retiro ${ARTEFACTO_REAL}: no es la ruta que este banco sabe borrar" >&2
+	fi
+	# Y LOS TALLERES DE MENTIRA VIVEN DENTRO DEL BANCO, asi que se van con el; pero
+	# antes hay que devolver el permiso de escritura, porque la fila 17p pone un
+	# directorio en modo 500 y un banco muerto entre el chmod y su vuelta deja un
+	# arbol que ni `rm -rf` ni `make clean` pueden retirar. Medido por un lector.
+	[ -d "${BANCO}" ] && chmod -R u+w "${BANCO}" 2>/dev/null
+	if [ "${COMPLETO}" -ne 1 ]; then
+		echo "p2-iron-test: ABORTADO antes del resumen; lo impreso arriba NO es un resultado" >&2
+		echo "p2-iron-test: el banco queda en gate/out/banco-iron-p2" >&2
+		exit 1
 	fi
 	if [ "${rc}" -eq 0 ] && [ "${FALLAS}" -eq 0 ]; then
-		cd "${GATE_DIR}/out" && rm -rf p2-iron-test
+		cd "${GATE_DIR}/out" && rm -rf banco-iron-p2
 		echo "p2-iron-test: todas las filas verdes; el banco y su artefacto se barren"
 	else
-		echo "p2-iron-test: ${FALLAS} filas en FALLA o un aborto; el banco queda en gate/out/p2-iron-test" >&2
+		echo "p2-iron-test: ${FALLAS} filas en FALLA o un aborto; el banco queda en gate/out/banco-iron-p2" >&2
 	fi
 }
 
-[ -d "${BANCO}" ] && { cd "${GATE_DIR}/out" && rm -rf p2-iron-test; }
+[ -d "${BANCO}" ] && { cd "${GATE_DIR}/out" && rm -rf banco-iron-p2; }
 mkdir -p "${BANCO}/bin" "${BANCO}/casa" "${BANCO}/estado"
 : > "${BANCO}/llave"
 chmod 600 "${BANCO}/llave"
@@ -186,8 +244,11 @@ echo
 # shellcheck source=p2.sh
 source "${GATE_DIR}/p2.sh" >/dev/null 2>&1
 # Solo AHORA, con p2.sh ya cargado y sus nombres en su sitio, se arma la trampa.
+# El artefacto de fierro de ESTA corrida, capturado antes de que ninguna fila
+# pueda mover OUT_LOCAL. Es lo unico que la trampa borra bajo gate/out.
+ARTEFACTO_REAL="${OUT_LOCAL}"
 trap barre_el_banco EXIT
-echo "-- cargado en modo fierro: ES_FIERRO=${ES_FIERRO}, artefacto $(basename "${OUT_LOCAL}") --"
+echo "-- cargado en modo fierro: ES_FIERRO=${ES_FIERRO}, artefacto $(basename "${ARTEFACTO_REAL}") --"
 echo
 
 # ---- 1 a 5: la lectura de sysrq, que no es una mascara plana -------------------
@@ -242,6 +303,358 @@ OUT_LOCAL="${GATE_DIR}/out/p2-un-tercer-nombre"
 roja 17 "1" "$(retira_running 2>&1 | grep -c 'NOT removed')" "y con un tercer nombre se niega EN VOZ ALTA en vez de callarse"
 OUT_LOCAL="${GUARDA_OUT}"
 rm -f -- "${OUT_LOCAL}/RUNNING"
+
+# ---- 17a a 17u: EL SELLO DEL ARTEFACTO DE FIERRO, DEFER-098 -------------------
+#
+# POR QUE ESTAS FILAS VIVEN AQUI Y NO EN gate/p2-guard-test.sh. Aquel banco corre
+# el ENSAYO, y el ensayo no sella nunca: seal_artifact devuelve en su primera
+# linea con ES_FIERRO distinto de 1, que es deliberado, porque un p2-local- lo
+# barre un make clean cualquiera y un sello dentro seria la marca de evidencia
+# puesta sobre lo que no lo es. Un banco que no puede ver el objeto no lo prueba,
+# y este fichero ya lleva escrita esa leccion mas arriba. Aqui p2.sh esta cargado
+# en modo fierro, asi que el objeto existe: OUT_LOCAL es un p2-<run id> de verdad.
+#
+# Y SE DISPARAN POR LOS DOS LADOS, que es lo que este banco dice de si mismo en su
+# primera linea. Cada decision del sello se mide en su forma de hoy y en la forma
+# que tendria sin ella, porque una fila que solo pasa sobre la forma buena no
+# separa "la decision esta en el codigo" de "la decision esta en la prosa".
+RUN_STARTED=1
+SUBCOMANDO=all
+ARRANCO_A="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+EXPECTED="P2.build P2.hygiene"
+VERDICTS=" P2.build=pass "
+
+# El barrido devuelve la cuenta de los que visito pegada a la lista de los que no
+# llevan sello, asi que la pregunta "me nombra a MI" se hace por el nombre y no
+# por la cuenta: otro p2-<run id> en gate/out moveria la cuenta y no dice nada
+# sobre este artefacto.
+esta_en_el_barrido() {
+	case " $(artefactos_de_fierro_sin_sello) " in
+		*" $(basename "${OUT_LOCAL}") "*) printf 'si' ;;
+		*) printf 'no' ;;
+	esac
+}
+# Cuenta las palabras de una linea del sello. grep -c sale con 1 cuando cuenta
+# cero, que aqui es un valor y no un error, y por eso se lee el texto y nunca el
+# estado de salida.
+palabras_de() { sed -n "s/^$1:  *//p" "${OUT_LOCAL}/SEALED" | tr ' ' '\n' | grep -c . ; }
+
+# EL ESTADO DE LA 17a SE MONTA AQUI Y NO SE HEREDA, y un lector midio lo que
+# costaba: la fila exige que el artefacto tenga SOLO el marcador dentro, y ese
+# estado lo dejaban las filas 15 a 17, no ella. Un fichero de mas en cualquier fila
+# anterior y la 17a se invierte sin que nadie lo note. Ahora lo rehace desde cero.
+rm -rf -- "${OUT_LOCAL}"
+mkdir -p "${OUT_LOCAL}"
+escribe_running
+seal_artifact
+roja 17a "no|no" "$([ -e "${OUT_LOCAL}/SEALED" ] && echo si || echo no)|$(esta_en_el_barrido)" "con solo el marcador dentro NO se sella y el barrido NO lo nombra: es la excepcion del vacio, y seal_artifact, el barrido y la guarda del Makefile la preguntan igual"
+
+printf 'lo que esta corrida escribio\n' > "${OUT_LOCAL}/hygiene.log"
+roja 17b "no|si" "$([ -e "${OUT_LOCAL}/SEALED" ] && echo si || echo no)|$(esta_en_el_barrido)" "con contenido y sin sello el barrido LO NOMBRA, y esa es la linea que pone roja a P2.hygiene y la que make clean convierte en una negativa"
+
+seal_artifact
+ESPERADA_ANTES="$(grep -m1 '^expected:' "${OUT_LOCAL}/SEALED")"
+fila 17c "si|no" "$([ -e "${OUT_LOCAL}/SEALED" ] && echo si || echo no)|$(esta_en_el_barrido)" "y en cuanto el sello esta escrito, el barrido deja de nombrarlo: es la linea del barrido que salta un artefacto sellado. El ORDEN de las dos operaciones no lo mide esta fila, lo mide la 17k, y decir aqui que si era describirse de mas"
+
+roja 17d "0|1|2" "$(grep -c '^closed:' "${OUT_LOCAL}/SEALED")|$(palabras_de verdicts)|$(palabras_de expected)" "el sello a medias no lleva closed y trae MENOS veredictos que esperados, que es la forma que una corrida matada y una completa compartian en gate/p1.sh hasta el 8 de septiembre de 2026"
+
+# La corrida llega a su final: la higiene emite el veredicto que faltaba y la
+# trampa termina el sello. Es la secuencia de al_salir, sin la trampa.
+record_verdict P2.hygiene pass
+completa_el_sello
+fila 17e "1|2|2" "$(grep -c '^closed:' "${OUT_LOCAL}/SEALED")|$(palabras_de verdicts)|$(palabras_de expected)" "terminado, lleva UNA linea closed y tantos veredictos como esperados: una corrida completa y una matada dejan de tener la misma forma"
+fila 17f "${ESPERADA_ANTES}" "$(grep -m1 '^expected:' "${OUT_LOCAL}/SEALED")" "la linea expected sale identica byte a byte, que es por la que dos sellos se comparan. Lo que esta fila mide es el brazo VERBATIM del bucle, no la guarda que compara: quitando esa guarda entera el banco sigue verde, medido, y por que no se puede alcanzar desde fuera va escrito en el bloque de la 17n"
+
+completa_el_sello
+fila 17g "1|1" "$(grep -c '^closed:' "${OUT_LOCAL}/SEALED")|$(grep -c '^verdicts:' "${OUT_LOCAL}/SEALED")" "dos pasadas dejan UNA sola closed y UNA sola verdicts: terminar un sello ya terminado no lo duplica"
+fila 17h "0" "$(ls -1 "${OUT_LOCAL}" | grep -c '^SEALED\.a-medias$')" "y no sobrevive ningun SEALED.a-medias dentro de un artefacto que el sello protege de make clean"
+
+# LA 17i TIENE DOS MITADES Y LA PRIMERA VERSION SOLO TENIA UNA, que es un hallazgo
+# de lector: medida solo por el eco, un p2.sh al que se le quitara la linea de la
+# bandera y se le dejara el eco gritaria "THIS run did not write it" en CADA segunda
+# llamada normal de la corrida, que es el caso corriente, y la fila seguia verde. La
+# mitad que faltaba es esa: con la bandera puesta, la segunda llamada es SILENCIOSA.
+roja 17i "0|1|1" "$(seal_artifact 2>&1 | grep -c 'did not write it')|$( SELLO_ESCRITO_AQUI=0; seal_artifact 2>&1 | grep -c 'did not write it')|$(grep -c '^closed:' "${OUT_LOCAL}/SEALED")" "con la bandera puesta la segunda llamada de la corrida NO dice nada, y sin ella un sello que esta corrida no escribio se dice en voz alta y no se toca: la bandera de la clausula 30, y aqui basta una porque ningun subcomando de este guion adopta el id de otra corrida"
+
+# 17u: UN SELLO QUE NO SE PUDO ESCRIBIR NO SE ANUNCIA COMO ESCRITO, y esta fila
+#      entra con la guarda que la hace posible. Medido en el bash 3.2 de esta
+#      maquina: un grupo `{ ...; } > fichero` cuyo destino no se puede crear imprime
+#      su error, devuelve 1 y NO dispara `set -e`, asi que la bandera se ponia a 1 y
+#      la consola decia "sealed the artifact" sin que existiera fichero. La fila
+#      exige las tres cosas: no hay sello, la bandera sigue en cero, y se dice.
+GUARDA_OUT="${OUT_LOCAL}"
+OUT_LOCAL="${BANCO}/artefacto-sin-permiso"
+rm -rf -- "${OUT_LOCAL}"; mkdir -p "${OUT_LOCAL}"
+printf 'contenido\n' > "${OUT_LOCAL}/manifest.txt"
+GUARDA_RUNID2="${RUN_ID}"; RUN_ID="$(basename "${GUARDA_OUT}" | sed 's/^p2-//')"
+mv -- "${OUT_LOCAL}" "${BANCO}/p2-${RUN_ID}"; OUT_LOCAL="${BANCO}/p2-${RUN_ID}"
+chmod 500 "${OUT_LOCAL}"
+SELLO_ESCRITO_AQUI=0
+if ( : > "${OUT_LOCAL}/.sonda-17u" ) 2>/dev/null; then
+	rm -f -- "${OUT_LOCAL}/.sonda-17u"
+	chmod 700 "${OUT_LOCAL}"
+	no_aplica 17u "el modo 500 no deniega la escritura en este entorno, probablemente root"
+else
+	SALIDA_17U="$(seal_artifact 2>&1)"
+	chmod 700 "${OUT_LOCAL}"
+	roja 17u "no|0|1" "$([ -e "${OUT_LOCAL}/SEALED" ] && echo si || echo no)|${SELLO_ESCRITO_AQUI}|$(printf '%s' "${SALIDA_17U}" | grep -c 'could NOT be written')" "un sello que no se pudo escribir no deja bandera puesta ni anuncia que se sello: sin esa comprobacion la redireccion falla en silencio y la corrida cierra diciendo que sello algo que no existe"
+fi
+rm -rf -- "${OUT_LOCAL}"
+RUN_ID="${GUARDA_RUNID2}"
+OUT_LOCAL="${GUARDA_OUT}"
+SELLO_ESCRITO_AQUI=1
+
+GUARDA_OUT="${OUT_LOCAL}"
+OUT_LOCAL="${BANCO}/p2-un-cuarto-nombre"
+mkdir -p "${OUT_LOCAL}"
+printf 'expected:    P2.build\nverdicts:    P2.build=pass\n' > "${OUT_LOCAL}/SEALED"
+roja 17j "1|0" "$(completa_el_sello 2>&1 | grep -c 'is not p2-')|$(grep -c '^closed:' "${OUT_LOCAL}/SEALED")" "y bajo un nombre que no es p2-<run id> se niega EN VOZ ALTA y no lo termina, en vez de escribir un closed dentro de un fichero que no sabe de quien es"
+OUT_LOCAL="${GUARDA_OUT}"
+
+# ---- 17k y 17l: EL ORDEN, medido por su efecto y no por su texto -------------
+#
+# Las filas de arriba llaman a seal_artifact y al barrido por separado, asi que
+# seguirian verdes con las dos lineas cambiadas de sitio dentro de
+# veredicto_del_sello. Estas dos llaman a la funcion entera, que es donde el orden
+# vive: sellar primero y barrer despues es lo que hace que el barrido incluya el
+# sello que la corrida acaba de escribir. Con las dos lineas al reves, el barrido
+# nombraria el artefacto y la 17k saldria roja.
+rm -f -- "${OUT_LOCAL}/SEALED"
+SELLO_ESCRITO_AQUI=0
+CHECK_FAILED=0
+veredicto_del_sello
+fila 17k "sellado|verde" "$([ -e "${OUT_LOCAL}/SEALED" ] && echo sellado || echo sin-sello)|$([ "${CHECK_FAILED}" -eq 0 ] && echo verde || echo rojo)" "veredicto_del_sello sella y DESPUES barre: el artefacto sale sellado y la fase no se pone roja por el"
+
+# Y la otra mitad: una corrida que NO consigue sellarse. Se monta quitandole a
+# seal_artifact su precondicion, RUN_STARTED, y no editando el guion: el objeto
+# que esta fila mide es el barrido, no la razon por la que no hubo sello.
+rm -f -- "${OUT_LOCAL}/SEALED"
+SELLO_ESCRITO_AQUI=0
+CHECK_FAILED=0
+RUN_STARTED=0
+veredicto_del_sello
+roja 17l "sin-sello|rojo" "$([ -e "${OUT_LOCAL}/SEALED" ] && echo sellado || echo sin-sello)|$([ "${CHECK_FAILED}" -eq 0 ] && echo verde || echo rojo)" "una corrida que no consigue sellarse se pone roja AQUI y AHORA, en la misma invocacion, en vez de que la evidencia se descubra ausente meses despues"
+RUN_STARTED=1
+CHECK_FAILED=0
+
+# ---- 17m: y las DOS lineas rojas no dicen lo mismo, que es por lo que son dos -
+#
+# veredicto_del_sello puede ponerse roja por dos causas y tienen remedios
+# distintos: que ESTA corrida no consiguiera sellarse, que es un defecto del gate,
+# o que en gate/out haya quedado un artefacto de OTRA corrida sin sellar, que se
+# arregla sellandolo o barriendolo a mano. Sin esta fila la primera comprobacion
+# quedaria implicada por el barrido, porque el barrido tambien nombra el artefacto
+# de esta corrida, y una guarda que ninguna fila puede distinguir de otra es
+# decoracion. Aqui se separan: con lo propio sellado y algo ajeno sin sello, la
+# linea de "this run" NO sale y la del barrido SI.
+#
+# EL ARTEFACTO AJENO NO SE CREA EN gate/out, y esa es la parte cara de esta fila.
+# Un p2-<run id> sin sello ahi arriba haria que `make clean` se negara para siempre
+# si este banco muriera antes de retirarlo, y barre_el_banco solo sabe borrar el
+# suyo. Se mueve OUT_DIR al taller del banco, que es lo que el barrido lee, asi
+# que el directorio de mentira nace y muere dentro de lo que la trampa ya barre.
+SELLO_ESCRITO_AQUI=0
+seal_artifact
+GUARDA_OUTDIR="${OUT_DIR}"
+OUT_DIR="${BANCO}/gate-out-de-mentira"
+mkdir -p "${OUT_DIR}/p2-20200101T000000Z-1"
+printf 'de otra corrida, y sin sello\n' > "${OUT_DIR}/p2-20200101T000000Z-1/manifest.txt"
+# LA SALIDA SE RECOGE EN UN FICHERO Y NO EN UNA SUSTITUCION, y la primera version
+# usaba `$( )`. Eso corre en un SUBSHELL, asi que el `fail` de dentro no llegaba a
+# CHECK_FAILED del padre y la linea que venia detras poniendolo a cero era un
+# no-op que se leia como si importara. Un lector lo midio. Con el fichero, el color
+# de la fase es legible y la fila puede exigirlo.
+CHECK_FAILED=0
+veredicto_del_sello 2> "${BANCO}/17m.err"
+OUT_DIR="${GUARDA_OUTDIR}"
+roja 17m "0|1|rojo" "$(grep -c 'this run wrote an artifact' "${BANCO}/17m.err")|$(grep -c 'p2-20200101T000000Z-1' "${BANCO}/17m.err")|$([ "${CHECK_FAILED}" -eq 0 ] && echo verde || echo rojo)" "con lo propio sellado y un artefacto AJENO sin sello, la linea de ESTA corrida no sale, el barrido nombra al ajeno y la fase se pone roja: es el barrido quien enrojece aqui, y por eso las dos guardas rojas no son la misma"
+CHECK_FAILED=0
+
+# ---- 17s: la guarda que NINGUN mutante tumbaba -------------------------------
+#
+# LA TRAJO UN LECTOR MIDIENDO: borrando entera la linea que dice "this run wrote an
+# artifact and did not seal it", el banco seguia con 0 en FALLA. La 17l se pone
+# roja igual porque en su montaje el artefacto esta DENTRO de gate/out y lo nombra
+# el barrido; la 17m solo comprobaba que la linea NO sale. O sea que esa guarda
+# estaba escrita, era la unica que nombra a la corrida en curso, y no la vigilaba
+# nadie.
+#
+# EL UNICO MONTAJE EN QUE SOLO ELLA PUEDE ENROJECER: OUT_DIR en un taller VACIO, y
+# el artefacto de la corrida FUERA de ese taller, con contenido y sin sello. Asi el
+# barrido no tiene nada que nombrar y lo que quede rojo es esa linea o nada.
+GUARDA_OUTDIR="${OUT_DIR}"; GUARDA_OUT="${OUT_LOCAL}"
+OUT_DIR="${BANCO}/taller-vacio"; mkdir -p "${OUT_DIR}"
+OUT_LOCAL="${BANCO}/artefacto-fuera-del-taller"
+rm -rf -- "${OUT_LOCAL}"; mkdir -p "${OUT_LOCAL}"
+printf 'lo que la corrida escribio\n' > "${OUT_LOCAL}/manifest.txt"
+SELLO_ESCRITO_AQUI=0
+CHECK_FAILED=0
+veredicto_del_sello 2> "${BANCO}/17s.err"
+roja 17s "1|0|rojo" "$(grep -c 'this run wrote an artifact' "${BANCO}/17s.err")|$(grep -c 'with no SEALED file' "${BANCO}/17s.err")|$([ "${CHECK_FAILED}" -eq 0 ] && echo verde || echo rojo)" "con el barrido sin nada que nombrar, la corrida que no consiguio sellar SU artefacto se pone roja por su propia linea: es la unica guarda que habla de la corrida en curso y hasta hoy no la miraba ninguna fila"
+OUT_DIR="${GUARDA_OUTDIR}"; OUT_LOCAL="${GUARDA_OUT}"
+CHECK_FAILED=0
+
+# ---- 17n a 17p: LAS TRES NEGATIVAS, y por que hacen falta ---------------------
+#
+# LAS DOCE FILAS DE ARRIBA PASAN TODAS POR EL CAMINO FELIZ, y eso se midio en vez
+# de suponerse: quitando entera la condicion que decide si la reescritura se
+# publica, las doce seguian verdes. Es la misma medida que gate/sello-test.sh
+# tuvo que hacerse sobre p1.sh, y la conclusion es la misma: un banco que solo
+# recorre el camino bueno no prueba la guarda, prueba el camino. Estas tres
+# fuerzan una negativa por tres rutas distintas y las tres exigen lo mismo, que es
+# lo unico que hace util a la negativa: el sello sobrevive BYTE A BYTE, no queda
+# ningun resto al lado, y la funcion lo dice en voz alta.
+#
+# EL TALLER SE MUEVE, y con el OUT_DIR y RUN_ID, porque completa_el_sello solo
+# actua sobre ${OUT_DIR}/p2-${RUN_ID} y estas filas necesitan sellos deliberadamente
+# rotos. Naciendo dentro del taller del banco, ninguno de ellos puede quedarse en
+# gate/out si esto muere a mitad.
+#
+# LO QUE ESTAS TRES NO ALCANZAN, declarado y no escondido: la mitad de la guarda
+# que compara `expected:` byte a byte NO es alcanzable desde fuera de la funcion.
+# El bucle copia verbatim toda linea que no sea verdicts: ni closed:, asi que
+# ninguna entrada valida puede hacer que esa linea salga distinta. Quien la mide es
+# gate/sello-test.sh, que EXTRAE la funcion de p1.sh y la muta; su gemela de aqui
+# esta cubierta por la otra mitad de la misma condicion, el recuento de lineas, que
+# la fila 17n si alcanza. El dia que esa mitad necesite su propia fila, el sitio es
+# un banco de extraccion y no una mutacion desde fuera.
+GUARDA_OUTDIR="${OUT_DIR}"; GUARDA_RUNID="${RUN_ID}"; GUARDA_OUT="${OUT_LOCAL}"
+OUT_DIR="${BANCO}/sellos"
+RUN_ID="20260908T100000Z-1"
+OUT_LOCAL="${OUT_DIR}/p2-${RUN_ID}"
+SELLO_ESCRITO_AQUI=1
+VERDICTS=" P2.build=pass P2.hygiene=pass "
+
+# siembra_sello <lineas closed que ya trae> [sin-verdicts]
+siembra_sello() {
+	rm -rf -- "${OUT_LOCAL}"
+	mkdir -p "${OUT_LOCAL}"
+	{
+		echo "Phase 2 iron gate artifact, sealed by gate/p2.sh."
+		echo
+		echo "expected:    P2.build P2.hygiene"
+		[ "${2:-}" = sin-verdicts ] || echo "verdicts:    P2.build=pass"
+		local i=0
+		while [ "${i}" -lt "$1" ]; do
+			echo "closed:      2026-09-08T1${i}:00:00Z"
+			i=$((i + 1))
+		done
+		echo "This file is what keeps make clean from taking the directory."
+	} > "${OUT_LOCAL}/SEALED"
+	huella_del_sello
+}
+huella_del_sello() { md5 -q "${OUT_LOCAL}/SEALED" 2>/dev/null || md5sum "${OUT_LOCAL}/SEALED" | cut -d' ' -f1; }
+restos_al_lado() { ls -1 "${OUT_LOCAL}" 2>/dev/null | grep -c '^SEALED\.a-medias$' ; }
+
+# 17n: DOS closed dentro. La reescritura tira las dos y pone una, o sea que sale
+#      con UNA LINEA MENOS; el recuento la caza y no se publica nada.
+ANTES_17N="$(siembra_sello 2)"
+SALIDA_17N="$(completa_el_sello 2>&1)"
+roja 17n "${ANTES_17N}|0|1" "$(huella_del_sello)|$(restos_al_lado)|$(printf '%s' "${SALIDA_17N}" | grep -c 'did not match the seal it came from')" "una reescritura que PIERDE lineas con expected intacta la caza el recuento: el sello sale identico byte a byte, sin restos y con su aviso"
+
+# 17o: sin linea verdicts no hay nada que reescribir, y callarse dejaria el sello
+#      descrito como el de una corrida que no llego a su final.
+ANTES_17O="$(siembra_sello 0 sin-verdicts)"
+SALIDA_17O="$(completa_el_sello 2>&1)"
+roja 17o "${ANTES_17O}|0|1" "$(huella_del_sello)|$(restos_al_lado)|$(printf '%s' "${SALIDA_17O}" | grep -c 'has no verdicts line')" "un sello sin linea de veredictos se deja EXACTAMENTE como esta y se dice, en vez de darse por terminado en silencio"
+
+# 17p: sin permiso de escritura al lado del sello no se puede escribir nada, ni
+#      siquiera una nota dentro del propio sello, y la confesion es lo unico que
+#      queda. Modo 500: leer y entrar si, crear no.
+# 17p PREGUNTA PRIMERO SI EL MODO 500 DENIEGA DE VERDAD, y esa mitad la trajo un
+# lector pensando en CI. Como root, y un job con `container:` corre como root, el
+# modo 500 NO deniega la escritura: la fila fallaria con una discrepancia de huella
+# y ninguna explicacion, o sea roja por el entorno y no por el objeto. Se sondea, y
+# si el sondeo escribe, la fila se declara NO APLICA en voz alta en vez de correr
+# una comprobacion que no puede fallar. El job de hoy corre como `runner`, asi que
+# hoy si aplica; el dia que eso cambie, se sabra por esta linea y no por un rojo.
+ANTES_17P="$(siembra_sello 0)"
+chmod 500 "${OUT_LOCAL}"
+if ( : > "${OUT_LOCAL}/.sonda-17p" ) 2>/dev/null; then
+	rm -f -- "${OUT_LOCAL}/.sonda-17p"
+	chmod 700 "${OUT_LOCAL}"
+	no_aplica 17p "el modo 500 no deniega la escritura en este entorno, probablemente root; una fila que no puede fallar no prueba nada y no se cuenta"
+else
+	SALIDA_17P="$(completa_el_sello 2>&1)"
+	chmod 700 "${OUT_LOCAL}"
+	roja 17p "${ANTES_17P}|0|1" "$(huella_del_sello)|$(restos_al_lado)|$(printf '%s' "${SALIDA_17P}" | grep -c 'nothing could be written beside it')" "sin permiso de escritura al lado, el sello sale intacto, sin restos, y la funcion confiesa que ese sello va a parecer el de una version que no terminaba sus sellos"
+fi
+
+# 17t: LA ULTIMA LINEA SIN SALTO. El bucle de completa_el_sello lleva un
+#      `|| [ -n "${linea}" ]` cuya ausencia no la vigilaba nadie, medido por un
+#      lector. Sin el, `read` devuelve falso en una ultima linea que no termina en
+#      salto y el bucle la TIRA; y el `closed:` que se anade compensa exactamente el
+#      uno que se pierde, asi que el recuento de lineas da el visto bueno y el sello
+#      se publica con una linea de menos. Hoy los sellos los escribe seal_artifact
+#      con `echo`, pero el Makefile invita a escribir uno a mano y la guarda que
+#      tendria que frenarlo es justo la que se deja enganar.
+rm -rf -- "${OUT_LOCAL}"; mkdir -p "${OUT_LOCAL}"
+printf 'Phase 2 iron gate artifact, sealed by gate/p2.sh.\nexpected:    P2.build P2.hygiene\nverdicts:    P2.build=pass\nla ultima linea, y va SIN salto' > "${OUT_LOCAL}/SEALED"
+completa_el_sello >/dev/null 2>&1
+roja 17t "1|1" "$(grep -c 'la ultima linea, y va SIN salto' "${OUT_LOCAL}/SEALED")|$(grep -c '^closed:' "${OUT_LOCAL}/SEALED")" "la ultima linea sin salto sobrevive a la reescritura: sin esa mitad de la condicion del bucle se pierde, y el closed que se anade tapa la perdida en el recuento"
+
+# 17q: LA BANDERA DE LA CLAUSULA 30, sola, y es la fila que mas pesa de las
+#      diecisiete. La 17i mide la mitad que vive en seal_artifact, que se NIEGA a
+#      escribir sobre un sello ajeno; esta mide la de completa_el_sello, que se
+#      niega a TERMINARLO. Hizo falta porque el barrido de mutantes lo midio: con
+#      esa guarda quitada entera, NINGUNA fila caia. Es la unica que separa
+#      terminar TU sello de ponerle un closed al de otra corrida, y en gate/p1.sh
+#      es exactamente la puerta por la que `p1.sh hygiene <run id>` habria
+#      machacado diecinueve veredictos con dos.
+ANTES_17Q="$(siembra_sello 0)"
+SELLO_ESCRITO_AQUI=0
+completa_el_sello
+roja 17q "${ANTES_17Q}|0" "$(huella_del_sello)|$(restos_al_lado)" "sin la bandera de la ESCRITURA el sello no se toca ni se termina: es lo que impide que una invocacion que se ENCONTRO un sello le ponga encima sus propios veredictos"
+SELLO_ESCRITO_AQUI=1
+
+rm -rf -- "${BANCO}/sellos"
+OUT_DIR="${GUARDA_OUTDIR}"; RUN_ID="${GUARDA_RUNID}"; OUT_LOCAL="${GUARDA_OUT}"
+CHECK_FAILED=0
+
+# ---- 17r: LA FASE DE HIGIENE DE FIERRO LLEGA A SU FINAL BAJO set -e ----------
+#
+# LA FILA MAS CARA DE ESTE BLOQUE Y LA QUE MAS PESA, y la trajo un lector leyendo
+# el guion y no el banco. `ask_on` tiene TRES salidas, 0 si, 1 no, 2 ilegible, y en
+# el paso 1 de phase_hygiene_fierro la respuesta NORMAL es 1: el paso de arriba
+# acaba de matar esos daemons. Escrita como orden desnuda seguida de `rc_a=$?`, ese
+# 1 es un fallo a los ojos de `set -e`, que es el modo en que corre gate/p2.sh, y
+# MATABA LA FASE EN LA PRIMERA VUELTA DEL BUCLE. Todo lo que hay debajo era codigo
+# muerto en fierro: los pasos 2, 3 y 4, el barrido del sello que este bloque entero
+# existe para probar, la linea de PASS y el propio `end_check`. O sea que la frase
+# "el sello se escribe desde la higiene y antes del barrido" era FALSA en el camino
+# de fierro, y ninguna de las diecisiete filas de arriba podia verlo, porque todas
+# llaman a las funciones del sello DIRECTAMENTE.
+#
+# COMO SE MIDE, y es la unica forma que separa las dos: se corre la fase ENTERA con
+# `set -e` puesto, contra la flota de mentira, y se exige que llegue a su ULTIMA
+# linea, que es la del barrido de sellos. Con la orden desnuda de vuelta, la fase no
+# imprime ni una linea y esta fila cae.
+#
+# LO QUE ESTA FILA NO DICE: nada sobre si los pasos 2 y 3 hacen bien su trabajo
+# contra hosts de verdad. Solo que la fase se recorre entera en vez de morirse en su
+# primer bucle, que es lo que estaba roto.
+mkdir -p "${ARTEFACTO_REAL}"
+# LA SALIDA VA A UN FICHERO Y NO A UNA SUSTITUCION, y NINGUN `|| true` toca a la
+# fase. Las dos versiones anteriores de esta linea cometieron el mismo defecto que
+# la fila mide, cada una por su lado, y las dos se cazaron con el mutante puesto:
+#
+#   1. `$( set -e; fase || true )`: una orden a la izquierda de `||` corre con
+#      errexit SUPRIMIDO, y la supresion entra en el cuerpo de la funcion, asi que
+#      el `set -e` de dentro no valia nada y la fila salia verde con el defecto.
+#   2. `SALIDA="$( set -e; fase )"` a secas, aqui si aborta, pero mata al BANCO:
+#      este fichero SOURCEA gate/p2.sh, que en su linea 55 pone `set -euo pipefail`,
+#      asi que desde esa linea el banco corre con errexit heredado. La sustitucion
+#      fallida se llevaba el banco entero por delante y la fila ni se imprimia.
+#
+# La forma de abajo separa las tres cosas: un subshell explicito con su propio
+# `set -e`, que no esta en contexto de condicion y por tanto no suprime nada; la
+# salida a fichero, que sobrevive a la muerte del subshell; y un `set +e` alrededor,
+# que impide que la muerte del subshell se lleve al banco.
+set +e
+( set -e; phase_hygiene_fierro ) > "${BANCO}/17r.out" 2>&1
+set -e
+roja 17r "1" "$(grep -c 'p2 iron artifacts under gate/out' "${BANCO}/17r.out")" "phase_hygiene_fierro se recorre ENTERA bajo set -e y llega a su ultima linea, el barrido de sellos: con un ask_on desnudo el 'no' normal del primer bucle mataba la fase y todo lo de abajo era codigo muerto en fierro"
+CHECK_FAILED=0
 
 # ---- 18 a 21: las primitivas de fierro contra el stub ------------------------
 fila 18 "aaaa-bbbb-cccc-0002" "$(boot_id_de 2)" "boot_id_de lee el boot id por el canal de tres estados"
@@ -384,7 +797,18 @@ fila 41 "1" "$(printf '%s' "${MUT_REMOTO}" | grep -c 'naylampd-mutante')" "va a 
 
 echo
 echo "=============================================================================="
+if [ "${OMITIDAS}" -ne 0 ]; then
+	echo "${OMITIDAS} fila(s) no aplican en este entorno y no se cuentan como filas; el motivo va impreso arriba"
+fi
 echo "RESULTADO: ${FILAS} filas, ${ROJAS} de ellas rojas, ${FALLAS} en FALLA"
+# COMPLETO SE PONE AQUI, detras del resumen y delante de la anti-vacuidad, por la
+# razon escrita en los otros bancos: salir por exit 1 con COMPLETO en cero hace que
+# la trampa imprima "ABORTADO antes del resumen" justo debajo del resumen.
+COMPLETO=1
+if [ "${FILAS}" -eq 0 ]; then
+	echo "p2-iron-test: VACIO. Cero filas, asi que este banco no ha probado nada, y eso NO es un pase" >&2
+	exit 1
+fi
 echo "LO QUE ESTE BANCO NO CUBRE, y va escrito: no enciende una VM, no dispara un"
 echo "sysrq-b de verdad y no mide un corte real. Prueba los PREDICADOS del camino de"
 echo "fierro y sus mutantes; la primera corrida de fierro es la que los prueba en"

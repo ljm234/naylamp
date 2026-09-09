@@ -351,6 +351,63 @@ jobs:
       - name: Seal completion guard
         working-directory: .
         run: ./gate/sello-test.sh
+
+      # THE IRON PATH OF gate/p2.sh, and it is here for the same reason the two
+      # steps above it are: it was written, it is green on the development
+      # machine, and until this line nothing made it run. That is the shape
+      # b345de8 was written to stop, and leaving a third bench unwired the day
+      # after would be repeating it rather than learning from it.
+      #
+      # WHY IT CAN RUN HERE, which is not true of its sibling
+      # gate/p2-guard-test.sh and the difference is measured, not assumed. That
+      # one launches a real three node fleet on loopback, builds binaries, and
+      # can re-mint gate/out/certs; it costs minutes and belongs to the machine
+      # where the gate is being written. This one starts NOTHING. Its fleet is a
+      # stub ssh over the RFC 5737 documentation range that refuses to answer
+      # without NAYLAMP_RED_ARM=1, and gate/common.sh refuses a documentation
+      # address without that same variable, so a real gate that ever found this
+      # stub in front of the real ssh would die at its first probe. It reaches no
+      # network and powers nothing on.
+      #
+      # WHERE IT WRITES, and the first version of this line was wrong in a way a
+      # reader caught with the bench's own output. It said "only inside
+      # gate/out/p2-iron-test". It writes in TWO places: its workspace, now named
+      # gate/out/banco-iron-p2 so it no longer matches the shape make clean
+      # protects, and a REAL iron artifact, gate/out/p2-<run id>, because the rows
+      # that matter need one that exists. Its EXIT trap removes the artifact
+      # always, by literal path, whether the rows are green or red, and the
+      # workspace when they are green. That removal is itself a fix from this
+      # round: it used to follow whatever OUT_LOCAL the last row had left pointing
+      # somewhere else, so a bench killed mid-row left a fabricated iron artifact
+      # behind, sealed and with no closed: line.
+      #
+      # WHAT IT DEFENDS as of 2026-09-08 is DEFER-098: gate/p2.sh created its iron
+      # artifact and wrote SEALED zero times, so every iron run left a directory
+      # that make clean refuses to sweep and that nothing ever sealed. Twenty one
+      # of its rows are the seal: that the empty exception holds, that sealing
+      # happens BEFORE the sweep so the sweep includes the seal the run just
+      # wrote, that the seal is finished with its closed: line so a killed run
+      # stops having the same shape as a complete one, that the three refusal
+      # routes leave the seal byte for byte intact with no leftover beside it, and
+      # that the whole iron hygiene phase is reachable under set -e at all, which
+      # it was not.
+      #
+      # ITS COST WAS MEASURED BEFORE IT WAS ADDED and not after, and it has a raw:
+      # 5.82 s to 6.10 s over three runs on a MacBook Pro M1 Max, in
+      # naylamp-p2-iron-coste-20260909T020118Z.txt in the runs directory. The step
+      # two above this one says why a cost figure that came from a terminal and no
+      # archived run does not count, and the first draft of this line was exactly
+      # that: it said 2.0 s, unarchived, and a reader caught it. RE-MEASURING ALSO
+      # MOVED THE NUMBER, which is the other half of why the raw matters: the rows
+      # added in the last round include one that runs the whole iron hygiene phase
+      # against the stub fleet, and the bench went from about two seconds to about
+      # six. Six seconds on a job that runs in about seven minutes is 1.4 per cent.
+      # Clause 22 says a step that does not move the clock is the one to read in the
+      # log, so the run this lands in gets its lines read one by one rather than its
+      # green taken as an answer.
+      - name: P2 iron path guard
+        working-directory: .
+        run: ./gate/p2-iron-test.sh
       - name: Hygiene tool
         working-directory: .
         run: |
