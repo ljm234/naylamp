@@ -393,15 +393,26 @@ jobs:
       # it was not.
       #
       # ITS COST WAS MEASURED BEFORE IT WAS ADDED and not after, and it has a raw:
-      # 5.82 s to 6.10 s over three runs on a MacBook Pro M1 Max, in
-      # naylamp-p2-iron-coste-20260909T020118Z.txt in the runs directory. The step
+      # 19.34 s to 19.79 s over three runs on a MacBook Pro M1 Max, in
+      # naylamp-p2-iron-coste-20260909T082118Z.txt in the runs directory. The step
       # two above this one says why a cost figure that came from a terminal and no
       # archived run does not count, and the first draft of this line was exactly
-      # that: it said 2.0 s, unarchived, and a reader caught it. RE-MEASURING ALSO
-      # MOVED THE NUMBER, which is the other half of why the raw matters: the rows
-      # added in the last round include one that runs the whole iron hygiene phase
-      # against the stub fleet, and the bench went from about two seconds to about
-      # six. Six seconds on a job that runs in about seven minutes is 1.4 per cent.
+      # that: it said 2.0 s, unarchived, and a reader caught it.
+      #
+      # AND THE FIGURE HAS MOVED TWICE, which is the other half of why the raw
+      # matters. It said about six seconds, from a raw of 5.82 s to 6.10 s taken on
+      # 2026-09-09 at 02:01Z. That reading was true of a bench that was not in any
+      # commit: measured on the same day against db1132c, the bench in the HISTORY
+      # is 79 rows and 5.33 s to 5.85 s, so the six-second line described the
+      # committed step by coincidence and the working tree not at all. The bench
+      # that the two pending commits actually put in front of CI is 129 rows and
+      # runs in about NINETEEN seconds, because four of those rows drive whole
+      # phases against the stub fleet -the iron hygiene sweep, the trap, and the
+      # cut, whose helper sleeps five seconds by design- instead of testing their
+      # pieces. Nineteen seconds on a job of about seven minutes is 4.5 per cent,
+      # and the trade is deliberate: those four rows are the ones that catch the
+      # defects that live at a call SITE, which is the class that cost this session
+      # five defects in one day.
       # Clause 22 says a step that does not move the clock is the one to read in the
       # log, so the run this lands in gets its lines read one by one rather than its
       # green taken as an answer.

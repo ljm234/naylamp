@@ -176,6 +176,17 @@ cd "${casa}" || exit 255
 # /proc/sys/kernel/..., en vez de con una version del guion adaptada al banco.
 orden="$*"
 orden="${orden//\/proc\//${casa}/proc/}"
+# UN NODO PUEDE FALLAR SOLO AL ARMAR, y hace falta poder pedirlo. La siembra del
+# testigo y su armado son dos viajes distintos y el gate los trata distinto: sin
+# siembra la fase se va antes de nada, y sin armado se anota el nodo y se sigue.
+# Para ejercer el segundo camino hay que negar el armado DEJANDO pasar la siembra,
+# y por eso no vale con romper el fichero: eso rompe la siembra primero. El armado
+# es el unico viaje que hace un `>>` sobre el testigo; la siembra usa python con
+# O_TRUNC. Se casa esa forma y no una longitud, que cambiaria el dia que alguien
+# mueva TESTIGO_COLA.
+if [ -f "${BANCO_ESTADO}/${n}.no-arma" ]; then
+	case "${orden}" in *">> naylamp/testigo-corte.bin"*) exit 1 ;; esac
+fi
 bash -c "${orden}"
 SSHFIN
 chmod +x "${BANCO}/bin/ssh"
@@ -742,6 +753,623 @@ roja 17z "0|7" "${RETIRADOS}|$(cuenta_ensayos)" "en una corrida de FIERRO el bar
 
 rm -rf -- "${BANCO}/techo"
 OUT_DIR="${GUARDA_OUTDIR}"; OUT_LOCAL="${GUARDA_OUT}"; ES_FIERRO="${GUARDA_FIERRO}"
+
+# ---- 17aa a 17ad: EL MARCADOR MANDA SOBRE EL TECHO ---------------------------
+#
+# ESTAS CUATRO FILAS EXISTEN POR UN INCIDENTE QUE YA IBA POR LA TERCERA VEZ, y la
+# tercera la escribio esta misma casa: el techo de los ensayos borraba por
+# antiguedad sin mirar el marcador RUNNING, o sea que un ensayo VIVO que corriera
+# fuera del banco perdia su directorio a mitad. Es lo que un `make clean` hizo el
+# 28 de agosto y el 7 de septiembre de 2026, con la leccion ya escrita en el
+# Makefile a dos ficheros de distancia. Se midio antes de arreglarlo: con un
+# artefacto viejo que llevaba un pid VIVO dentro y seis mas nuevos por delante, el
+# techo se lo llevo.
+#
+# EL PID VIVO ES UN PROCESO DE VERDAD Y NO UN NUMERO INVENTADO. Un pid escrito a
+# mano puede estar libre hoy y ocupado manana, y entonces la fila mide otra cosa
+# sin decirlo. Aqui se lanza un `sleep`, se usa SU pid, y se mata al terminar.
+GUARDA_OUTDIR="${OUT_DIR}"; GUARDA_OUT="${OUT_LOCAL}"; GUARDA_FIERRO="${ES_FIERRO}"
+OUT_DIR="${BANCO}/marcador"
+ES_FIERRO=0
+rm -rf -- "${OUT_DIR}"; mkdir -p "${OUT_DIR}"
+
+sleep 300 &
+PID_VIVO=$!
+
+# Cuatro artefactos viejos, uno por cada respuesta de marcador_de, y seis nuevos
+# por delante para empujarlos a todos por debajo del techo.
+siembra_marcado() {   # <nombre> <contenido del RUNNING, o vacio para no ponerlo>
+	mkdir -p "${OUT_DIR}/$1"
+	printf 'manifiesto\n' > "${OUT_DIR}/$1/manifest.txt"
+	[ -n "${2:-}" ] && printf 'pid: %s\nrun: %s\nscript: gate/p2.sh\n' "$2" "$1" > "${OUT_DIR}/$1/RUNNING"
+	touch -t 202601010000 "${OUT_DIR}/$1"
+}
+siembra_marcado p2-local-20260101T000000Z-111 "${PID_VIVO}"
+siembra_marcado p2-local-20260101T000000Z-222 999999
+siembra_marcado p2-local-20260101T000000Z-333 "no-es-un-numero"
+siembra_marcado p2-local-20260101T000000Z-444 ""
+for i in 3 4 5 6 7 8; do
+	mkdir -p "${OUT_DIR}/p2-local-2026020${i}T000000Z-${i}00"
+	printf 'x\n' > "${OUT_DIR}/p2-local-2026020${i}T000000Z-${i}00/manifest.txt"
+	touch -t "20260${i}010000" "${OUT_DIR}/p2-local-2026020${i}T000000Z-${i}00"
+done
+OUT_LOCAL="${OUT_DIR}/p2-local-20260208T000000Z-800"
+SALIDA_MARCADOR="$(barre_ensayos_viejos 2>&1 >/dev/null)"
+
+roja 17aa "si|1" "$([ -d "${OUT_DIR}/p2-local-20260101T000000Z-111" ] && echo si || echo no)|$(printf '%s' "${SALIDA_MARCADOR}" | grep -c 'su corrida sigue viva')" "un artefacto con un pid VIVO dentro sobrevive al techo y lo dice: el techo es una regla sobre lo que ya termino, y sin esta linea el barrido repetia por TERCERA vez el incidente que make clean tuvo dos veces"
+fila 17ab "no|1" "$([ -d "${OUT_DIR}/p2-local-20260101T000000Z-222" ] && echo si || echo no)|$(printf '%s' "${SALIDA_MARCADOR}" | grep -c 'una corrida que no termino')" "y el de un pid MUERTO si se retira, diciendolo: si un marcador huerfano protegiera, una corrida matada con -9 bloquearia el techo para siempre, que es como una defensa se acaba quitando por estorbar"
+roja 17ac "si|1" "$([ -d "${OUT_DIR}/p2-local-20260101T000000Z-333" ] && echo si || echo no)|$(printf '%s' "${SALIDA_MARCADOR}" | grep -c 'no se puede leer')" "un pid que no se puede LEER no es lo mismo que un pid muerto: son TRES respuestas y no dos, y la de en medio se conserva y se dice"
+fila 17ad "no" "$([ -d "${OUT_DIR}/p2-local-20260101T000000Z-444" ] && echo si || echo no)" "y sin marcador ninguno el techo se lo lleva como siempre, que es el control sin el cual las tres de arriba pasarian con un techo que no borrase nunca"
+
+kill "${PID_VIVO}" 2>/dev/null || true
+wait "${PID_VIVO}" 2>/dev/null || true
+rm -rf -- "${OUT_DIR}"
+OUT_DIR="${GUARDA_OUTDIR}"; OUT_LOCAL="${GUARDA_OUT}"; ES_FIERRO="${GUARDA_FIERRO}"
+
+# ---- 17ba a 17bh: LOS CINCO BLOQUEANTES DEL FIERRO ---------------------------
+#
+# LAS TRAJO UN LECTOR EXTERNO al que se le paso el diseno de la seccion 10 entera
+# con una sola condicion, que no pudiera correr nada, y su ultima linea era "no
+# encenderia". Los cinco se re-derivaron contra el guion antes de tocarlos. Las
+# filas de aqui son lo que impide que vuelvan, y cada una se dispara por los dos
+# lados: la forma de hoy y la que tenia.
+#
+# POR QUE VIVEN AQUI. Son predicados del camino de FIERRO, que es lo que este banco
+# existe para probar sin encender nada. Ninguna de las cinco se puede medir en
+# gate/p2-guard-test.sh, que corre el ensayo.
+
+# ---- B1: el artefacto de fierro no se declara un ensayo ----------------------
+#
+# El banner no tenia NI UNA rama por ES_FIERRO, medido: cero apariciones dentro de
+# la funcion. Una corrida sobre tres maquinas de verdad imprimia "This is NOT gate
+# evidence and it seals nothing", "Three directories on 127.0.0.1 play three
+# replicas... there is no fleet" y "Its cut is kill -9", y cerraba con "all
+# rehearsal checks passed". El log ES el artefacto y no se arregla despues.
+# LA FILA QUE DE VERDAD MIDE EL DESPACHO, y faltaba: las tres de abajo llaman a
+# banner_fierro y banner_ensayo DIRECTAMENTE, asi que comprueban lo que cada texto
+# dice y no que `banner` elija el correcto. El barrido lo midio: quitandole a
+# `banner` su rama de fierro, las tres seguian verdes, porque `banner_fierro`
+# seguia existiendo y diciendo lo suyo, solo que ya no lo llamaba nadie. Es la clase
+# 15 en una fila: probar la pieza y no el circuito.
+GUARDA_FIERRO_B="${ES_FIERRO}"
+ES_FIERRO=1; BANNER_DESPACHADO_FIERRO="$(banner 2>/dev/null)"
+ES_FIERRO=0; BANNER_DESPACHADO_ENSAYO="$(banner 2>/dev/null)"
+ES_FIERRO="${GUARDA_FIERRO_B}"
+fila 17b0 "si|no" "$(printf '%s' "${BANNER_DESPACHADO_FIERRO}" | grep -q 'THIS IS GATE EVIDENCE' && echo si || echo no)|$(printf '%s' "${BANNER_DESPACHADO_FIERRO}" | grep -q 'NOT gate evidence' && echo si || echo no)" "con ES_FIERRO=1, banner DESPACHA al de fierro: es el circuito y no la pieza, y sin esta fila quitarle la rama a banner dejaba el banco entero en verde"
+roja 17b1 "si|no" "$(printf '%s' "${BANNER_DESPACHADO_ENSAYO}" | grep -q 'NOT gate evidence' && echo si || echo no)|$(printf '%s' "${BANNER_DESPACHADO_ENSAYO}" | grep -q 'THIS IS GATE EVIDENCE' && echo si || echo no)" "y con ES_FIERRO=0 despacha al del ensayo, que es la otra mitad sin la cual un banner que dijera siempre fierro tambien pasaria"
+
+BANNER_FIERRO="$(banner_fierro 2>/dev/null)"
+BANNER_ENSAYO="$(banner_ensayo 2>/dev/null)"
+fila 17ba "0|0|0|1" "$(printf '%s' "${BANNER_FIERRO}" | grep -c 'NOT gate evidence')|$(printf '%s' "${BANNER_FIERRO}" | grep -c '127\.0\.0\.1')|$(printf '%s' "${BANNER_FIERRO}" | grep -c 'kill -9')|$(printf '%s' "${BANNER_FIERRO}" | grep -c 'THIS IS GATE EVIDENCE')" "el banner de FIERRO no dice que no es evidencia, ni habla de tres directorios en loopback, ni de un corte con kill -9, y si dice lo que es"
+roja 17bb "1|1|1|0" "$(printf '%s' "${BANNER_ENSAYO}" | grep -c 'NOT gate evidence')|$(printf '%s' "${BANNER_ENSAYO}" | grep -c '127\.0\.0\.1')|$(printf '%s' "${BANNER_ENSAYO}" | grep -c 'kill -9')|$(printf '%s' "${BANNER_ENSAYO}" | grep -c 'THIS IS GATE EVIDENCE')" "y el del ENSAYO sigue diciendo exactamente lo que decia, palabra por palabra: la rama nueva no se llevo por delante la declaracion que el ensayo tiene que hacer"
+# LA PREGUNTA ES POR PRESENCIA Y NO POR CUENTA, y la primera version contaba. Pedia
+# UNA aparicion de sysrq-trigger y el banner lo nombra DOS, en el corte y en la
+# lectura del 7 de septiembre: la fila salia roja por una expectativa mia y no por
+# el objeto. Contar apariciones de una frase dentro de PROSA es una cifra que se
+# mueve cada vez que alguien reescribe un parrafo, y entonces el banco se pone rojo
+# por trabajar. Lo que esta fila quiere saber es si la frase ESTA.
+fila 17bc "si|si" "$(printf '%s' "${BANNER_FIERRO}" | grep -q 'sysrq-trigger' && echo si || echo no)|$(printf '%s' "${BANNER_FIERRO}" | grep -q 'caching: ReadWrite' && echo si || echo no)" "y el de fierro lleva su corte de verdad y la frontera del cache del anfitrion, que es la exclusion que el diseno cuelga de este banner"
+
+# ---- B1, la otra mitad: la linea de cierre -----------------------------------
+#
+# Es la ULTIMA linea del log, que es la que se cita, y decia "all rehearsal checks
+# passed" sobre la unica corrida que no se puede repetir.
+GUARDA_FIERRO="${ES_FIERRO}"; GUARDA_EXPECTED="${EXPECTED}"; GUARDA_VERDICTS="${VERDICTS}"
+GUARDA_COMPLETED="${COMPLETED}"; GUARDA_STARTED="${RUN_STARTED}"
+EXPECTED="P2.build"; VERDICTS=" P2.build=pass "; COMPLETED=1; RUN_STARTED=1
+ES_FIERRO=1; CIERRE_FIERRO="$(emit_final_verdict 2>/dev/null)"
+ES_FIERRO=0; CIERRE_ENSAYO="$(emit_final_verdict 2>/dev/null)"
+fila 17bd "1|0" "$(printf '%s' "${CIERRE_FIERRO}" | grep -c 'all IRON checks passed')|$(printf '%s' "${CIERRE_FIERRO}" | grep -c 'rehearsal')" "la linea de cierre de una corrida de FIERRO no dice rehearsal"
+roja 17be "1" "$(printf '%s' "${CIERRE_ENSAYO}" | grep -c 'all rehearsal checks passed')" "y la del ensayo sale EXACTA como estaba, que es lo que casan los bancos por su literal"
+ES_FIERRO="${GUARDA_FIERRO}"; EXPECTED="${GUARDA_EXPECTED}"; VERDICTS="${GUARDA_VERDICTS}"
+COMPLETED="${GUARDA_COMPLETED}"; RUN_STARTED="${GUARDA_STARTED}"
+
+# ---- B2: el cliente del mutante corre en el host y no en este portatil -------
+#
+# Corria aqui, con el binario darwin y atado a una direccion privada de la flota
+# que esta maquina no tiene. Es el mismo defecto que la seccion 10.16 declara
+# cerrado para client_op, y a client_op si se le aplico. Sin esto, los cuarenta
+# intentos fallaban los cuarenta y el brazo rojo entero no llegaba a medir.
+CUERPO_RED_FIERRO="$(awk '/^phase_red_fierro\(\) \{/,/^\}$/' "${GATE_DIR}/p2.sh")"
+fila 17bf "si|no" "$(printf '%s' "${CUERPO_RED_FIERRO}" | grep -q 'run_on 1 "cd naylamp' && echo si || echo no)|$(printf '%s' "${CUERPO_RED_FIERRO}" | grep -q '"\${BIN}" client -listen' && echo si || echo no)" "el cliente del mutante va por run_on al host 1, como client_op, y ya no se invoca el binario local contra una direccion que esta maquina no tiene"
+roja 17bg "si" "$(printf '%s' "${CUERPO_RED_FIERRO}" | grep -q '__RC__=0)' && echo si || echo no)" "y lee su estado por la ULTIMA linea entera y no por una subcadena, que es la misma guarda de client_op: un canal de estado que la carga util puede falsificar no es un canal de estado"
+
+# ---- B5b: el testigo sincroniza su fichero y su directorio, no la maquina ----
+#
+# `sync` es GLOBAL y vaciaba la pagina sucia entera del host, log de raft incluido,
+# asi que en el instante del corte todo lo ackeado estaba en el plato hubiera
+# barrera o no. Es el hallazgo mas caro: el camino VERDE que no media nada.
+CUERPO_TESTIGO="$(awk '/^testigo_siembra\(\) \{/,/^\}$/' "${GATE_DIR}/p2.sh")"
+roja 17bh "no|si|si" "$(printf '%s' "${CUERPO_TESTIGO}" | grep -qE '&& sync$|; sync$' && echo si || echo no)|$(printf '%s' "${CUERPO_TESTIGO}" | grep -q 'os.fsync(f)' && echo si || echo no)|$(printf '%s' "${CUERPO_TESTIGO}" | grep -q 'os.fsync(h)' && echo si || echo no)" "el testigo ya no hace un sync GLOBAL, y sincroniza el fichero Y su directorio: un sync global dentro de un gate de durabilidad es el instrumento anulando lo que mide"
+
+# ---- 17ca a 17cf: B5a, LAS ESCRITURAS EN VUELO EN EL INSTANTE DEL CORTE ------
+#
+# LA DECISION ES DE QUIEN ENCARGA y dice por que: la propiedad es "ack implica
+# durable", y sin escrituras en vuelo la mitad del ack no se ejercita nunca, porque
+# el mutante solo pierde algo si el corte cae ENTRE el ack y la barrera. La carga
+# cerraba antes del corte, asi que esa ventana no existia.
+#
+# Y ESTAS FILAS DISPARAN LA FUNCION DE VERDAD, no su texto. `escritor_en_vuelo`
+# corre contra la flota de mentira de este banco, con un naylampd falso que se
+# puede hacer contestar 0 o distinto de 0 a voluntad. Es lo mas cerca del objeto
+# que se puede estar sin encender tres maquinas.
+GUARDA_OUTDIR="${OUT_DIR}"; GUARDA_OUT="${OUT_LOCAL}"; GUARDA_FIERRO="${ES_FIERRO}"
+GUARDA_MANIFEST="${MANIFEST}"
+OUT_LOCAL="${BANCO}/vuelo"; rm -rf -- "${OUT_LOCAL}"; mkdir -p "${OUT_LOCAL}"
+MANIFEST="${OUT_LOCAL}/manifest.txt"; : > "${MANIFEST}"
+ES_FIERRO=1
+# La cota se baja para que la fila cueste segundos y no minutos: lo que se mide es
+# la FORMA de lo que escribe, y esa no depende de cuantas veces lo haga.
+GUARDA_VUELO_MAX="${EN_VUELO_MAX}"; EN_VUELO_MAX=6
+
+# EL naylampd DE MENTIRA, que es lo que deja disparar los dos lados: contesta 0
+# mientras exista el fichero de la senal, y distinto de 0 en cuanto se retire. Es
+# el corte, visto desde el cliente: la conexion deja de dar acks.
+cat > "${BANCO}/casa/1/naylamp/bin/naylampd" <<'FALSO'
+#!/bin/sh
+[ -e "${BANCO_ESTADO}/1.acepta" ] || exit 7
+exit 0
+FALSO
+chmod +x "${BANCO}/casa/1/naylamp/bin/naylampd"
+: > "${BANCO}/estado/1.acepta"
+
+escritor_en_vuelo
+fila 17ca "6|0" "$(grep -c ' confirmed$' "${MANIFEST}")|$(grep -c ' uncertain$' "${MANIFEST}")" "con la conexion viva, cada ack deja UNA linea confirmed en el manifiesto y ninguna uncertain: su ausencia del log sera un veredicto, que es exactamente la propiedad"
+fila 17cb "6|0" "$(grep -c '^ack ' "${OUT_LOCAL}/en-vuelo.txt")|$(grep -c '^sin-ack ' "${OUT_LOCAL}/en-vuelo.txt")" "y cada uno queda fechado en el crudo de la frontera, que es lo que dice en que INSTANTE se cerro el manifiesto"
+fila 17cc "1|1" "$(grep -c 'ultimo ack:' "${OUT_LOCAL}/en-vuelo-frontera.txt")|$(grep -c 'acks:' "${OUT_LOCAL}/en-vuelo-frontera.txt")" "y la frontera se escribe en el ARTEFACTO y no solo en la consola, porque es lo que se cita cuando la consola ya no esta"
+
+# EL CORTE, visto desde el cliente: la conexion deja de dar acks a mitad.
+: > "${MANIFEST}"; rm -f -- "${OUT_LOCAL}/en-vuelo.txt"
+EN_VUELO_MAX=6
+cat > "${BANCO}/casa/1/naylamp/bin/naylampd" <<'FALSO'
+#!/bin/sh
+n=$(cat "${BANCO_ESTADO}/1.cuenta" 2>/dev/null || echo 0)
+n=$((n + 1)); echo "${n}" > "${BANCO_ESTADO}/1.cuenta"
+[ "${n}" -le 2 ] || exit 7
+exit 0
+FALSO
+chmod +x "${BANCO}/casa/1/naylamp/bin/naylampd"
+rm -f -- "${BANCO}/estado/1.cuenta"
+escritor_en_vuelo
+roja 17cd "2|3" "$(grep -c ' confirmed$' "${MANIFEST}")|$(grep -c ' uncertain$' "${MANIFEST}")" "cuando la conexion muere a mitad, lo ackeado queda confirmed y lo que se envio sin respuesta queda UNCERTAIN: sin esa linea, un id comprometido cuyo ack se perdio saldria FANTASMA y pondria roja la fidelidad por hacer justo lo que se le pidio"
+roja 17ce "3" "$(grep -c '^sin-ack ' "${OUT_LOCAL}/en-vuelo.txt")" "y el bucle se PARA a los tres fallos seguidos en vez de seguir contra tres maquinas que ya no contestan, que es la cota que la clausula 24 obliga"
+roja 17cf "0" "$(sort "${MANIFEST}" | awk '{print $2}' | uniq -d | grep -c .)" "y NINGUN id recibe las dos lineas: el comprobador marca AMBIGUO todo id que toque una operacion sin respuesta, asi que escribir las dos habria costado la comparacion de valor de los que SI volvieron con su ack"
+
+EN_VUELO_MAX="${GUARDA_VUELO_MAX}"
+printf 'binario sano, igual en las tres\n' > "${BANCO}/casa/1/naylamp/bin/naylampd"
+rm -f -- "${BANCO}/estado/1.acepta" "${BANCO}/estado/1.cuenta"
+rm -rf -- "${BANCO}/vuelo"
+OUT_DIR="${GUARDA_OUTDIR}"; OUT_LOCAL="${GUARDA_OUT}"; ES_FIERRO="${GUARDA_FIERRO}"; MANIFEST="${GUARDA_MANIFEST}"
+
+# ---- 17da a 17dd: B3 y B4, lo que la mitad CALIENTE del preflight tiene que hacer
+#
+# ESTAS CUATRO SE LEEN DEL TEXTO DE LA FUNCION Y NO SE DISPARAN, y eso va dicho en
+# vez de disfrazado. `caliente()` de gate/p2-preflight.sh EXIGE tres maquinas
+# encendidas: no hay forma de correrla aqui sin encender, que es justo lo que este
+# banco existe para no hacer. Lo que si se puede es exigir que los pasos ESTEN, y
+# los mutantes del barrido los quitan uno a uno para comprobar que estas filas
+# caen. Es mas debil que disparar la funcion y mas fuerte que no mirar nada, y
+# cual de las dos cosas es va escrito aqui y no se deja suponer.
+#
+# LO QUE COSTABA QUE NO ESTUVIERAN, medido contra el guion: `P2.pre.identity` en
+# fierro compara la huella del binario de los hosts BYTE A BYTE con el que la
+# corrida acaba de cruza-compilar, asi que sin despliegue fresco no casa nunca; el
+# material TLS dura 24 h, asi que el de los hosts esta caducado y la flota no elige
+# lider; y una sola entrada vieja en naylamp/data sale FANTASMA en las TRES copias
+# frias y pone P2.recover.faithful roja con cara de rojo de PROPIEDAD, que es el
+# rojo que no se re-corre nunca.
+CUERPO_CALIENTE="$(awk '/^caliente\(\) \{/,/^\}$/' "${GATE_DIR}/p2-preflight.sh")"
+fila 17da "si|si" "$(printf '%s' "${CUERPO_CALIENTE}" | grep -q '"${GATE_DIR}/deploy.sh"' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q '"${GATE_DIR}/cluster.sh" start' && echo si || echo no)" "la mitad caliente DESPLIEGA el binario y los certificados y LEVANTA la flota, que es lo que la cabecera de gate/p2.sh llevaba afirmando que hacia sin hacerlo"
+roja 17db "si|si|si" "$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'LITERAL_LIDER=' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'quien=' && echo si || echo no)|$(LIT="$(printf '%s' "${CUERPO_CALIENTE}" | sed -n "s/.*LITERAL_LIDER='\\([^']*\\)'.*/\\1/p" | head -1)"; [ -n "${LIT}" ] && grep -rqF "${LIT}" "${GATE_DIR}/../engine" && echo si || echo no)" "y no se conforma con que los demonios arranquen: exige que ELIJAN LIDER, y la tercera columna CASTEA EL LITERAL CONTRA engine/ en vez de contra el texto del propio gate. Hasta la cuarta vuelta esperaba 'became leader', que no existe en el motor: el demonio escribe role=leader, el case no casaba nunca, y el paso cerraba con mal nombrando material TLS caducado sobre una flota sana. Preguntar si la frase esta en el gate solo comprueba que el gate se cita a si mismo"
+fila 17dc "si|si|si" "$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'rm -rf data logs data-mutante' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'VACIOS en los tres, verificado' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'naylamp/data-mutante -mindepth 1' && echo si || echo no)" "naylamp/data, naylamp/logs y naylamp/data-mutante se miden, se limpian y se vuelven a MEDIR: es una precondicion y no una tolerancia, y el del mutante estaba fuera hasta que un lector lo trajo, con el mismo razonamiento entero encima: un id 7 viejo ahi dentro hace que el brazo rojo publique que el mutante sin barrera no perdio nada"
+roja 17dd "si|si" "$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'sudo -n test -w /proc/sysrq-trigger' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'os.fsync(os.open' && echo si || echo no)" "y se ejercitan ANTES del corte las dos cosas de las que el corte depende y que corta_en no puede ver, porque tira su estado a proposito: que sudo no pida contrasena, y que python3 pueda hacer fsync de un directorio"
+
+# ---- 17ea a 17ef: LO QUE LA SEGUNDA VUELTA DEL LECTOR EXTERNO ENCONTRO --------
+#
+# LAS CINCO FILAS DE ARRIBA, 17ca a 17cf, DEJARON PASAR TRES DEFECTOS, y el lector
+# dijo por que con una frase que este mismo fichero acababa de escribir sobre el
+# banner: **probaban la pieza y no el circuito**. Contaban lineas `confirmed` y
+# `uncertain` en el manifiesto y ahi paraban. Ninguna metia ese manifiesto en el
+# python que construye `live-ids.txt`, que es uno de los DOS consumidores del
+# manifiesto y el unico que este guion controla. Si lo hubieran hecho, la 17cd,
+# que espera dos confirmed y tres uncertain, habria destapado en el acto que las
+# tres `uncertain` entraban en el conjunto vivo y ponian la corrida roja.
+LIVEIDS="${BANCO}/live-ids.py"
+awk '/^\t\/usr\/bin\/python3 - "\$\{MANIFEST\}" > "\$\{OUT_LOCAL\}\/live-ids.txt" <<.PY.$/{f=1;next} f&&/^PY$/{exit} f{print}' "${GATE_DIR}/p2.sh" > "${LIVEIDS}"
+fila 17ea "si" "$([ -s "${LIVEIDS}" ] && echo si || echo no)" "el constructor del conjunto vivo se extrae de gate/p2.sh y no se copia aqui: si cambia de forma, esta extraccion sale vacia y el banco lo dice en vez de probar aire"
+
+MAN_PRUEBA="${BANCO}/manifiesto-de-prueba.txt"
+printf 'put 1 1,0,0,0,0,0,0,0 confirmed\nput 100 0,0,1,0,0,1,1,0 uncertain\nput 2 0,1,0,0,0,0,0,0\ndel 1\n' > "${MAN_PRUEBA}"
+VIVOS="$(/usr/bin/python3 "${LIVEIDS}" "${MAN_PRUEBA}" | tr '\n' ' ')"
+roja 17eb "2 " "${VIVOS}" "un id UNCERTAIN no entra en el conjunto vivo, uno sin marcador SI, y un del retira el suyo: sin esta linea, cada envio que no volvio con ack se exigia presente, no podia estarlo porque se mando contra tres maquinas ya muertas, y la corrida salia ROJA diciendo que el motor perdio una escritura ackeada"
+
+# EL RANGO EN VUELO, medido contra vec_for y no afirmado
+roja 17ec "0 0" "$(comprueba_rango_en_vuelo)" "ningun vector del rango en vuelo coincide con uno de la carga ni es el vector cero: vec_for solo depende de id mod 256, asi que el rango de antes daba el vector CERO en el 512 y treinta colisiones con la carga, que es el defecto de la seccion 10.9 reabierto"
+GUARDA_DESDE="${ID_EN_VUELO_DESDE}"; GUARDA_MAXV="${EN_VUELO_MAX}"
+ID_EN_VUELO_DESDE=500; EN_VUELO_MAX=200
+roja 17ed "30 1" "$(comprueba_rango_en_vuelo)" "y con el rango de antes la guarda MUERDE, y dice cuanto: treinta choques, uno por cada id de la carga, y un vector cero. Sin esta mitad, la fila de arriba pasaria con una guarda que dijera siempre cero"
+ID_EN_VUELO_DESDE="${GUARDA_DESDE}"; EN_VUELO_MAX="${GUARDA_MAXV}"
+
+# LO ENVIADO Y NO ACKEADO SE PLIEGA, tambien si el escritor murio
+GUARDA_OUT2="${OUT_LOCAL}"; GUARDA_MAN2="${MANIFEST}"
+OUT_LOCAL="${BANCO}/pliegue"; rm -rf -- "${OUT_LOCAL}"; mkdir -p "${OUT_LOCAL}"
+MANIFEST="${OUT_LOCAL}/manifest.txt"
+printf 'put 100 %s confirmed\n' "$(vec_for 100)" > "${MANIFEST}"
+printf '100 %s\n101 %s\n102 %s\n' "$(vec_for 100)" "$(vec_for 101)" "$(vec_for 102)" > "${OUT_LOCAL}/en-vuelo-enviados.txt"
+pliega_en_vuelo_sin_ack
+fila 17ee "1|2" "$(grep -c ' confirmed$' "${MANIFEST}")|$(grep -c ' uncertain$' "${MANIFEST}")" "todo id que se ENVIO y no dejo su linea vuelve como uncertain: la ventana entre que el cliente contesta y que se anota su linea existe, y una muerte ahi dejaba un id comprometido AUSENTE del manifiesto, que es lo unico que verifylog llama fantasma"
+pliega_en_vuelo_sin_ack
+roja 17ef "1|2" "$(grep -c ' confirmed$' "${MANIFEST}")|$(grep -c ' uncertain$' "${MANIFEST}")" "y plegar dos veces no duplica nada, que es lo que permite llamarlo desde el escritor Y desde la trampa de salida sin pensar en cual llego antes"
+OUT_LOCAL="${GUARDA_OUT2}"; MANIFEST="${GUARDA_MAN2}"
+rm -rf -- "${BANCO}/pliegue"
+
+# NINGUN wait DESNUDO detras de un corte, en NINGUNA de las dos fases
+CUERPO_CUT_FIERRO="$(awk '/^phase_cut_fierro\(\) \{/,/^\}$/' "${GATE_DIR}/p2.sh")"
+CUERPO_RED_FIERRO2="$(awk '/^phase_red_fierro\(\) \{/,/^\}$/' "${GATE_DIR}/p2.sh")"
+roja 17eg "si|si" "$(printf '%s' "${CUERPO_CUT_FIERRO}" | grep -q 'wait ${pids_corte}' && echo si || echo no)|$(printf '%s' "${CUERPO_RED_FIERRO2}" | grep -q 'wait ${pids_corte_rojo}' && echo si || echo no)" "ninguna de las dos fases que cortan espera con un wait DESNUDO: un wait sin argumentos espera a TODO lo de fondo, y con el escritor en vuelo detras habria tomado el instante del corte treinta segundos tarde, contra una cota de cinco, poniendo los veredictos en none sin decir por que"
+
+# EL VEREDICTO QUE FALTABA, y que la lista de fierro lo nombre
+roja 17eh "si|si" "$(grep -q 'P2.cut.envuelo' "${GATE_DIR}/p2.sh" && echo si || echo no)|$(grep '^\t\t\t\tEXPECTED=' "${GATE_DIR}/p2.sh" | grep 'P2.pre.sysrq' | grep -q 'P2.cut.envuelo' && echo si || echo no)" "existe un veredicto colgado de que HAYA habido al menos un ack en vuelo, y la lista de fierro lo nombra: sin el, un escritor que no ackeara nada dejaba la propiedad igual de sin medir que antes del arreglo, y nada lo decia"
+
+# ---- 17fa a 17fd: EL CIRCUITO Y NO LA PIEZA, POR TERCERA VEZ ------------------
+#
+# El barrido volvio a cazarme lo mismo: la 17ec llama a `comprueba_rango_en_vuelo`
+# DIRECTAMENTE, asi que prueba que la guarda sabe contar y no que el escritor la
+# CORRA; y el veredicto en vuelo vivia dentro de una fase que necesita tres
+# maquinas, asi que ponerlo a verde por las bravas no tumbaba nada. Las dos salidas
+# son la misma: llamar al circuito.
+GUARDA_OUT3="${OUT_LOCAL}"; GUARDA_MAN3="${MANIFEST}"; GUARDA_FIERRO3="${ES_FIERRO}"
+GUARDA_DESDE3="${ID_EN_VUELO_DESDE}"; GUARDA_MAX3="${EN_VUELO_MAX}"
+OUT_LOCAL="${BANCO}/circuito"; rm -rf -- "${OUT_LOCAL}"; mkdir -p "${OUT_LOCAL}"
+MANIFEST="${OUT_LOCAL}/manifest.txt"; : > "${MANIFEST}"
+ES_FIERRO=1
+: > "${BANCO}/estado/1.acepta"
+cat > "${BANCO}/casa/1/naylamp/bin/naylampd" <<'FALSO'
+#!/bin/sh
+[ -e "${BANCO_ESTADO}/1.acepta" ] || exit 7
+exit 0
+FALSO
+chmod +x "${BANCO}/casa/1/naylamp/bin/naylampd"
+
+# 17fa: con un rango que colisiona, el ESCRITOR se niega y no escribe una sola linea
+ID_EN_VUELO_DESDE=500; EN_VUELO_MAX=200
+SALIDA_17FA="$(escritor_en_vuelo 2>&1)"
+roja 17fa "1|0" "$(printf '%s' "${SALIDA_17FA}" | grep -c 'refusing to write in flight')|$(grep -c . "${MANIFEST}")" "con un rango que colisiona, el ESCRITOR se niega antes de mandar nada y el manifiesto queda vacio: la fila de la guarda sola probaba que sabe contar, no que alguien la mire"
+
+# 17fb: y con el rango bueno escribe
+ID_EN_VUELO_DESDE="${GUARDA_DESDE3}"; EN_VUELO_MAX=4
+: > "${MANIFEST}"
+escritor_en_vuelo >/dev/null 2>&1
+fila 17fb "4" "$(grep -c ' confirmed$' "${MANIFEST}")" "y con el rango bueno escribe, que es la mitad sin la cual la de arriba pasaria con un escritor que no escribiera nunca"
+
+# 17fc y 17fd: el veredicto en vuelo, por los dos lados
+CHECK_FAILED=0; VERDICTS=" "
+veredicto_en_vuelo
+fila 17fc "pass" "$(verdict_of P2.cut.envuelo)" "con acks en vuelo, P2.cut.envuelo pasa"
+printf '' > "${OUT_LOCAL}/en-vuelo.txt"
+VERDICTS=" "; CHECK_FAILED=0
+veredicto_en_vuelo
+roja 17fd "none" "$(verdict_of P2.cut.envuelo)" "y sin un solo ack en vuelo NO se pone rojo, se pone en NONE: cero acks no es un fallo del motor, es que la corrida no llego a hacer la pregunta, y eso se dice con none y no con un rojo que nombraria la causa equivocada"
+
+EN_VUELO_MAX="${GUARDA_MAX3}"; ID_EN_VUELO_DESDE="${GUARDA_DESDE3}"
+printf 'binario sano, igual en las tres\n' > "${BANCO}/casa/1/naylamp/bin/naylampd"
+rm -f -- "${BANCO}/estado/1.acepta"; rm -rf -- "${BANCO}/circuito"
+OUT_LOCAL="${GUARDA_OUT3}"; MANIFEST="${GUARDA_MAN3}"; ES_FIERRO="${GUARDA_FIERRO3}"
+CHECK_FAILED=0
+
+# ---- 17ga a 17gf: LO QUE LA TERCERA VUELTA DEL LECTOR EXTERNO ENCONTRO --------
+#
+# Y LA PRIMERA DE ELLAS ES LA QUINTA VEZ QUE ESTA CASA COMETE EL MISMO DEFECTO EN
+# UNA SOLA SESION: `veredicto_en_vuelo` abria un `begin_check` DENTRO del bloque
+# abierto de `P2.cut.fired`, y `begin_check` pone `CHECK_FAILED` a cero. Borraba
+# todos sus FAIL: el del nodo que no armo su testigo, el del que NUNCA dejo de
+# contestar al ssh -o sea que no se corto- y el de la frontera ausente, que era
+# codigo muerto desde el dia que nacio. Y lo que lo escondia fue, otra vez, que la
+# fila del banco llamaba a la funcion SOLA, donde funciona. **Llamar a la pieza es
+# justo lo que tapa que el circuito esta roto.**
+CUERPO_VEREDICTO="$(awk '/^veredicto_en_vuelo\(\) \{/,/^\}$/' "${GATE_DIR}/p2.sh")"
+CUERPO_CUT2="$(awk '/^phase_cut_fierro\(\) \{/,/^\}$/' "${GATE_DIR}/p2.sh")"
+POS_END="$(printf '%s\n' "${CUERPO_CUT2}" | grep -n 'end_check P2.cut.fired' | tail -1 | cut -d: -f1)"
+POS_VER="$(printf '%s\n' "${CUERPO_CUT2}" | grep -n '^	veredicto_en_vuelo$' | tail -1 | cut -d: -f1)"
+roja 17ga "si" "$([ -n "${POS_END}" ] && [ -n "${POS_VER}" ] && [ "${POS_VER}" -gt "${POS_END}" ] && echo si || echo no)" "veredicto_en_vuelo se llama DESPUES del ultimo end_check de P2.cut.fired y no dentro de su bloque: begin_check pone CHECK_FAILED a cero, asi que dentro borraba los FAIL de la fase y P2.cut.fired podia registrar PASS con sus propios FAIL impresos encima"
+
+# EL CIRCUITO Y NO LA PIEZA: se monta la fase entera en pequeno, con un FAIL
+# acumulado antes, y se exige que sobreviva a la llamada.
+GUARDA_CF="${CHECK_FAILED}"; GUARDA_V="${VERDICTS}"; GUARDA_OUT4="${OUT_LOCAL}"
+OUT_LOCAL="${BANCO}/veredicto"; rm -rf -- "${OUT_LOCAL}"; mkdir -p "${OUT_LOCAL}"
+printf 'ack 100 2026-09-09T00:00:00Z\n' > "${OUT_LOCAL}/en-vuelo.txt"
+# SE MONTA LA SECUENCIA DE LA FASE Y NO EL ESTADO SUELTO, y la primera version de
+# esta fila miraba `CHECK_FAILED` DESPUES de la llamada, que es una expectativa
+# imposible: `veredicto_en_vuelo` abre su PROPIO bloque, asi que ese contador ya no
+# es el de quien llama. Lo que hay que medir es el VEREDICTO: que P2.cut.fired
+# quede en `fail` con la llamada detras. Es la misma leccion una vez mas, y esta vez
+# cometida al escribir la fila que la vigila.
+VERDICTS=" "; begin_check
+fail "P2.cut.fired: un FAIL de mentira, para ver si sobrevive" >/dev/null 2>&1
+end_check P2.cut.fired
+veredicto_en_vuelo >/dev/null 2>&1
+roja 17gb "fail|pass" "$(verdict_of P2.cut.fired)|$(verdict_of P2.cut.envuelo)" "en la secuencia de la fase, el veredicto de P2.cut.fired queda en FAIL y el de P2.cut.envuelo en pass: son dos bloques y no uno, y con la llamada dentro el primero salia pass con sus propios FAIL impresos encima"
+OUT_LOCAL="${GUARDA_OUT4}"; CHECK_FAILED="${GUARDA_CF}"; VERDICTS="${GUARDA_V}"
+
+# B2: el conteo de entradas, medido de verdad sobre directorios VACIOS
+mkdir -p "${BANCO}/vacios/data" "${BANCO}/vacios/logs" "${BANCO}/vacios/data-mutante"
+roja 17gc "3|0" "$(cd "${BANCO}/vacios" && ls -A data logs data-mutante 2>/dev/null | grep -c .)|$(cd "${BANCO}/vacios" && find data logs data-mutante -mindepth 1 2>/dev/null | grep -c .)" "sobre TRES directorios VACIOS, ls -A con varios operandos da TRES por sus cabeceras y find -mindepth 1 da CERO: con el primero, la precondicion del preflight fallaba en un host impecable, siempre, con el mensaje mas caro del diseno"
+printf 'x\n' > "${BANCO}/vacios/data/algo"
+fila 17gd "1" "$(cd "${BANCO}/vacios" && find data logs data-mutante -mindepth 1 2>/dev/null | grep -c .)" "y con una entrada de verdad dentro cuenta UNA, que es la mitad sin la cual la de arriba pasaria con un contador que dijera siempre cero"
+rm -rf -- "${BANCO}/vacios"
+roja 17ge "si|no" "$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'find naylamp/data naylamp/logs naylamp/data-mutante -mindepth 1' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'ls -A naylamp/data naylamp/logs' && echo si || echo no)" "y el preflight cuenta con find y ya no con ls -A"
+
+# B3: el lider se pregunta a los TRES y con cota
+roja 17gf "si|si" "$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'for h in "${hosts\[@\]}"' && printf '%s' "${CUERPO_CALIENTE}" | grep -q 'lo escribio el host' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'NO ha elegido lider en 20 s, preguntando a los TRES' && echo si || echo no)" "el lider se pregunta a los TRES y con cota: solo el nodo que GANA escribe esa linea, asi que preguntar solo al host 1 daba un rojo que nombra la causa equivocada dos de cada tres veces, sobre una flota sana y con las tres encendidas"
+
+# ---- 17ha y 17hb: LOS DOS SITIOS QUE LA GUARDA NUEVA DESTAPO -----------------
+#
+# `gate/sitio-test.sh` entra hoy con el predicado de la clase que mordio CINCO
+# veces en un dia, y su primera corrida encontro mas de lo que el censo a mano
+# habia visto: `seal_artifact`, `completa_el_sello`, `retira_running`,
+# `emit_final_verdict` y `pliega_en_vuelo_sin_ack` tienen su sitio DESNUDO dentro
+# de `al_salir`, y **ninguna fila corria `al_salir`**. Es exactamente donde el
+# mutante que quita el `kill` del escritor en vuelo salio MUDO.
+#
+# LA FILA CORRE LA TRAMPA ENTERA, en un subshell porque `al_salir` termina en
+# `exit`, y mira lo que deja: el artefacto sellado, el sello TERMINADO con su
+# `closed:`, el marcador retirado y el bloque de veredictos impreso. Con eso, un
+# cambio en el ORDEN de esas seis llamadas -que es lo unico que el sitio decide-
+# cae aqui y no en la primera corrida de fierro.
+GUARDA_OUT5="${OUT_LOCAL}"; GUARDA_MAN5="${MANIFEST}"; GUARDA_FIERRO5="${ES_FIERRO}"
+GUARDA_RUN5="${RUN_STARTED}"; GUARDA_EMIT5="${EMITIDO}"; GUARDA_V5="${VERDICTS}"
+GUARDA_EXP5="${EXPECTED}"; GUARDA_RID5="${RUN_ID}"; GUARDA_OD5="${OUT_DIR}"
+OUT_DIR="${BANCO}/trampa"; RUN_ID="20260909T000000Z-1"
+OUT_LOCAL="${OUT_DIR}/p2-${RUN_ID}"
+rm -rf -- "${OUT_DIR}"; mkdir -p "${OUT_LOCAL}"
+MANIFEST="${OUT_LOCAL}/manifest.txt"
+printf 'put 1 %s confirmed\n' "$(vec_for 1)" > "${MANIFEST}"
+printf 'algo que la corrida escribio\n' > "${OUT_LOCAL}/hygiene.log"
+ES_FIERRO=1; RUN_STARTED=1; EMITIDO=1; SELLO_ESCRITO_AQUI=0
+EXPECTED="P2.build"; VERDICTS=" P2.build=pass "
+SUBCOMANDO=all; ARRANCO_A="2026-09-09T00:00:00Z"
+escribe_running
+# UN ESCRITOR EN VUELO DE MENTIRA, para poder exigir que la trampa lo MATE. El
+# barrido lo pidio: quitandole a al_salir el kill, esta fila seguia verde porque
+# miraba lo que la trampa DEJA y no lo que la trampa PARA. Un proceso que sobrevive
+# a la trampa sigue escribiendo en el manifiesto detras del sello.
+sleep 120 &
+PID_EN_VUELO=$!
+SALIDA_TRAMPA="$( al_salir 2>&1 )"
+VIVE_TRAS_LA_TRAMPA="$(kill -0 "${PID_EN_VUELO}" 2>/dev/null && echo si || echo no)"
+kill "${PID_EN_VUELO}" 2>/dev/null || true
+fila 17ha "si|1|no|no" "$([ -e "${OUT_LOCAL}/SEALED" ] && echo si || echo no)|$(grep -c '^closed:' "${OUT_LOCAL}/SEALED" 2>/dev/null || echo 0)|$([ -e "${OUT_LOCAL}/RUNNING" ] && echo si || echo no)|${VIVE_TRAS_LA_TRAMPA}" "la trampa de salida, corrida ENTERA: deja el artefacto SELLADO, el sello TERMINADO con su linea closed, y el marcador RETIRADO. Ninguna fila corria al_salir, que es el sitio de cinco funciones que este banco si prueba una a una"
+roja 17hb "0" "$(ls -1 "${OUT_LOCAL}" 2>/dev/null | grep -c '^SEALED\.a-medias$')" "y no deja ningun SEALED.a-medias dentro de un artefacto que el sello protege de make clean: el orden de esas seis llamadas es lo unico que el sitio decide, y sin esta fila un cambio en el orden solo se veria en la primera corrida de fierro"
+rm -rf -- "${OUT_DIR}"
+OUT_DIR="${GUARDA_OD5}"; RUN_ID="${GUARDA_RID5}"; OUT_LOCAL="${GUARDA_OUT5}"
+MANIFEST="${GUARDA_MAN5}"; ES_FIERRO="${GUARDA_FIERRO5}"; RUN_STARTED="${GUARDA_RUN5}"
+EMITIDO="${GUARDA_EMIT5}"; VERDICTS="${GUARDA_V5}"; EXPECTED="${GUARDA_EXP5}"
+SELLO_ESCRITO_AQUI=1; CHECK_FAILED=0
+
+# ---- 17hc: EL DESPACHO POR ES_FIERRO, que es el sitio de las tres fases de fierro
+#
+# `phase_hygiene`, `phase_cut` y `phase_red` no hacen mas que elegir rama por
+# `ES_FIERRO`, y esa eleccion es su unico contenido. Las filas que corren
+# `phase_hygiene_fierro` prueban la fase; esta prueba que se llegue a ella.
+GUARDA_FIERRO6="${ES_FIERRO}"
+ES_FIERRO=1
+DESPACHO="$( set +e; phase_hygiene 2>&1 )"
+ES_FIERRO="${GUARDA_FIERRO6}"
+# SE PREGUNTA POR UNA FRASE QUE SOLO IMPRIME UNA DE LAS DOS RAMAS, y por presencia
+# y no por cuenta: contar apariciones dentro de la salida de una fase es una cifra
+# que se mueve cada vez que alguien anade una linea, y entonces el banco se pone
+# rojo por trabajar. Es la tercera vez hoy que lo corrijo en la misma direccion.
+roja 17hc "si|no" "$(printf '%s' "${DESPACHO}" | grep -q 'sane fleet is at' && echo si || echo no)|$(printf '%s' "${DESPACHO}" | grep -q 'is still running' && echo si || echo no)" "con ES_FIERRO=1, phase_hygiene DESPACHA a su rama de fierro y no corre la del ensayo: es el mismo circuito que el del banner, y las tres fases de fierro cuelgan de el"
+CHECK_FAILED=0
+
+# ---- 17ia y 17ib: LA FASE DEL CORTE, CORRIDA ENTERA --------------------------
+#
+# LA GUARDA `gate/sitio-test.sh` DEJO ESTAS TRES AL DESCUBIERTO y no se pudieron
+# declarar: `escritor_en_vuelo`, `pliega_en_vuelo_sin_ack` y `veredicto_en_vuelo`
+# tienen su unico sitio DESNUDO dentro de `phase_cut_fierro`, y ese sitio decide
+# lo que ninguna de sus filas puede ver: en que ORDEN se llaman, si el escritor
+# arranca antes del corte, si el `wait` espera solo a los cortes, y si el veredicto
+# queda fuera del bloque de `P2.cut.fired`. Es donde el mutante que quita la espera
+# del primer ack salio MUDO.
+#
+# SE CORRE LA FASE DE VERDAD, con el corte SIMULADO sobre la flota de mentira, y
+# eso cuesta unos segundos en vez de los 360 que costaria dejar que sus dos esperas
+# se agoten. Un ayudante en segundo plano hace lo que haria el corte: marca los
+# tres hosts muertos, les cambia el boot id, deja el testigo en su semilla, y los
+# devuelve. Nada de esto enciende nada: los tres hosts son directorios.
+GUARDA_OUT7="${OUT_LOCAL}"; GUARDA_MAN7="${MANIFEST}"; GUARDA_FIERRO7="${ES_FIERRO}"
+GUARDA_V7="${VERDICTS}"; GUARDA_CF7="${CHECK_FAILED}"; GUARDA_MAXV7="${EN_VUELO_MAX}"
+OUT_LOCAL="${BANCO}/fasecorte"; rm -rf -- "${OUT_LOCAL}"; mkdir -p "${OUT_LOCAL}"
+MANIFEST="${OUT_LOCAL}/manifest.txt"; : > "${MANIFEST}"
+ES_FIERRO=1; VERDICTS=" "; EN_VUELO_MAX=6
+: > "${BANCO}/estado/1.acepta"
+cat > "${BANCO}/casa/1/naylamp/bin/naylampd" <<'FALSO'
+#!/bin/sh
+[ -e "${BANCO_ESTADO}/1.acepta" ] || exit 7
+exit 0
+FALSO
+chmod +x "${BANCO}/casa/1/naylamp/bin/naylampd"
+
+# Y EL NODO 2 NO PUEDE ARMAR, a proposito y en esta misma corrida. El stub de ssh
+# le niega el UNICO viaje que hace un `>>` sobre el testigo, o sea el armado, y le
+# deja pasar la siembra. La primera version de esta linea puso el testigo como
+# DIRECTORIO y no valia: eso rompe la SIEMBRA, que va antes y tiene su propia
+# salida temprana, asi que la fase se iba sin llegar nunca al armado y las tres
+# columnas salian en no por la razon equivocada. Es una de las dos causas que el
+# comentario de la fase nombra -un ssh cortado o un disco lleno- y hasta ahora
+# ninguna fila la ejercia: `testigo_arma` se probaba SOLO, en las filas 22 a 25,
+# y el SITIO donde su fallo tiene que recordarse por nodo no lo recorria nadie.
+# Ese hueco dejo entrar un defecto el 9 de septiembre de 2026, en el arreglo mismo
+# que paralelizo el armado: al sacar la llamada de la condicion de un `if` perdio
+# la exencion de errexit, y con un arma que fallaba el gate moria entero en vez de
+# anotar el nodo y seguir. Con esta linea puesta, esa version no llega al final.
+: > "${BANCO_ESTADO}/2.no-arma"
+
+# El ayudante que hace de corte. Los numeros son cortos a proposito: lo que esta
+# fila mide es el RECORRIDO de la fase, no cuanto tarda una VM en volver.
+(
+	sleep 3
+	for n in 1 2 3; do : > "${BANCO_ESTADO}/${n}.muerto"; done
+	sleep 2
+	for n in 1 2 3; do
+		printf 'dddd-eeee-ffff-000%s\n' "${n}" > "${BANCO_CASA}/${n}/proc/sys/kernel/random/boot_id"
+		head -c 4096 /dev/zero > "${BANCO_CASA}/${n}/naylamp/testigo-corte.bin" 2>/dev/null || true
+		rm -f -- "${BANCO_ESTADO}/${n}.muerto"
+	done
+) &
+AYUDANTE=$!
+# Y LA LLAMADA ENTRA POR `phase_cut` Y NO POR `phase_cut_fierro`, que es UNA
+# palabra y cubre un sitio entero. Hasta la cuarta vuelta esta linea llamaba a la
+# rama de fierro DIRECTAMENTE, y entonces el DESPACHO por ES_FIERRO que hay en
+# `phase_cut` no lo ejercia nadie: gate/sitio-test.sh lo tenia DECLARADO como
+# cubierto "por la fila del despacho", y esa fila, la 17hc, es la de phase_hygiene.
+# Una exencion escrita con una razon falsa es peor que ninguna, porque apaga la
+# guarda en el sitio exacto donde hacia falta. Entrando por el despacho la fila
+# recorre lo mismo y ademas comprueba a que rama fue, y la declaracion sobra.
+# Y NO SE CAPTURA CON `$( )`, que es una SUBCAPA y se lleva los veredictos. La
+# fase registra en `VERDICTS`, que es una variable, y una sustitucion de orden corre
+# en un proceso hijo: al cerrarse, todo lo que la fase escribio ahi se pierde. Se
+# midio el 9 de septiembre de 2026 imprimiendo `VERDICTS` justo detras de la
+# captura y saliendo el espacio con el que se habia inicializado. Lo que eso
+# significaba es peor que un veredicto perdido: la segunda mitad de la 17ib
+# preguntaba si P2.cut.envuelo quedaba en `pass` o en `none`, y `verdict_of` sobre
+# una variable vacia devuelve `none` SIEMPRE, por su rama por defecto. O sea que
+# esa columna salia verde pasara lo que pasara, en una fila cuyo propio comentario
+# de arriba explica que una asercion que admite los dos desenlaces no vigila nada.
+# Se redirige a fichero y la fase corre en ESTA capa, que es como el banco ya
+# ejerce phase_hygiene_fierro y al_salir.
+set +e
+phase_cut > "${BANCO}/fasecorte.salida" 2>&1
+set -e
+SALIDA_CORTE="$(cat "${BANCO}/fasecorte.salida")"
+wait "${AYUDANTE}" 2>/dev/null || true
+# LA NEGACION DEL ARMADO SE RETIRA AQUI, y olvidarla puso roja la fila 25 tres
+# minutos: esa fila arma el nodo 2 de verdad para medir su tamano, y con la
+# bandera puesta media 4096 en vez de 69632. Un montaje que no se deshace no es
+# un montaje, es un cambio de entorno para todo lo que venga detras.
+rm -f -- "${BANCO_ESTADO}/2.no-arma"
+rm -f -- "${BANCO}/estado/1.acepta"
+printf 'binario sano, igual en las tres\n' > "${BANCO}/casa/1/naylamp/bin/naylampd"
+
+# LA CUARTA MITAD LA PIDIO EL BARRIDO DE MUTANTES, no yo: quitandole a la fase la
+# espera del primer ack, esta fila seguia verde, porque miraba que el escritor
+# ARRANCARA y no que la fase le ESPERARA. Arrancar y esperar son dos cosas, y la
+# que decide si hay poblacion en vuelo con edad casi cero es la segunda.
+#
+# Y LA PRIMERA VERSION DE ESTA MITAD SEGUIA SIN MORDER, porque acepto las DOS ramas
+# con una alternancia: el mutante caia en la otra y pasaba. Una asercion que admite
+# los dos desenlaces de la decision que vigila no vigila nada. En este montaje el
+# escritor SI ackea -seis, medido- asi que se exige la rama positiva y solo esa.
+fila 17ia "si|si|si|si|no" "$(printf '%s' "${SALIDA_CORTE}" | grep -q 'starting the in-flight writer' && echo si || echo no)|$(printf '%s' "${SALIDA_CORTE}" | grep -q 'has at least one acknowledged write' && echo si || echo no)|$(printf '%s' "${SALIDA_CORTE}" | grep -q 'cutting the THREE' && echo si || echo no)|$(printf '%s' "${SALIDA_CORTE}" | grep -q 'boot id after' && echo si || echo no)|$(printf '%s' "${SALIDA_CORTE}" | grep -q 'cutting nodes 1 and 2 with kill -9' && echo si || echo no)" "phase_cut_fierro se recorre ENTERA contra la flota de mentira, ENTRANDO POR EL DESPACHO: arranca el escritor en vuelo, corta, y llega a leer los boot id de vuelta. Es el SITIO de tres funciones que este banco prueba una a una y que nadie ejercia, y la quinta columna exige que con ES_FIERRO=1 no se haya colado la rama del ensayo, que corta dos nodos con kill -9 en vez de tres con sysrq"
+# Y NO LLEVA UN `case` DENTRO DE LA SUSTITUCION, que es la clausula 31 y la
+# segunda version de esta linea la cometio: un `case` dentro de `$( )` es un error
+# de sintaxis en el bash 3.2 de esta maquina, porque el parser toma el `)` del
+# patron por el cierre de la sustitucion. Y no muere: el error va a stderr, la
+# sustitucion devuelve el texto suelto de detras del parentesis, y la fila salio
+# roja mostrando medio `esac` como si fuera un veredicto.
+#
+# LA 17ib PREGUNTA DOS COSAS QUE PUEDEN SALIR MAL, y la primera version pregunto
+# una que no podia: comparaba el veredicto contra "distinto de none O igual a
+# none", que es verdad siempre. Una fila que no puede fallar no es una fila.
+roja 17ib "si|pass" "$(printf '%s' "${SALIDA_CORTE}" | grep -q 'en vuelo:' && echo si || echo no)|$(verdict_of P2.cut.envuelo)" "y en el mismo recorrido lee la frontera del escritor y REGISTRA el veredicto en vuelo: el ORDEN de esas seis llamadas es lo unico que el sitio decide, y sin esta fila un cambio en el orden solo se veria en la primera corrida de fierro. La segunda columna exige PASS y no una alternancia: en este montaje el escritor ackea cuatro veces medidas, asi que none seria un defecto y no una rama legitima"
+
+# ---- 17ic: EL PRESUPUESTO DE LA VENTANA, medido por la ESTRUCTURA -------------
+#
+# LA CUARTA VUELTA DEL LECTOR ENCONTRO QUE LA VENTANA NO CABIA EN SU COTA, y el
+# defecto no lo metio quien escribio la fase: lo metieron las CORRECCIONES de la
+# tercera vuelta. La ventana va de armar el testigo a disparar el corte y su cota
+# es VENTANA_MAX, cinco segundos, derivada de commit=30. Dentro de esa ventana la
+# tercera vuelta metio dos gastos nuevos sin tocar la cota: el fsync de directorio
+# en la siembra, y hasta tres segundos esperando el primer ack del escritor en
+# vuelo. Con las tres armas EN SERIE contra Azure, el presupuesto se pasaba de
+# cinco antes de que el corte saliera. Y no falla ruidosamente: `ventana_dentro`
+# da falso y P2.cut.bytes sale NOT RUN, o sea que la lectura central de la fase
+# -si el corte fue seco- se anula sola sobre una flota sana.
+#
+# ESTA FILA MIDE ESTRUCTURA Y NO PROSA, que es lo que la clase de esta semana
+# obliga: se saca el NUMERO DE LINEA de las dos cosas dentro del cuerpo de la
+# funcion y se exige el orden. Una fila que preguntara si el comentario dice
+# "en paralelo" seguiria verde el dia que alguien devolviera las armas a la serie
+# y dejara el parrafo puesto. Las tres columnas caen si se deshace la correccion:
+# volver a poner el escritor detras del bucle tumba la primera, quitar el `&` de
+# las armas tumba la segunda, y quitar el `wait` tumba la tercera, que es la que
+# impide la version veloz y falsa: armar al fondo sin juntar cortaria antes de
+# que las semillas estuvieran puestas.
+# Y EL CUERPO SE LEE SIN COMENTARIOS, que no es limpieza: la primera version de
+# la 17ic salia VERDE por su propia prosa. El comentario que explica el arreglo
+# CITA la forma rota, `( testigo_arma "$n"; echo $? > ... ) &`, y el grep de la
+# segunda columna casaba esa cita en vez del codigo. O sea que la fila escrita
+# para vigilar el armado se habria quedado verde el dia que alguien devolviera el
+# armado a la forma rota, porque el parrafo que la describe seguiria puesto. Es
+# la misma clase que este banco lleva un dia entero persiguiendo, cometida DENTRO
+# de la fila que la persigue, y la caza fue el censo de mutantes: 17ic no aparecia
+# en la lista de filas que algun mutante hace caer.
+CUERPO_CORTE_F="$(awk '/^phase_cut_fierro\(\) \{/,/^\}$/' "${GATE_DIR}/p2.sh" | grep -v '^[[:space:]]*#')"
+roja 17ic "si|si|si" "$(L_ESC="$(printf '%s\n' "${CUERPO_CORTE_F}" | grep -n 'escritor_en_vuelo &' | head -1 | cut -d: -f1)"; L_ARM="$(printf '%s\n' "${CUERPO_CORTE_F}" | grep -n 'testigo_arma "\$n"' | head -1 | cut -d: -f1)"; [ -n "${L_ESC}" ] && [ -n "${L_ARM}" ] && [ "${L_ESC}" -lt "${L_ARM}" ] && echo si || echo no)|$(printf '%s\n' "${CUERPO_CORTE_F}" | grep -qE '^[[:space:]]*\( if testigo_arma "\$n";.*\) &$' && echo si || echo no)|$(printf '%s\n' "${CUERPO_CORTE_F}" | grep -q 'wait \${pids_arma}' && echo si || echo no)" "el escritor en vuelo arranca ANTES del bucle de armado, las tres armas van al fondo CON su llamada dentro de un if, que es su exencion de errexit, y se las junta con wait antes de cortar: asi la espera del primer ack se solapa con las armas en vez de sumarse detras, y dentro de la ventana queda UN viaje ssh de armar mas el abanico del corte, que ya iba en paralelo"
+
+# ---- 17id: UN ARMA QUE FALLA NO SE LLEVA LA CORRIDA --------------------------
+#
+# ESTA FILA LEE LA MISMA CAPTURA QUE LA 17ia y no cuesta un segundo mas: el nodo 2
+# tiene su testigo puesto como directorio arriba, asi que en ese mismo recorrido
+# de `phase_cut` hay UN arma que falla y DOS que arman. Las tres columnas son el
+# circuito entero del caso degradado: se anota el nodo por su numero, la fase
+# SIGUE VIVA hasta disparar el corte, y el veredicto del corte queda registrado.
+#
+# LA SEGUNDA COLUMNA ES LA QUE VALE Y ES LA QUE NO EXISTIA. Bajo `set -e`, una
+# llamada que falla fuera de una condicion mata la subcapa que la contiene, y si
+# esa subcapa esta al fondo, el `wait` que la recoge devuelve distinto de cero y
+# se lleva el gate. La version de este arreglo escrita media hora antes hacia
+# exactamente eso: la corrida de fierro moria en el armado, sin `fail`, sin corte
+# y sin veredicto, o sea que la sesion se perdia entera y el artefacto no decia
+# por que. Preguntar solo por el `fail` del nodo 2 no lo habria cazado, porque en
+# esa version el `fail` tampoco se escribia: lo que lo caza es exigir que la fase
+# LLEGUE a una linea posterior. Es la diferencia entre mirar la pieza y mirar que
+# la corriente sale por el otro lado.
+roja 17id "si|si|fail" "$(printf '%s' "${SALIDA_CORTE}" | grep -q 'node 2 would not arm its canary' && echo si || echo no)|$(printf '%s' "${SALIDA_CORTE}" | grep -q 'cutting the THREE' && echo si || echo no)|$(verdict_of P2.cut.fired)" "con el stub negandole al nodo 2 el unico viaje que hace un >> sobre el testigo, su arma falla de verdad y la siembra pasa: se anota P2.cut.fired contra ESE nodo, la fase sobrevive y dispara el corte, y el veredicto sale FAIL y no none. Sin la exencion de errexit dentro de la subcapa del armado paralelo las tres columnas caen a la vez, porque el gate muere antes de escribir ninguna"
+
+# ---- 17ie: EL ARMADO PARALELO, BAJO errexit DE VERDAD -------------------------
+#
+# LA 17id NO PODIA CAZAR ESTO Y SE MIDIO, no se supuso. Se deshizo el arreglo a
+# mano -se le quito el `if` a la subcapa- y la 17id siguio VERDE. La razon es que
+# la captura de la fase va entre `set +e` y `set -e`, para que un retorno distinto
+# de cero de la fase no se lleve el banco; con errexit apagado, la subcapa que
+# tenia que morir no muere y el defecto no se manifiesta. Un banco que apaga la
+# guarda que quiere medir mide otra cosa.
+#
+# ASI QUE EL TROZO SE SACA DEL GUION Y SE CORRE EN UN HIJO CON `set -euo pipefail`
+# de verdad, con un `testigo_arma` que siempre falla. El trozo se EXTRAE, no se
+# copia: va de la linea que declara `pids_arma` al `wait` que la recoge, dentro del
+# cuerpo de phase_cut_fierro, asi que el dia que alguien lo reescriba esta fila
+# corre lo reescrito. Con el `if` puesto, el hijo llega a su ultima linea; sin el,
+# errexit mata la subcapa antes del `echo`, el `wait` devuelve distinto de cero y
+# el hijo muere sin imprimir nada, que es exactamente lo que le pasaria a la
+# corrida de fierro en el minuto tres de una sesion de VMs.
+TROZO_ARMA="$(printf '%s\n' "${CUERPO_CORTE_F}" | awk '/pids_arma=""/,/wait \$\{pids_arma\}/')"
+mkdir -p "${BANCO}/errexit-arma"
+{
+	printf '%s\n' 'set -euo pipefail' 'NODE_IDS=(1 2 3)'
+	printf 'OUT_LOCAL=%s\n' "'${BANCO}/errexit-arma'"
+	printf '%s\n' 'testigo_arma() { return 1; }' 'fail() { :; }' 'armar() {'
+	printf '%s\n' "${TROZO_ARMA}"
+	printf '%s\n' '}' 'armar' 'echo SOBREVIVE'
+} > "${BANCO}/errexit-arma.sh"
+roja 17ie "1|3" "$(bash "${BANCO}/errexit-arma.sh" 2>/dev/null | grep -c SOBREVIVE)|$(ls -1 "${BANCO}/errexit-arma" 2>/dev/null | grep -c '^arma-rc-')" "el trozo del armado paralelo, EXTRAIDO del guion y corrido en un hijo con set -euo pipefail y un testigo_arma que siempre falla: llega a su ultima linea y deja los TRES rc escritos. Sin el if dentro de la subcapa, errexit la mata antes del echo, el wait devuelve distinto de cero, y el hijo no imprime nada ni escribe ningun rc"
+
+
+
+
+# LA FLOTA DE MENTIRA SE DEVUELVE A SU ESTADO, y esto es una correccion medida: el
+# ayudante cambia los boot id para que el corte se note, y sin devolverlos la fila
+# 18, que los lee mas abajo, salia roja por un estado que le dejo puesto otra fila.
+# Una fila que le mueve el suelo a las de detras es peor que una que no mide nada.
+for n in 1 2 3; do
+	printf 'aaaa-bbbb-cccc-000%s\n' "${n}" > "${BANCO}/casa/${n}/proc/sys/kernel/random/boot_id"
+	rm -f -- "${BANCO}/estado/${n}.muerto"
+done
+rm -f -- "${BANCO}/casa/1/naylamp/testigo-corte.bin" "${BANCO}/casa/2/naylamp/testigo-corte.bin" "${BANCO}/casa/3/naylamp/testigo-corte.bin"
+rm -rf -- "${OUT_LOCAL}"
+OUT_LOCAL="${GUARDA_OUT7}"; MANIFEST="${GUARDA_MAN7}"; ES_FIERRO="${GUARDA_FIERRO7}"
+VERDICTS="${GUARDA_V7}"; CHECK_FAILED="${GUARDA_CF7}"; EN_VUELO_MAX="${GUARDA_MAXV7}"
 
 # ---- 18 a 21: las primitivas de fierro contra el stub ------------------------
 fila 18 "aaaa-bbbb-cccc-0002" "$(boot_id_de 2)" "boot_id_de lee el boot id por el canal de tres estados"

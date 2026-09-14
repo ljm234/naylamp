@@ -71,6 +71,34 @@ esac
 rm -rf -- "${PADRE}/naylamp-sello-mutantes-$$"; mkdir -p "${TALLER}/gate/out"
 for f in "${REPO}"/gate/*.sh "${REPO}"/gate/*.txt; do cp "${f}" "${TALLER}/gate/"; done
 cp "${REPO}/go.work" "${TALLER}/" 2>/dev/null || true
+# Y LAS FUENTES DEL MOTOR, que hasta el 9 de septiembre de 2026 no venian. El
+# taller llevaba `gate/` y nada mas, y eso basto mientras el banco solo se miraba a
+# si mismo. Dejo de bastar en cuanto entro una fila que CASTEA un literal contra el
+# objeto que lo produce: la 17db saca `LITERAL_LIDER` de `caliente()` y lo busca en
+# `engine/`, y en un taller sin `engine/` esa columna sale `no` SIEMPRE. El sintoma
+# fue inmediato y feo: `17db` aparecia en la lista de filas caidas de TODOS los
+# mutantes, incluidos los que no tocan nada suyo, o sea que el barrido estaba
+# midiendo un banco corriendo en un arbol roto y llamandolo mordisco. Se copian
+# solo los `.go`, que son 144 ficheros y 1.3 MB; no se compila nada aqui.
+(cd "${REPO}" && find engine -name '*.go' -print0) | while IFS= read -r -d '' g; do
+	mkdir -p "${TALLER}/$(dirname "${g}")"
+	cp "${REPO}/${g}" "${TALLER}/${g}"
+done
+
+# LOS IDS TIENEN QUE SER UNICOS, Y SE COMPRUEBA ANTES DE GASTAR DIECIOCHO MINUTOS.
+# El 9 de septiembre de 2026 se anadieron cuatro mutantes eligiendo `M51`, `M52` y
+# `M53`, que ya existian -dos como mutantes y uno como MITAD-. Nada fallo: el
+# barrido corrio los ocho y publico su informe con TRES PARES DE LINEAS HOMONIMAS,
+# cada par diciendo cosas distintas y sin forma de saber cual era cual. Un informe
+# asi no es re-derivable, que es lo unico que este guion produce. La guarda es
+# ESTATICA y va antes de copiar nada, porque el fallo se conoce leyendo el fichero
+# y hacerlo esperar al final costaria la corrida entera para decir lo mismo.
+IDS_REPES="$(grep -oE '^(mutante|mitad) M[0-9a-z]+' "$0" | awk '{print $2}' | sort | uniq -d | tr '\n' ' ')"
+if [ -n "${IDS_REPES%% }" ] && [ -n "${IDS_REPES}" ]; then
+	echo "sello-mutantes: hay ids de mutante repetidos y el informe no se podria leer: ${IDS_REPES}" >&2
+	echo "sello-mutantes: cada mutante o mitad lleva un id propio; el mayor en uso se ve con grep -oE '^(mutante|mitad) M[0-9]+' sobre este fichero" >&2
+	exit 2
+fi
 
 T_INICIO="$(/usr/bin/python3 -c 'import time; print("%.3f" % time.time())' 2>/dev/null || echo 0)"
 echo "BARRIDO DE MUTANTES: el sello de gate/p2.sh contra gate/p2-iron-test.sh"
@@ -91,6 +119,10 @@ corre() {
 	bash "${TALLER}/gate/p2-iron-test.sh" 2>/dev/null
 }
 control() {
+	# EL CONTROL RESTAURA TODOS LOS GUIONES y no solo p2.sh, desde que el barrido
+	# puede mutar mas de uno: si no, el ultimo mutante del preflight se quedaria
+	# puesto y el control mediria un arbol que no es el del repositorio.
+	for f in "${REPO}"/gate/*.sh; do cp "${f}" "${TALLER}/gate/"; done
 	cp "${REPO}/gate/p2.sh" "${TALLER}/gate/p2.sh"
 	local n salida
 	salida="$(corre)"
@@ -131,10 +163,12 @@ FINDELPYTHON
 # mutante ordinario.
 mitad() {
 	local etiqueta="$1" viejo="$2" nuevo="$3" glosa="$4" salida caidas
+	local objeto="${5:-p2.sh}"
 	MUTANTES=$((MUTANTES + 1))
 	MITADES=$((MITADES + 1))
-	cp "${REPO}/gate/p2.sh" "${TALLER}/gate/p2.sh"
-	if ! aplica_mutacion "${TALLER}/gate/p2.sh" "${viejo}" "${nuevo}"; then
+	for f in "${REPO}"/gate/*.sh; do cp "${f}" "${TALLER}/gate/"; done
+	cp "${REPO}/gate/${objeto}" "${TALLER}/gate/${objeto}"
+	if ! aplica_mutacion "${TALLER}/gate/${objeto}" "${viejo}" "${nuevo}"; then
 		printf '%-5s FALLO DE MONTAJE: la mutacion no se pudo aplicar   %s\n' "${etiqueta}" "${glosa}"
 		MITADES_MAL=$((MITADES_MAL + 1))
 		return
@@ -154,9 +188,18 @@ mitad() {
 
 mutante() {
 	local etiqueta="$1" viejo="$2" nuevo="$3" caidas
+	# EL QUINTO ARGUMENTO ES EL FICHERO, y por defecto es gate/p2.sh, que es donde
+	# vive casi todo lo que este barrido mide. Entra el 9 de septiembre de 2026 con
+	# los cinco bloqueantes del fierro: dos de ellos, el despliegue y el estado de
+	# partida de los hosts, viven en gate/p2-preflight.sh, y un barrido que solo sabe
+	# mutar un fichero no puede decir nada de sus filas. Se RESTAURA el fichero
+	# mutado al terminar cada mutante, para que uno no se lleve al siguiente por
+	# delante.
+	local objeto="${5:-p2.sh}"
 	MUTANTES=$((MUTANTES + 1))
-	cp "${REPO}/gate/p2.sh" "${TALLER}/gate/p2.sh"
-	if ! aplica_mutacion "${TALLER}/gate/p2.sh" "${viejo}" "${nuevo}"; then
+	for f in "${REPO}"/gate/*.sh; do cp "${f}" "${TALLER}/gate/"; done
+	cp "${REPO}/gate/${objeto}" "${TALLER}/gate/${objeto}"
+	if ! aplica_mutacion "${TALLER}/gate/${objeto}" "${viejo}" "${nuevo}"; then
 		printf '%-5s FALLO DE MONTAJE: la mutacion no se pudo aplicar   %s\n' "${etiqueta}" "$4"
 		MUDOS=$((MUDOS + 1))
 		return
@@ -336,6 +379,22 @@ mutante M22c '	for nombre in $(cd "${OUT_DIR}" 2>/dev/null && ls -dt p2-local-[0
 		[ "${nombre}" = "${propio}" ] && continue
 		n=$((n + 1))
 		[ "${n}" -le "${CONSERVA_ENSAYOS}" ] && continue
+		# EL MARCADOR MANDA SOBRE EL TECHO, y esta es la linea que faltaba. Un
+		# artefacto cuya corrida sigue VIVA no se retira por viejo: el techo es una
+		# regla sobre lo que ya termino. Y el que lleva un marcador cuyo proceso murio
+		# se retira, pero diciendolo, porque sus restos son informacion. La cuenta del
+		# techo NO se le devuelve al vivo: ocupa su sitio en la ventana igual que
+		# cualquier otro, y lo unico que cambia es que no se borra.
+		case "$(marcador_de "${d}")" in
+			vivo)
+				echo "gate: NO retiro ${d}: su corrida sigue viva, con marcador y pid vivo dentro" >&2
+				continue ;;
+			ilegible)
+				echo "gate: NO retiro ${d}: lleva un marcador con un pid que no se puede leer, y eso no es lo mismo que estar muerto" >&2
+				continue ;;
+			muerto)
+				echo "gate: retiro ${d} por el techo: lleva el marcador de una corrida que no termino" >&2 ;;
+		esac
 		# Clausula 23: la ruta se compone de OUT_DIR mas un nombre que se acaba de
 		# comprobar contra la forma exacta por la que este guion borra, y lo que no
 		# sea esa forma se dice en voz alta en vez de borrarse.
@@ -355,10 +414,182 @@ mutante M22c '	for nombre in $(cd "${OUT_DIR}" 2>/dev/null && ls -dt p2-local-[0
 		rm -rf -- "${OUT_DIR}/${nombre}"
 		retirados=$((retirados + 1))
 	done' \
-'LAS DOS A LA VEZ: el techo mira todo lo que empiece por p2- y borra sin comprobar la forma'
+'LAS DOS A LA VEZ: el techo mira todo lo que empiece por p2- y borra sin comprobar la forma ni el marcador'
 
 mutante M23 '		[ -d "${OUT_DIR}/p2-local-${id}" ] && continue' '		:' \
 'la flota se retira aunque su artefacto siga ahi'
+
+# M24 A M27: EL MARCADOR SOBRE EL TECHO, que entra el 9 de septiembre de 2026
+# despues de medir que el techo se llevaba una corrida viva. Cada uno rebobina una
+# de las cuatro decisiones y la fila que lo caza va al lado.
+mutante M24 '		case "$(marcador_de "${d}")" in
+			vivo)
+				echo "gate: NO retiro ${d}: su corrida sigue viva, con marcador y pid vivo dentro" >&2
+				continue ;;
+			ilegible)
+				echo "gate: NO retiro ${d}: lleva un marcador con un pid que no se puede leer, y eso no es lo mismo que estar muerto" >&2
+				continue ;;
+			muerto)
+				echo "gate: retiro ${d} por el techo: lleva el marcador de una corrida que no termino" >&2 ;;
+		esac' '		:' \
+'el techo vuelve a borrar por antiguedad sin mirar el marcador: el incidente por TERCERA vez'
+
+mutante M25 '			ilegible)
+				echo "gate: NO retiro ${d}: lleva un marcador con un pid que no se puede leer, y eso no es lo mismo que estar muerto" >&2
+				continue ;;' '			ilegible) ;;' \
+'un pid ilegible se trata como muerto: dos respuestas donde hay tres'
+
+mutante M26 '	if kill -0 "${pid}" 2>/dev/null || ps -p "${pid}" >/dev/null 2>&1; then
+		printf '"'"'vivo'"'"'
+	else
+		printf '"'"'muerto'"'"'
+	fi' '	printf '"'"'muerto'"'"'' \
+'marcador_de dice MUERTO siempre, o sea que ningun marcador protege'
+
+mutante M27 '	[ -f "${d}/RUNNING" ] || { printf '"'"'sin-marcador'"'"'; return 0; }' '	[ -f "${d}/RUNNING" ] && { printf '"'"'vivo'"'"'; return 0; }' \
+'el predicado pasa a ser el FICHERO y no el proceso: un marcador huerfano bloquea el techo para siempre'
+
+# M28 A M37: LOS CINCO BLOQUEANTES DEL FIERRO, cada uno rebobinado a la forma que
+# tenia cuando un lector externo los encontro. Dos de ellos viven en
+# gate/p2-preflight.sh, que es por lo que este barrido aprendio a mutar mas de un
+# fichero.
+mutante M28 '	if [ "${ES_FIERRO}" -eq 1 ]; then
+		banner_fierro
+	else
+		banner_ensayo
+	fi' '	banner_ensayo' \
+'el banner pierde su rama de fierro: el artefacto vuelve a declararse un ensayo de loopback'
+
+mutante M29 '		if [ "${ES_FIERRO}" -eq 1 ]; then
+			echo "gate: all IRON checks passed (${EXPECTED})"
+		else
+			echo "gate: all rehearsal checks passed (${EXPECTED})"
+		fi' '		echo "gate: all rehearsal checks passed (${EXPECTED})"' \
+'la ULTIMA linea del log vuelve a decir rehearsal en una corrida de fierro'
+
+mutante M30 '		out="$(run_on 1 "cd naylamp && NAYLAMP_TLS_CERT=certs/node-${CLIENT_ID}.pem NAYLAMP_TLS_KEY=certs/node-${CLIENT_ID}-key.pem NAYLAMP_TLS_CA=certs/ca.pem ./bin/naylampd client -listen ${PRIV[1]}:${MUT_CLIENT_PORT_FIERRO} -group '"'"'${mgroup}'"'"' -dim ${DIM} -op put -id 7 -vec '"'"'$(vec_for 7)'"'"' ; echo __RC__=\$?" 2>&1)"' \
+'		out="$("${BIN}" client -listen "${PRIV[1]}:${MUT_CLIENT_PORT_FIERRO}" -group "${mgroup}" -dim "${DIM}" -op put -id 7 -vec "$(vec_for 7)" </dev/null 2>&1)"' \
+'el cliente del mutante vuelve a correr en este portatil, contra una direccion que esta maquina no tiene'
+
+# M31 REBOBINA EL DEFECTO Y NO ROMPE EL FICHERO, que es lo que hacia la primera
+# version: cortaba el heredoc de python por la mitad y dejaba las comillas sin
+# casar, asi que el banco moria de sintaxis. Eso cuenta como deteccion en este
+# barrido, y esta bien que cuente, pero no es lo que se queria medir: un mutante
+# tiene que dejar un guion que CORRE y hace lo de antes, no uno que no arranca.
+mutante M31 '	ask_on "${n}" "python3 -c \"
+import os
+d = os.path.dirname('"'"'${TESTIGO_REMOTO}'"'"') or '"'"'.'"'"'
+f = os.open('"'"'${TESTIGO_REMOTO}'"'"', os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+os.write(f, b'"'"'\\0'"'"' * ${TESTIGO_SEMILLA})
+os.fsync(f)
+os.close(f)
+h = os.open(d, os.O_RDONLY)
+os.fsync(h)
+os.close(h)
+\""' '	ask_on "${n}" "head -c ${TESTIGO_SEMILLA} /dev/zero > ${TESTIGO_REMOTO} && sync"' \
+'el testigo vuelve al sync GLOBAL: el instrumento anulando lo que mide'
+
+mutante M32 '		if committed "${out}"; then
+			echo "put ${id} ${vec} confirmed" >> "${MANIFEST}"' '		echo "put ${id} ${vec} uncertain" >> "${MANIFEST}"
+		if committed "${out}"; then
+			echo "put ${id} ${vec} confirmed" >> "${MANIFEST}"' \
+'el escritor en vuelo anota uncertain ANTES de enviar: todos los ids quedan ambiguos, tambien los que volvieron con su ack'
+
+mutante M33 '			seguidos=$(( seguidos + 1 ))
+			[ "${seguidos}" -ge "${EN_VUELO_FALLOS_SEGUIDOS}" ] && break' '			seguidos=$(( seguidos + 1 ))' \
+'el escritor en vuelo pierde su cota de fallos seguidos y sigue contra tres maquinas que ya no contestan'
+
+mutante M34 '	if "${GATE_DIR}/deploy.sh" >/dev/null 2>&1; then' '	if true; then' \
+'la mitad caliente deja de desplegar el binario y los certificados' p2-preflight.sh
+
+mutante M35 '	if "${GATE_DIR}/cluster.sh" start >/dev/null 2>&1; then' '	if true; then' \
+'la mitad caliente deja de levantar la flota' p2-preflight.sh
+
+mutante M36 '	paso "naylamp/data, naylamp/logs y naylamp/data-mutante VACIOS en los tres, verificado y no supuesto"' \
+'	paso "naylamp/data sin mirar"' \
+'la mitad caliente deja de exigir el estado de partida de los hosts' p2-preflight.sh
+
+mutante M37 '			'"'"'sudo -n test -w /proc/sysrq-trigger'"'"' >/dev/null 2>&1; then' \
+'			'"'"'true'"'"' >/dev/null 2>&1; then' \
+'el sudo del corte deja de ejercitarse antes del corte' p2-preflight.sh
+
+# M38 A M44: LO QUE LA SEGUNDA VUELTA DEL LECTOR EXTERNO DESTAPO. Dos de estos
+# rebobinan defectos que introdujo el arreglo anterior, o sea que este barrido
+# vigila ahora tambien lo que la casa se rompio a si misma al arreglar.
+mutante M38 '    if estado == INCIERTO:
+        continue' '    pass' \
+'el conjunto vivo vuelve a no mirar el estado: las lineas uncertain se exigen presentes y la corrida sale roja diciendo que el motor perdio una escritura ackeada'
+
+mutante M39 'ID_EN_VUELO_DESDE=100' 'ID_EN_VUELO_DESDE=500' \
+'el rango en vuelo vuelve al 500: el id 512 da el vector CERO y treinta ids colisionan con los de la carga'
+
+mutante M40 '	choques="$(comprueba_rango_en_vuelo)"
+	if [ "${choques}" != "0 0" ]; then' '	choques="0 0"
+	if false; then' \
+'la guarda del rango deja de correrse antes de escribir'
+
+mutante M41 '		printf '"'"'%s %s\n'"'"' "${id}" "${vec}" >> "${OUT_LOCAL}/en-vuelo-enviados.txt"' '		:' \
+'lo enviado deja de anotarse antes de enviarlo: una muerte entre el ack y su linea deja un id comprometido fuera del manifiesto'
+
+mutante M42 '		grep -q "^put ${id} ${vec} confirmed\$" "${MANIFEST}" 2>/dev/null && continue
+		grep -q "^put ${id} ${vec} uncertain\$" "${MANIFEST}" 2>/dev/null && continue' '		grep -q "^put ${id} ${vec} confirmed\$" "${MANIFEST}" 2>/dev/null && continue' \
+'el pliegue deja de ser idempotente y duplica lineas al llamarse dos veces'
+
+mutante M43 '	if [ "${acks_en_vuelo}" -gt 0 ]; then' '	if true; then' \
+'P2.cut.envuelo pasa a verde sin que haya habido un solo ack en vuelo'
+
+mutante M44 '	# shellcheck disable=SC2086
+	wait ${pids_corte_rojo}' '	wait' \
+'phase_red_fierro vuelve a esperar con un wait desnudo detras de su corte'
+
+# M45 A M49: LA TERCERA VUELTA DEL LECTOR EXTERNO. La primera de estas rebobina un
+# defecto que introdujo el arreglo de la SEGUNDA vuelta, o sea que este barrido
+# vigila ya tres capas de arreglos sobre arreglos.
+mutante M45 '	end_check P2.cut.fired
+
+	# EL VEREDICTO EN VUELO VA DETRAS DEL end_check DE ESTA FASE, nunca dentro: abre
+	# su propio bloque con su propio begin_check, y compartirlo era borrar los FAIL
+	# de P2.cut.fired.
+	veredicto_en_vuelo' '	veredicto_en_vuelo
+	end_check P2.cut.fired' \
+'veredicto_en_vuelo vuelve DENTRO del bloque de P2.cut.fired y su begin_check borra los FAIL de la fase'
+
+mutante M46 '			'"'"'find naylamp/data naylamp/logs naylamp/data-mutante -mindepth 1 2>/dev/null | grep -c . ; echo __FIN__'"'"' 2>/dev/null || true)"
+		case "${antes}" in' \
+'			'"'"'ls -A naylamp/data naylamp/logs naylamp/data-mutante 2>/dev/null | grep -c . ; echo __FIN__'"'"' 2>/dev/null || true)"
+		case "${antes}" in' \
+'la precondicion vuelve a contar con ls -A, que da tres sobre tres directorios vacios' p2-preflight.sh
+
+mutante M47 '		ok "la flota eligio lider, y lo escribio el host ${quien} con ${LITERAL_LIDER}; se pregunto a los tres porque solo el que GANA deja esa linea"' \
+'		ok "la flota eligio lider, leido del host 1"' \
+'el mensaje del lider deja de decir a cual de los tres se le leyo' p2-preflight.sh
+
+# M50 A M53: LA CUARTA CAPA. Los tres primeros rebobinan lo que la tercera vuelta
+# del lector encontro; el ultimo rebobina la guarda de la clase.
+mutante M50 '	veredicto_en_vuelo' '	# el veredicto se va de aqui' \
+'la fase deja de llamar al veredicto en vuelo: P2.cut.envuelo no se registra y la lista de fierro lo echa en falta'
+
+mutante M51 '	if grep -q '"'"'^ack '"'"' "${OUT_LOCAL}/en-vuelo.txt" 2>/dev/null; then
+		note "the in-flight writer has at least one acknowledged write; cutting now, so its age at the cut is as close to zero as this gate can put it"' \
+'	if false; then
+		note "the in-flight writer has at least one acknowledged write; cutting now, so its age at the cut is as close to zero as this gate can put it"' \
+'el corte deja de esperar al primer ack del escritor en vuelo'
+
+mutante M52 '	if [ -n "${PID_EN_VUELO:-}" ]; then
+		kill "${PID_EN_VUELO}" 2>/dev/null || true
+		wait "${PID_EN_VUELO}" 2>/dev/null || true
+	fi' '	:' \
+'la trampa deja de matar al escritor en vuelo, que sobrevive al aborto escribiendo detras del sello'
+
+# M53 SE ESPERA MUDO Y SU RAZON VIVE EN OTRO FICHERO, que es lo que ata los dos
+# instrumentos. Su sitio, `escribe_running` dentro de `phase_build`, esta DECLARADO
+# en gate/sitio-test.sh con esta razon escrita: ejercer phase_build seria
+# cruza-compilar y desplegar binarios dentro de un banco que existe para no
+# encender nada. O sea que no es que nadie mire: es que mirar ahi cuesta mas de lo
+# que ese banco puede gastar, y esta dicho donde se lee.
+mitad M53 '	escribe_running
+	if [ "${ES_FIERRO}" -eq 1 ]; then' '	if [ "${ES_FIERRO}" -eq 1 ]; then' \
+'phase_build deja de escribir el marcador RUNNING: su sitio esta DECLARADO exento en gate/sitio-test.sh'
 
 echo
 # LA LINEA DE RESULTADO EN LA FORMA DE LA CASA, `RESULTADO: <n> filas, <n> en
@@ -372,6 +603,34 @@ echo "y el CONTROL sin mutar dio ${CONTROL} filas en FALLA sobre el banco entero
 if [ "${MITADES}" -ne 0 ]; then
 	echo "${MITADES} de esos son MITADES de una defensa doble: se esperan mudos, y ${MITADES_MAL} salieron de otra forma"
 fi
+# ---- LOS CUATRO QUE LA CUARTA VUELTA DEJO SIN RESPALDO ------------------------
+#
+# EL CENSO LOS ENCONTRO Y NO YO. Tras cerrar la cuarta vuelta se cruzo la lista de
+# filas que algun mutante hace caer contra las filas nuevas, y CUATRO no aparecian:
+# 17db, 17ic, 17ib y 17ie. Y los IDS SE ELIGIERON MAL la primera vez: M51, M52 y
+# M53 ya existian, dos como mutantes y uno como MITAD, asi que el informe salio
+# con tres pares de lineas homonimas y sin forma de saber cual era cual. Van como
+# M54, M55 y M56, detras del mayor que habia. Una fila sin mutante detras es una fila que nadie ha
+# visto ponerse roja, o sea una afirmacion sin comprobar. Y el cruce cobro en el
+# acto: la 17ic salia verde por su PROPIA PROSA, porque el comentario que explica
+# el arreglo CITA la forma rota y el grep casaba la cita en vez del codigo.
+
+mutante M47b "	local LITERAL_LIDER='role=leader'" \
+"	local LITERAL_LIDER='became leader'" \
+'el literal del lider vuelve a la frase que el motor NO escribe' p2-preflight.sh
+
+mutante M54 '		( if testigo_arma "$n"; then echo 0; else echo 1; fi > "${OUT_LOCAL}/arma-rc-${n}" ) &' \
+'		( testigo_arma "$n"; echo $? > "${OUT_LOCAL}/arma-rc-${n}" ) &' \
+'el armado paralelo pierde la exencion de errexit: con un arma que falla, la subcapa muere antes de escribir su rc'
+
+mutante M55 '	wait ${pids_arma}' \
+'	:' \
+'las armas se lanzan al fondo y NO se las junta: se corta antes de que las semillas esten puestas'
+
+mutante M56 '	if [ "${acks_en_vuelo}" -gt 0 ]; then' \
+'	if [ "${acks_en_vuelo}" -gt 999 ]; then' \
+'el veredicto en vuelo no llega nunca a pass, aunque haya acks'
+
 T_FIN="$(/usr/bin/python3 -c 'import time; print("%.3f" % time.time())' 2>/dev/null || echo 0)"
 /usr/bin/python3 -c "print('reloj: %.1f s de punta a punta, %s corridas del banco, la del control incluida' % (${T_FIN} - ${T_INICIO}, ${MUTANTES} + 1))" 2>/dev/null || true
 echo "RESULTADO: ${MUTANTES} filas, $((MUDOS + MITADES_MAL)) en FALLA"
