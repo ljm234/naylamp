@@ -80,6 +80,8 @@ set -eu
 # esta linea distingue una corrida de una cita a una corrida.
 echo "BANCO: clean-guard-test"
 
+. "$(dirname "${BASH_SOURCE[0]}")/entorno.sh"
+
 AQUI=$(cd "$(dirname "$0")" && pwd)
 RAIZ_REPO=$(cd "${AQUI}/.." && pwd)
 MAKEFILE_REAL="${RAIZ_REPO}/Makefile"

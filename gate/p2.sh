@@ -886,7 +886,17 @@ testigo_tamano() {
 # exit status; it is the boot id read afterwards.
 corta_en() {
 	local n="$1"
-	run_on "${n}" 'sudo sh -c "echo b > /proc/sysrq-trigger"' >/dev/null 2>&1 || true
+	# EL -n ES OBLIGATORIO Y NO ES ESTILO, y lo obliga una corrida real y no una
+	# precaucion. Esta orden se escribio para el host remoto, donde sudo es
+	# passwordless, pero el banco de fierro la ejecuta LOCALMENTE a traves de su stub
+	# de ssh, que reescribe /proc/ a una casa de mentira y corre la orden con bash -c.
+	# En una maquina de trabajo con tty, un sudo pelado PIDE CONTRASENA y la corrida
+	# se para ahi: medido el 14 de septiembre de 2026, y quien lo nombra es el
+	# registro del sistema, con TTY=ttys006 y tres intentos fallidos. Con -n falla en
+	# el acto en vez de colgarse, y donde sudo SI es passwordless -Azure y el runner
+	# de CI- se comporta exactamente igual que sin la bandera, asi que el camino de
+	# fierro no cambia. Lo que cambia es que deja de haber un sitio que cuelga.
+	run_on "${n}" 'sudo -n sh -c "echo b > /proc/sysrq-trigger"' >/dev/null 2>&1 || true
 }
 
 # espera_vuelta <n> <segundos> <instante del corte>: waits for a host to answer
@@ -945,7 +955,12 @@ espera_caida() {
 # and the red arm is where it earns its keep.
 sha_del_binario_vivo() {
 	local n="$1" pidfile="$2"
-	read_on "${n}" "0" "sudo sha256sum /proc/\$(cat ${pidfile})/exe 2>/dev/null | cut -d' ' -f1"
+	# -n por la misma razon que el corte. Este sitio NO se alcanza hoy: su unico
+	# llamador es phase_red_fierro, que el banco de fierro solo extrae como texto con
+	# awk y nunca ejecuta. Se arregla igual porque el dia que esa fase se recorra
+	# contra la flota de mentira serian tres sudo pelados mas, y el defecto se
+	# descubriria otra vez por un prompt en mitad de una corrida.
+	read_on "${n}" "0" "sudo -n sha256sum /proc/\$(cat ${pidfile})/exe 2>/dev/null | cut -d' ' -f1"
 }
 
 # copia_fria_de <n>: brings that host's data directory down, and the ORDER is

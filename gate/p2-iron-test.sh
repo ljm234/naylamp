@@ -29,6 +29,8 @@ set -uo pipefail
 # esta linea distingue una corrida de una cita a una corrida.
 echo "BANCO: p2-iron-test"
 
+. "$(dirname "${BASH_SOURCE[0]}")/entorno.sh"
+
 GATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # EL TALLER NO SE LLAMA p2-ALGO, y el nombre viejo, gate/out/p2-iron-test, era un
 # defecto medido por un lector. La guarda de `make clean` refuse por FORMA,
@@ -1009,7 +1011,64 @@ CUERPO_RED_FIERRO2="$(awk '/^phase_red_fierro\(\) \{/,/^\}$/' "${GATE_DIR}/p2.sh
 roja 17eg "si|si" "$(printf '%s' "${CUERPO_CUT_FIERRO}" | grep -q 'wait ${pids_corte}' && echo si || echo no)|$(printf '%s' "${CUERPO_RED_FIERRO2}" | grep -q 'wait ${pids_corte_rojo}' && echo si || echo no)" "ninguna de las dos fases que cortan espera con un wait DESNUDO: un wait sin argumentos espera a TODO lo de fondo, y con el escritor en vuelo detras habria tomado el instante del corte treinta segundos tarde, contra una cota de cinco, poniendo los veredictos en none sin decir por que"
 
 # EL VEREDICTO QUE FALTABA, y que la lista de fierro lo nombre
-roja 17eh "si|si" "$(grep -q 'P2.cut.envuelo' "${GATE_DIR}/p2.sh" && echo si || echo no)|$(grep '^\t\t\t\tEXPECTED=' "${GATE_DIR}/p2.sh" | grep 'P2.pre.sysrq' | grep -q 'P2.cut.envuelo' && echo si || echo no)" "existe un veredicto colgado de que HAYA habido al menos un ack en vuelo, y la lista de fierro lo nombra: sin el, un escritor que no ackeara nada dejaba la propiedad igual de sin medir que antes del arreglo, y nada lo decia"
+roja 17eh "si|si" "$(grep -q 'P2.cut.envuelo' "${GATE_DIR}/p2.sh" && echo si || echo no)|$([ "$(grep -c '^[[:space:]]*EXPECTED=.*P2\.pre\.sysrq.*P2\.cut\.envuelo' "${GATE_DIR}/p2.sh")" -ge 1 ] && echo si || echo no)" "existe un veredicto colgado de que HAYA habido al menos un ack en vuelo, y la lista de fierro lo nombra: sin el, un escritor que no ackeara nada dejaba la propiedad igual de sin medir que antes del arreglo, y nada lo decia"
+
+# Y LA MITAD DE ARRIBA SE ESCRIBE SIN TUBERIA Y SIN ESCAPES, que es lo que la
+# hace inmune a las DOS clases de dependencia de entorno que esta pasada encontro.
+# La primera es la de los escapes, que es la que la tumbo. La segunda se midio al
+# revisarla y no habia salido todavia: con `set -o pipefail`, una tuberia que
+# acaba en `grep -q` devuelve 141 cuando el de aguas arriba escribe mas de lo que
+# cabe en el tubo y el de abajo sale al primer acierto. Medido aqui: una tuberia
+# con 200.000 lineas y `grep -q` da rc=141 con el acierto dentro, o sea que habria
+# impreso "no" teniendo el hecho delante. La fila de aqui abajo tiene una salida
+# de dos lineas y no llega a esa ventana, pero la forma sin tuberia la saca de las
+# dos clases a la vez y no solo de la que ya mordio.
+# LA FILA QUE EXISTE POR EL INCIDENTE DEL 14 DE SEPTIEMBRE DE 2026, y es la unica
+# de este banco que no mira a gate/p2.sh sino a los guiones que preguntan. La
+# fila de arriba, la 17eh, dio VERDE en macOS y ROJA en el runner de CI con el
+# MISMO commit, y no por la propiedad: su patron era '^\t\t\t\tEXPECTED=' y POSIX
+# no define \t dentro de una expresion, asi que BSD grep leia tabulador y GNU
+# grep leia la letra t. El hecho que la fila asevera era cierto en los dos sitios;
+# lo que cambiaba era el instrumento. Un rojo asi se lee como rojo de propiedad y
+# nadie lo re-corre, que es lo caro. LA REPARACION FUERON DOS CAMBIOS Y NO UNO, y
+# ninguno de los dos es la forma $'\t': la clase '[[:space:]]*', que POSIX SI
+# define, y el colapso de la tuberia de tres greps en un solo `grep -c` con
+# comparacion, que saca a la fila tambien de la clase del rc=141. La forma $'\t'
+# la nombra gate/entorno.sh como la portable y NO la usa ningun patron de este
+# arbol: medido el 14 de septiembre de 2026, CERO apariciones en todo el
+# repositorio. Esta fila impide que vuelva la forma SIN DEFINIR, que es la que
+# mordio, y su mitad roja reinstala el defecto en una copia para probar que el
+# censo sabe contarlo. La primera version de este comentario decia que la
+# reparacion fue $'\t', que es una forma que el arbol no contiene: se corrige aqui
+# porque es el sitio donde cayo.
+MUT_ESC="${BANCO}/p2-iron-test-escape.sh"
+python3 - "${GATE_DIR}/p2-iron-test.sh" "${MUT_ESC}" <<'MUTESC'
+import sys
+# El mutante NO deshace una forma concreta -eso ataba el brazo a como este fichero
+# este escrito hoy-: INYECTA una linea con la forma prohibida. Asi la mitad roja
+# mide lo que dice medir, que el censo cuenta un escape sin definir, y sigue
+# valiendo el dia que ninguna linea del banco use ya la forma portable.
+s = open(sys.argv[1], encoding="utf-8").read()
+s += "\ngrep '^\\tEXPECTED=' \"${GATE_DIR}/p2.sh\"  # linea inyectada por el brazo rojo de 17ei\n"
+open(sys.argv[2], "w", encoding="utf-8").write(s)
+MUTESC
+roja 17ei "0|1" "$(entorno_escapes_sin_definir "${GATE_DIR}"/*.sh | wc -l | tr -d ' ')|$(entorno_escapes_sin_definir "${MUT_ESC}" | wc -l | tr -d ' ')" "ningun patron de grep de gate/ lleva un escape que POSIX no define -\\t, \\s, \\d, \\w-, que es lo que hizo que la fila de arriba respondiera distinto en dos maquinas con el mismo arbol; y con la forma vieja restituida en una copia el censo la cuenta, o sea que sabe contar"
+
+# LA FILA DE UN PISO POR ENCIMA, del mismo dia y de la misma forma: un guion que
+# SOURCEA un fichero que git no trackea corre aqui y muere en un clon, y CI clona
+# en limpio. El arreglo de hoy lo estreno: `gate/entorno.sh` entro sourceado en
+# SEIS bancos, asi que hasta que no estuviera en el indice el radio de daño de un
+# olvido pasaba de uno a seis. La cuenta que se exige es la de las cargas del
+# ARBOL; las que el propio guion escribe en su taller quedan exentas y su exencion
+# se demuestra con la asignacion de la variable, no se supone.
+MUT_CARGA="${BANCO}/p2-iron-test-carga.sh"
+python3 - "${GATE_DIR}/p2-iron-test.sh" "${MUT_CARGA}" <<'MUTCARGA'
+import sys
+s = open(sys.argv[1], encoding="utf-8").read()
+s += '\n. "${GATE_DIR}/no-esta-en-git.sh"  # linea inyectada por el brazo rojo de 17ej\n'
+open(sys.argv[2], "w", encoding="utf-8").write(s)
+MUTCARGA
+roja 17ej "0|1" "$(entorno_cargas_sin_trackear "${GATE_DIR}"/*.sh | wc -l | tr -d ' ')|$(entorno_cargas_sin_trackear "${MUT_CARGA}" | wc -l | tr -d ' ')" "ningun guion de gate/ sourcea un fichero del arbol que git no trackee, que es lo que corre aqui y muere en un clon; y con una carga inyectada a un fichero que no esta en el indice el censo la cuenta, o sea que sabe contarla"
 
 # ---- 17fa a 17fd: EL CIRCUITO Y NO LA PIEZA, POR TERCERA VEZ ------------------
 #
