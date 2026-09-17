@@ -216,7 +216,7 @@ func TestPersisted_FlippedChecksumIsNotPersisted(t *testing.T) {
 	}
 	before := len(raw)
 	raw[len(raw)-3] ^= 0xFF
-	if werr := os.WriteFile(path, raw, 0o600); werr != nil {
+	if werr := os.WriteFile(path, raw, 0o600); werr != nil { //nolint:gosec // a path this test just created
 		t.Fatalf("write segment: %v", werr)
 	}
 	if len(raw) != before {
