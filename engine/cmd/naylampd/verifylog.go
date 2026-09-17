@@ -156,18 +156,47 @@ func splitStanding(fields []string) ([]string, bool, error) {
 // a torn tail, so it must never be pointed at an original a later step still
 // needs. Corruption before the final segment surfaces as an open error, which is
 // itself a not-faithful verdict.
+// auditInstrument names the question this audit asks of the copy, because a bare
+// boolean at a call site says nothing about which way round it is.
+//
+// The two are not interchangeable and the difference is the whole of DEFER-102:
+// committed is what this replica KNOWS the group agreed on, persisted is what it
+// HAS on its platter. A follower cut milliseconds after an acknowledgement holds
+// the entry durably and is told it is committed only on a later message, so the
+// committed question answers "lost" for a replica that lost nothing.
+type auditInstrument int
+
+const (
+	auditCommitted auditInstrument = iota
+	auditPersisted
+)
+
+// String is what the verdict line prints, so the instrument is named once here
+// and never spelled again at a call site.
+func (a auditInstrument) String() string {
+	if a == auditPersisted {
+		return "persisted"
+	}
+	return "committed"
+}
+
 func runVerifyLog(args []string) {
 	fs := flag.NewFlagSet("verify-log", flag.ExitOnError)
 	var id uint
 	var peers, dir, manifestPath string
 	var dim int
+	var durable bool
 	fs.UintVar(&id, "id", 0, "this replica's id (required)")
 	fs.StringVar(&peers, "peers", "", "other group members as id=addr,id=addr (addresses are ignored; only the ids shape the config)")
 	fs.StringVar(&dir, "dir", "", "data directory to audit, a cold copy (required, opened read-write so never the original)")
 	fs.StringVar(&manifestPath, "manifest", "", "the workload manifest of acked client operations (required)")
 	fs.IntVar(&dim, "dim", 3, "vector dimension")
+	fs.BoolVar(&durable, "durable", false,
+		"audit what this replica has on DISK instead of what its hard state calls committed; "+
+			"a follower cut milliseconds after an acknowledgement holds the entry durably and is told "+
+			"it is committed only on a later message, so the committed reading calls a correct engine unfaithful")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: naylampd verify-log -id N -dir DIR -manifest FILE [-peers id=addr,...] [-dim D]")
+		fmt.Fprintln(os.Stderr, "usage: naylampd verify-log -id N -dir DIR -manifest FILE [-peers id=addr,...] [-dim D] [-durable]")
 		fs.PrintDefaults()
 		fmt.Fprintln(os.Stderr, "audits a cold copy of a replica's committed log against the workload manifest; exit 0 faithful, 1 not, 2 usage")
 	}
@@ -192,7 +221,11 @@ func runVerifyLog(args []string) {
 		os.Exit(verifyExitUsage)
 	}
 
-	faithful, reasons := verifyLog(dir, nid, cfg, dim, man)
+	instrument := auditCommitted
+	if durable {
+		instrument = auditPersisted
+	}
+	faithful, reasons := verifyLog(dir, nid, cfg, dim, man, instrument)
 	for _, r := range reasons {
 		fmt.Println(r)
 	}
@@ -205,7 +238,7 @@ func runVerifyLog(args []string) {
 // verifyLog performs the audit and returns whether the copy is faithful plus the
 // evidence lines to print. It never exits: the caller maps the verdict to a
 // status code, which keeps this core reusable and testable.
-func verifyLog(dir string, id cluster.NodeID, cfg cluster.Config, dim int, man manifest) (bool, []string) {
+func verifyLog(dir string, id cluster.NodeID, cfg cluster.Config, dim int, man manifest, instrument auditInstrument) (bool, []string) {
 	// Compaction must be off for the audit to be sound. A durable snapshot means
 	// the committed prefix was folded away, so the phantom and gap checks would
 	// see only the post-snapshot suffix and could call a truncated log faithful.
@@ -230,11 +263,19 @@ func verifyLog(dir string, id cluster.NodeID, cfg cluster.Config, dim int, man m
 	}
 	defer func() { _ = node.Close() }()
 
+	// WHICH QUESTION THIS AUDIT ASKS, and the flag changes only this. The
+	// committed reading asks what this replica knows the group agreed on; the
+	// durable reading asks what this replica has on its platter. They differ for
+	// the entries acknowledged in the milliseconds before a cut, which is exactly
+	// the population a durability gate exists to judge.
 	cmds, err := node.CommittedCommands()
+	if instrument == auditPersisted {
+		cmds, err = node.PersistedCommands()
+	}
 	if err != nil {
-		// A committed entry that does not decode is corruption or version skew,
+		// An entry that does not decode is corruption or version skew,
 		// the same red as a failed open.
-		return false, []string{fmt.Sprintf("verify: NOT FAITHFUL dir=%s replica=%d reason=decode: %v; a committed entry did not decode, which the check counts as a corruption red.", dir, id, err)}
+		return false, []string{fmt.Sprintf("verify: NOT FAITHFUL dir=%s replica=%d reason=decode instrument=%s: %v; an entry did not decode, which the check counts as a corruption red.", dir, id, instrument, err)}
 	}
 
 	// Replay the committed commands exactly as apply would: a put sets the id's
@@ -310,9 +351,9 @@ func verifyLog(dir string, id cluster.NodeID, cfg cluster.Config, dim int, man m
 	standing := fmt.Sprintf("uncertain_ids_present=%d uncertain_ids_absent=%d", uncertainPresent, uncertainAbsent)
 
 	if len(reasons) == 0 {
-		return true, []string{fmt.Sprintf("verify: FAITHFUL dir=%s replica=%d committed_commands=%d seen=%d live=%d %s; no phantoms, no lost acknowledged writes, replay equals the workload live oracle (idempotent duplicates absorbed, unanswered operations counted not judged)", dir, id, len(cmds), len(committedSeen), len(committedLive), standing)}
+		return true, []string{fmt.Sprintf("verify: FAITHFUL dir=%s replica=%d instrument=%s commands=%d seen=%d live=%d %s; no phantoms, no lost acknowledged writes, replay equals the workload live oracle (idempotent duplicates absorbed, unanswered operations counted not judged)", dir, id, instrument, len(cmds), len(committedSeen), len(committedLive), standing)}
 	}
-	reasons = append(reasons, fmt.Sprintf("verify: NOT FAITHFUL dir=%s replica=%d committed_commands=%d %s; %d discrepancy(ies) above", dir, id, len(cmds), standing, len(reasons)))
+	reasons = append(reasons, fmt.Sprintf("verify: NOT FAITHFUL dir=%s replica=%d instrument=%s commands=%d %s; %d discrepancy(ies) above", dir, id, instrument, len(cmds), standing, len(reasons)))
 	return false, reasons
 }
 

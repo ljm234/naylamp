@@ -2663,7 +2663,7 @@ PY
 			continue
 		fi
 		set +e
-		"${BIN}" verify-log -id "${n}" -peers "$(peers_of "$n")" -dir "${copia}" -manifest "${MANIFEST}" -dim "${DIM}" \
+		"${BIN}" verify-log -id "${n}" -peers "$(peers_of "$n")" -dir "${copia}" -manifest "${MANIFEST}" -dim "${DIM}" -durable \
 			> "${OUT_LOCAL}/verify-node${n}.txt" 2>&1
 		rc=$?
 		set -e
@@ -3220,7 +3220,7 @@ phase_red_fierro() {
 			continue
 		fi
 		set +e
-		"${BIN}" verify-log -id "${n}" -peers "$(peers_of "$n")" -dir "${copia_m}" -manifest "${OUT_LOCAL}/manifest-mutante.txt" -dim "${DIM}" \
+		"${BIN}" verify-log -id "${n}" -peers "$(peers_of "$n")" -dir "${copia_m}" -manifest "${OUT_LOCAL}/manifest-mutante.txt" -dim "${DIM}" -durable \
 			> "${OUT_LOCAL}/verify-mutante-node${n}.txt" 2>&1
 		rc=$?
 		set -e

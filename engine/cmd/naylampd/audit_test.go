@@ -40,7 +40,7 @@ func verifyWith(t *testing.T, manifestLines []string, cmds [][]byte) (bool, stri
 	}
 	dir := t.TempDir()
 	writeCommittedLog(t, dir, cmds)
-	ok, reasons := verifyLog(dir, 1, cfg, 3, man)
+	ok, reasons := verifyLog(dir, 1, cfg, 3, man, auditCommitted)
 	return ok, strings.Join(reasons, "\n")
 }
 

@@ -587,6 +587,46 @@ func (n *Node) CommittedCommands() ([]CommittedCommand, error) {
 	return out, nil
 }
 
+// PersistedCommands decodes the commands this replica restored from DISK,
+// including any its hard state does not yet cover as committed. That is the
+// DURABILITY question; CommittedCommands is the AGREEMENT question. An audit of
+// a cold copy taken after a power cut wants the first one: a follower cut
+// milliseconds after an acknowledgement holds the entry durably and learns it is
+// committed only on a later message, so asking the second question there calls a
+// correct engine unfaithful.
+//
+// Read-only over already durable state. It appends nothing, repairs nothing and
+// decides nothing: the same decode apply uses, over the entries raft restored.
+//
+// THE COMPACTION BOUNDARY IT INHERITS, written down because it was missing here
+// and because the sibling boundary declares it: Raft.PersistedEntries reads the
+// log as it stands, and what was already folded into a snapshot sits below the
+// compaction base and is not in it. A replica that compacted therefore answers
+// with its restored suffix, not with the whole record, and an auditor that needs
+// the whole record runs with compaction disabled. Measured at the only caller an
+// audit has, engine/cmd/naylampd/verifylog.go: it opens the node with
+// naylamp.NodeOptions{}, so CompactEvery is 0 and nothing is folded while the
+// audit reads, and that same path refuses outright when a snapshot file is
+// present instead of attesting a suffix. Written anyway, for the cost of the
+// other case: a cold copy returning fewer commands than the manifest reds the
+// recovery check on a CORRECT engine, and a false red of the property is the one
+// this house never re-runs.
+func (n *Node) PersistedCommands() ([]CommittedCommand, error) {
+	entries := n.core.PersistedEntries()
+	out := make([]CommittedCommand, 0, len(entries))
+	for _, e := range entries {
+		if len(e.Data) == 0 {
+			continue // a consensus no-op carries no command, exactly as apply skips it
+		}
+		cmd, err := decodeCommand(e.Data)
+		if err != nil {
+			return nil, fmt.Errorf("naylamp: audit decode of persisted entry %d: %w", e.Index, err)
+		}
+		out = append(out, CommittedCommand(cmd))
+	}
+	return out, nil
+}
+
 // Close releases the durable storage.
 func (n *Node) Close() error { return n.storage.Close() }
 

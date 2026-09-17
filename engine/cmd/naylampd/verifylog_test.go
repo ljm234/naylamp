@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"naylamp/engine/raft"
@@ -82,7 +83,7 @@ func TestVerifyLog_Faithful(t *testing.T) {
 	dir := t.TempDir()
 	writeCommittedLog(t, dir, cmds)
 
-	ok, reasons := verifyLog(dir, 1, cfg, 3, man)
+	ok, reasons := verifyLog(dir, 1, cfg, 3, man, auditCommitted)
 	if !ok {
 		t.Fatalf("a faithful log with an idempotent duplicate was flagged: %v", reasons)
 	}
@@ -119,7 +120,7 @@ func TestVerifyLog_CatchesDefects(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
 			writeCommittedLog(t, dir, c.cmds)
-			ok, _ := verifyLog(dir, 1, cfg, 3, man)
+			ok, _ := verifyLog(dir, 1, cfg, 3, man, auditCommitted)
 			if ok {
 				t.Fatalf("%s defect was not caught; verifyLog reported faithful", c.name)
 			}
@@ -144,7 +145,7 @@ func TestVerifyLog_CorruptOpen(t *testing.T) {
 		t.Fatalf("overwrite hard state: %v", werr)
 	}
 
-	ok, reasons := verifyLog(dir, 1, cfg, 3, man)
+	ok, reasons := verifyLog(dir, 1, cfg, 3, man, auditCommitted)
 	if ok {
 		t.Fatal("a corrupt hard state was reported faithful")
 	}
@@ -167,7 +168,7 @@ func TestVerifyLog_RefusesSnapshot(t *testing.T) {
 		t.Fatalf("write snapshot marker: %v", werr)
 	}
 
-	ok, _ := verifyLog(dir, 1, cfg, 3, man)
+	ok, _ := verifyLog(dir, 1, cfg, 3, man, auditCommitted)
 	if ok {
 		t.Fatal("the audit ran against a compacted log instead of refusing")
 	}
@@ -177,4 +178,79 @@ func replaceFirst(base [][]byte, first []byte) [][]byte {
 	out := append([][]byte{}, base...)
 	out[0] = first
 	return out
+}
+
+// writeLogShortOfCommit lays down the same durable log as writeCommittedLog but
+// stops the hard state ONE entry short. That is not a contrived state: it is
+// where a follower sits in the milliseconds after the leader acknowledges a
+// write and before the next append tells it the entry is committed.
+func writeLogShortOfCommit(t *testing.T, dir string, cmds [][]byte) {
+	t.Helper()
+	s, _, _, _, err := raft.OpenStorage(dir, 0)
+	if err != nil {
+		t.Fatalf("open storage: %v", err)
+	}
+	entries := make([]raft.Entry, len(cmds))
+	for i, d := range cmds {
+		entries[i] = raft.Entry{Index: uint64(i + 1), Term: 1, Data: d} //nolint:gosec // small test index
+	}
+	if aerr := s.AppendEntries(entries); aerr != nil {
+		t.Fatalf("append: %v", aerr)
+	}
+	if herr := s.SaveHardState(raft.HardState{Term: 1, Commit: uint64(len(cmds) - 1)}); herr != nil { //nolint:gosec // small test index
+		t.Fatalf("hard state: %v", herr)
+	}
+	if cerr := s.Close(); cerr != nil {
+		t.Fatalf("close: %v", cerr)
+	}
+}
+
+// TestVerifyLog_DurableFlagChangesTheQuestion is the flag's own row. Without it
+// the accessor could ship complete and correct and never be reached from the
+// command line, which is the class this repository already has a CI step named
+// after: written and never wired.
+//
+// The committed reading calls this copy unfaithful and the durable reading does
+// not, and the engine lost nothing either way. If the two readings agreed the
+// row would prove nothing, so it demands they disagree -- and it demands each
+// verdict NAME the instrument it used, because an archived run whose line does
+// not say which question it answered cannot be re-read.
+func TestVerifyLog_DurableFlagChangesTheQuestion(t *testing.T) {
+	cfg, err := configFromFlags(1, "")
+	if err != nil {
+		t.Fatalf("config: %v", err)
+	}
+	man := manifest{
+		seen: map[uint64]bool{1: true, 2: true},
+		live: map[uint64][]float32{1: {1, 0, 0}, 2: {0, 1, 0}},
+	}
+	cmds := [][]byte{
+		upsertPayload(1, []float32{1, 0, 0}),
+		upsertPayload(2, []float32{0, 1, 0}),
+	}
+
+	dirCommitted := t.TempDir()
+	writeLogShortOfCommit(t, dirCommitted, cmds)
+	okCommitted, committedReasons := verifyLog(dirCommitted, 1, cfg, 3, man, auditCommitted)
+
+	// A SECOND copy, because the audit opens its argument read-write and truncates
+	// a torn tail: re-reading the first one would be measuring a tree the first
+	// reading could have changed. That is DEFER-104 in miniature, and it applies
+	// here too.
+	dirPersisted := t.TempDir()
+	writeLogShortOfCommit(t, dirPersisted, cmds)
+	okPersisted, persistedReasons := verifyLog(dirPersisted, 1, cfg, 3, man, auditPersisted)
+
+	if okCommitted {
+		t.Fatalf("the committed reading called a copy faithful whose hard state does not cover the last acknowledged write: %v", committedReasons)
+	}
+	if !okPersisted {
+		t.Fatalf("the durable reading called a correct copy unfaithful: %v", persistedReasons)
+	}
+	if !strings.Contains(strings.Join(persistedReasons, "\n"), "instrument=persisted") {
+		t.Fatalf("the durable verdict does not name its instrument, so an archived run cannot be re-read: %v", persistedReasons)
+	}
+	if !strings.Contains(strings.Join(committedReasons, "\n"), "instrument=committed") {
+		t.Fatalf("the committed verdict does not name its instrument either: %v", committedReasons)
+	}
 }

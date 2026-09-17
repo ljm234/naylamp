@@ -157,6 +157,25 @@ type Raft struct {
 	// durable. Ready.Entries covers everything above it.
 	stableTo uint64
 
+	// restoredTo is the highest log index that came off the DISK when this
+	// replica was opened. It is the only honest bound for "persisted", and the
+	// reason it is not one of the two obvious candidates is worth writing down.
+	//
+	// NOT stableTo. Its name says stable and stable sounds like on the platter,
+	// but its own comment three lines up says "handed out (or restored)", and
+	// takeUnstable advances it when the entries are HANDED OUT to be persisted,
+	// not when storage confirms them. On a live node there are entries below
+	// stableTo that have not come back from AppendEntries yet, so an accessor
+	// cutting there would report as persisted something merely in flight. That
+	// is a false GREEN, and a green is the direction nobody re-runs.
+	//
+	// NOT LastIndex() either: that covers everything appended since the open.
+	//
+	// Set once, in Restore, and never moved. An accessor bounded by it can only
+	// ever report LESS than the disk holds, never more, which is the safe side
+	// of the only mistake that matters here.
+	restoredTo uint64
+
 	// snap is the latest snapshot this node holds, kept so a leader can
 	// serve followers whose needed entries were compacted away.
 	snap *Snapshot
@@ -305,6 +324,7 @@ func (r *Raft) Restore(hs HardState, snap *Snapshot, entries []Entry) error {
 		r.dirty = true // persist the corrected floor on the next flush
 	}
 	r.stableTo = r.log.LastIndex()
+	r.restoredTo = r.log.LastIndex()
 	return nil
 }
 
@@ -356,6 +376,42 @@ func (r *Raft) CommittedEntries() []Entry {
 	all := r.log.Slice(1)
 	n := 0
 	for n < len(all) && all[n].Index <= r.hs.Commit {
+		n++
+	}
+	return all[:n]
+}
+
+// PersistedEntries returns the entries this replica restored from disk, in
+// order, WITHOUT the commit cut CommittedEntries applies. It answers a
+// different question, and the difference is the point: an entry can be durable
+// on this replica while this replica does not yet know it is committed. The
+// leader raises its commit index only after a quorum has acked, and the append
+// that carried the entry went out with the PREVIOUS one, so a follower learns
+// on a LATER message. An audit that asks only about committed entries therefore
+// reports a correct engine as having lost an acknowledged write.
+//
+// It is bounded by restoredTo, so it reports what came off the disk and never
+// anything appended since. On a cold-opened replica -- the only way an audit
+// uses it -- that is the whole restored log.
+//
+// THE COMPACTION BOUNDARY, declared here for the same reason CommittedEntries
+// declares it, and it was missing: what was already folded into a snapshot sits
+// BELOW the log's compaction base and the log no longer holds it, so this reads
+// the restored suffix and not the whole record. An auditor that needs the whole
+// record runs with compaction disabled. Measured at the audit's only caller:
+// engine/cmd/naylampd/verifylog.go opens the node with naylamp.NodeOptions{}, so
+// CompactEvery is 0 and nothing is folded while the audit reads, and that same
+// path refuses outright when a snapshot file is present instead of attesting a
+// suffix. Written down anyway, because the day that stops holding the symptom is
+// a cold copy returning fewer commands than the manifest, and the check that
+// reads it would red a CORRECT engine: a false red of the property, which this
+// house never re-runs.
+//
+// Read-only: it copies out of the log and decides nothing.
+func (r *Raft) PersistedEntries() []Entry {
+	all := r.log.Slice(1)
+	n := 0
+	for n < len(all) && all[n].Index <= r.restoredTo {
 		n++
 	}
 	return all[:n]
