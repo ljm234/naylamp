@@ -1343,31 +1343,37 @@ artefactos_de_fierro_sin_sello() {
 # ---- el techo de los artefactos de ENSAYO -------------------------------------
 #
 # POR QUE EXISTE, y la medida va delante de la decision. El 8 de septiembre de 2026
-# habia bajo gate/out DIECIOCHO directorios de ensayo, diecisiete artefactos y una
-# flota huerfana, del 7 de septiembre a las 02:19 al 8 a las 12:14 en hora local, o
-# sea DOS jornadas. Ninguno lleva sello y ninguno puede llevarlo: seal_artifact
+# habia bajo gate/out DOS JORNADAS de ensayos acumulados y una flota huerfana, del 7
+# de septiembre a las 02:19 al 8 a las 12:14 en hora local. Cuantos eran, con la
+# orden que lo cuenta, esta en ../corridas/naylamp-signing-readiness-20260916T1629Z.txt:
+# la forma que no caduca es que la acumulacion eran dos jornadas y no una sesion.
+# Ninguno lleva sello y ninguno puede llevarlo: seal_artifact
 # devuelve en su primera linea con ES_FIERRO distinto de 1. Nada los vigilaba y nada
 # los retiraba.
 #
 # Y LO QUE NO ERA CIERTO, dicho porque la decision se tomo sobre lo contrario y la
 # medida la corrigio: NO estaban protegidos por el sello, ni antes ni despues del
 # arreglo de esta manana. La guarda de `make clean` excluye `p[0-9]-local-*` por
-# FORMA, asi que se los llevaria los dieciocho de una vez. Lo que faltaba no era la
+# FORMA, asi que se los llevaria a todos de una vez. Lo que faltaba no era la
 # distincion entre ensayo y fierro, que ya vive en TRES sitios -aqui, en
 # es_artefacto_de_fierro y en el Makefile-, sino un techo del lado del ensayo.
 #
 # POR QUE UN TECHO Y NO LA REGLA DE DEFER-097. Ese item dice que ningun barrido de
 # limpieza toca gate/out mientras siga abierto, y esa regla se escribio para lo que
 # cuesta VM y no se puede reconstruir: un artefacto de FIERRO mide un arbol y una
-# segunda corrida mide otro. Un ensayo de localhost no es eso, y la cifra lo dice:
-# medido sobre los `whole_run_s` de sus dieciseis timings.txt archivados, un ensayo
-# entero cuesta de 120.66 a 128.37 segundos y no cuesta dinero. La regla se lee
+# segunda corrida mide otro. Un ensayo de localhost no es eso, y lo que cuesta lo
+# dice el reloj y no una cifra recitada aqui: minutos de reloj de esta maquina y
+# ningun dinero. El reloj, con sus tres ejes, sale de
+# `NAYLAMP_P2_LOCAL=1 ./gate/p2.sh all` y esta en
+# ../corridas/naylamp-signing-readiness-20260916T1629Z.txt. La regla se lee
 # ahora como lo que protege, el fierro, y el ensayo queda fuera. La decision es de
 # quien encarga y esta fechada el 8 de septiembre de 2026.
 #
 # POR QUE CINCO, con la medida al lado y no por simetria con el banco. Cada
-# artefacto ocupa 108 KiB medidos con `du -sk`, asi que cinco son 540 KiB contra los
-# 1752 de hoy. Las dos jornadas medidas corrieron NUEVE y OCHO ensayos, o sea que
+# artefacto ocupa una fraccion pequena de lo que ocupaba el conjunto, y la medida de
+# hoy, con su orden, esta en ../corridas/naylamp-signing-readiness-20260916T1629Z.txt: la forma
+# que no caduca es que el techo se elige por un orden de magnitud y no al filo. Las
+# dos jornadas medidas corrieron mas ensayos que cinco, o sea que
 # cinco NO cubre una sesion entera, y eso es deliberado: para lo que se miran estos
 # artefactos, que son los logs de los nodos de una corrida que acaba de ponerse
 # roja, la ventana es de minutos y la de la sesion de al lado ya no sirve porque el
@@ -1375,7 +1381,7 @@ artefactos_de_fierro_sin_sello() {
 #
 # LO QUE EL TECHO CUESTA, dicho y no escondido: reproducir un ensayo da una corrida
 # contra el arbol de HOY, no contra el que midio el que se retiro. Lo que se pierde
-# no es el tiempo, son 126 segundos, sino la posibilidad de leer un ensayo de un
+# no es el tiempo de un ensayo, sino la posibilidad de leer un ensayo de un
 # arbol que ya no existe. Es el intercambio que se acepta a proposito, y es el mismo
 # que esta casa NO acepta para el fierro.
 # ---- EL MARCADOR MANDA SOBRE EL TECHO ----------------------------------------
@@ -2200,7 +2206,18 @@ phase_cut_fierro() {
 		# sin decir por que", que es peor que el defecto que venia a arreglar. Se midio
 		# con un guion de cuatro lineas antes de dejarlo puesto, y la fila 17id lo
 		# ejercita con un arma que falla de verdad.
-		( if testigo_arma "$n"; then echo 0; else echo 1; fi > "${OUT_LOCAL}/arma-rc-${n}" ) &
+		# AND THE REDIRECT GOES ON THE ECHO AND NOT ON THE COMPOUND, which was the second
+		# defect this line carried and was measured before it was fixed, with row 17if:
+		# a redirect written after the `fi` covers the whole compound, so the condition
+		# is inside it and whatever testigo_arma prints on stdout lands in the status
+		# file. The reader compares the whole file against 0, so one line of noise in
+		# front of the digit reads as "this node did not arm", and the phase reddens
+		# over a healthy fleet with P2.cut.bytes NOT RUN. The payload is silent today
+		# -ask_on captures run_on and prints nothing- so the failure was latent, and a
+		# status channel that the payload can dirty is not a status channel. Redirecting
+		# each echo keeps the channel at one line per node and sends what the payload
+		# prints to the log, which is where a reader wants it.
+		( if testigo_arma "$n"; then echo 0 > "${OUT_LOCAL}/arma-rc-${n}"; else echo 1 > "${OUT_LOCAL}/arma-rc-${n}"; fi ) &
 		pids_arma="${pids_arma} $!"
 	done
 	wait ${pids_arma}
@@ -2253,7 +2270,7 @@ phase_cut_fierro() {
 	# version anterior lo arrancaba y cortaba en el mismo instante, y un lector midio
 	# que el caso ESPERADO era cero acks: el corte es UN viaje ssh, y el primer ack
 	# necesita ssh mas arranque de binario mas handshake TLS mutuo, que la seccion
-	# 10.7 cifra en 1.5 a 1.7 s en localhost SIN ssh. Las tres morian antes de que el
+	# 10.7 cifra en segundos, y no en decimas, en localhost SIN ssh. Las tres morian antes de que el
 	# primero volviera, `P2.cut.envuelo` salia `none`, y como esta en la lista de
 	# fierro la corrida entera cerraba NOT A SUCCESS por una causa que es el
 	# instrumento y no la propiedad.

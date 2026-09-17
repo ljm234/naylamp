@@ -37,7 +37,7 @@ set -uo pipefail
 
 echo "BANCO: sitio-test"
 
-. "$(dirname "${BASH_SOURCE[0]}")/entorno.sh"
+. "$(dirname "$0")/entorno.sh"
 
 GATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GUION="${GATE_DIR}/p2.sh"

@@ -40,7 +40,7 @@ set -eu
 # esta linea distingue una corrida de una cita a una corrida.
 echo "BANCO: sello-test"
 
-. "$(dirname "${BASH_SOURCE[0]}")/entorno.sh"
+. "$(dirname "$0")/entorno.sh"
 
 RAIZ="$(cd "$(dirname "$0")/.." && pwd)"
 P1="${RAIZ}/gate/p1.sh"

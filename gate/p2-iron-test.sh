@@ -29,7 +29,7 @@ set -uo pipefail
 # esta linea distingue una corrida de una cita a una corrida.
 echo "BANCO: p2-iron-test"
 
-. "$(dirname "${BASH_SOURCE[0]}")/entorno.sh"
+. "$(dirname "$0")/entorno.sh"
 
 GATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # EL TALLER NO SE LLAMA p2-ALGO, y el nombre viejo, gate/out/p2-iron-test, era un
@@ -509,9 +509,9 @@ CHECK_FAILED=0
 
 # ---- 17n a 17p: LAS TRES NEGATIVAS, y por que hacen falta ---------------------
 #
-# LAS DOCE FILAS DE ARRIBA PASAN TODAS POR EL CAMINO FELIZ, y eso se midio en vez
+# LAS FILAS DE ARRIBA PASAN TODAS POR EL CAMINO FELIZ, y eso se midio en vez
 # de suponerse: quitando entera la condicion que decide si la reescritura se
-# publica, las doce seguian verdes. Es la misma medida que gate/sello-test.sh
+# publica, las que habia entonces seguian verdes. Es la misma medida que gate/sello-test.sh
 # tuvo que hacerse sobre p1.sh, y la conclusion es la misma: un banco que solo
 # recorre el camino bueno no prueba la guarda, prueba el camino. Estas tres
 # fuerzan una negativa por tres rutas distintas y las tres exigen lo mismo, que es
@@ -635,7 +635,7 @@ CHECK_FAILED=0
 # muerto en fierro: los pasos 2, 3 y 4, el barrido del sello que este bloque entero
 # existe para probar, la linea de PASS y el propio `end_check`. O sea que la frase
 # "el sello se escribe desde la higiene y antes del barrido" era FALSA en el camino
-# de fierro, y ninguna de las diecisiete filas de arriba podia verlo, porque todas
+# de fierro, y ninguna de las filas de arriba podia verlo, porque todas
 # llaman a las funciones del sello DIRECTAMENTE.
 #
 # COMO SE MIDE, y es la unica forma que separa las dos: se corre la fase ENTERA con
@@ -674,9 +674,10 @@ CHECK_FAILED=0
 # POR QUE ESTAS FILAS ESTAN AQUI Y NO EN gate/p2-guard-test.sh, con la medida que
 # lo decide. Aquel banco es el brazo rojo del ensayo y seria el sitio natural; el
 # problema es el precio. Para probar un techo de CINCO hay que tener SEIS
-# artefactos, y alli cada uno sale de una corrida entera del ensayo, que cuesta de
-# 120.66 a 128.37 segundos medidos sobre sus propios timings.txt: seis son trece
-# minutos para medir una condicion que aqui se monta con seis `mkdir`. Alli entra
+# artefactos, y alli cada uno sale de una corrida entera del ensayo, que es un coste
+# de ORDEN MINUTOS por artefacto: seis de ellos son un coste que se cuenta en DECENAS de
+# minutos, para medir una condicion que aqui se monta con seis `mkdir`. El reloj de esa
+# corrida, con sus tres ejes, esta en ../corridas/naylamp-signing-readiness-20260916T1629Z.txt. Alli entra
 # UNA fila, la de punta a punta, que pregunta lo que este banco no puede: que
 # despues de dieciocho ensayos de verdad el techo se cumplio.
 #
@@ -968,7 +969,7 @@ roja 17dd "si|si" "$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'sudo -n test -w
 
 # ---- 17ea a 17ef: LO QUE LA SEGUNDA VUELTA DEL LECTOR EXTERNO ENCONTRO --------
 #
-# LAS CINCO FILAS DE ARRIBA, 17ca a 17cf, DEJARON PASAR TRES DEFECTOS, y el lector
+# LAS FILAS 17ca A 17cf DEJARON PASAR TRES DEFECTOS, y el lector
 # dijo por que con una frase que este mismo fichero acababa de escribir sobre el
 # banner: **probaban la pieza y no el circuito**. Contaban lineas `confirmed` y
 # `uncertain` en el manifiesto y ahi paraban. Ninguna metia ese manifiesto en el
@@ -1052,7 +1053,118 @@ s = open(sys.argv[1], encoding="utf-8").read()
 s += "\ngrep '^\\tEXPECTED=' \"${GATE_DIR}/p2.sh\"  # linea inyectada por el brazo rojo de 17ei\n"
 open(sys.argv[2], "w", encoding="utf-8").write(s)
 MUTESC
-roja 17ei "0|1" "$(entorno_escapes_sin_definir "${GATE_DIR}"/*.sh | wc -l | tr -d ' ')|$(entorno_escapes_sin_definir "${MUT_ESC}" | wc -l | tr -d ' ')" "ningun patron de grep de gate/ lleva un escape que POSIX no define -\\t, \\s, \\d, \\w-, que es lo que hizo que la fila de arriba respondiera distinto en dos maquinas con el mismo arbol; y con la forma vieja restituida en una copia el censo la cuenta, o sea que sabe contar"
+# EL SEGUNDO BRAZO, del 15 de septiembre de 2026, y es para la OTRA clase que el
+# mismo censo vigila: un metacaracter en una posicion que POSIX no define, que es
+# la familia del escape de arriba y no otra cosa. Se inyecta, como el primero, en
+# vez de deshacer una forma concreta, y va sobre un fichero nuevo porque lo que se
+# mide aqui es el censo y no el banco que lo alberga.
+MUT_ANCLA="${BANCO}/p2-iron-test-ancla.sh"
+python3 - "${MUT_ANCLA}" <<'MUTANCLA'
+import sys
+# EL GREP DEL MUTANTE SE ARMA CON PIEZAS, y va dicho porque se lee raro y la razon no
+# es estetica: el censo lee ESTE fichero tambien, y con el grep entero en una linea se
+# contaba a si mismo. Medido: entorno.sh se nego a cargar, que es un `exit 2` a la
+# puerta de los bancos que cargan este fichero, y murieron todos antes de imprimir una fila;
+# el reloj de esa muerte, con sus tres ejes, esta en ../corridas/naylamp-cifras-20260915T1659Z.txt. Lo que este texto escribe SI
+# se censa, y lo pide la fila por su nombre: por eso la palabra y el patron viven en
+# trozos distintos de esta linea.
+#
+# AND THE FORMS ARE FOUR AND NOT ONE, because the first version of the invocation
+# pattern took only short flags with no argument and could not read them. THE FIGURES
+# OF THAT WIDENING ARE NOT RECITED HERE, for the reason the paragraph above gives; the
+# order, with its two counting rules, is in the crudo named there. The four forms below
+# all carry `-E`, so this row exercises the ANCHOR arm through all four; the FORM arm on
+# a BASIC pattern is done by the set of probes above, and that is a different arm.
+formas = ["-E -A2", "-A 3 -E", "-E -q --", "--extended-regexp"]
+cuerpo = "#!/bin/sh\n# linea inyectada por el brazo rojo de 17ei: un $ en medio de una ERE\n"
+for f in formas:
+    cuerpo += "grep " + f + " 'a$b' /dev/null\n"
+open(sys.argv[1], "w", encoding="utf-8").write(cuerpo)
+MUTANCLA
+# AND THE SET OF PROBES WITH A DECLARED OUTCOME LIVES HERE, and it lives here because of a
+# defect MEASURED and not as a precaution: a set of fourteen probes published by an earlier
+# crudo could not be re-derived, because the drawer that built it was retired and NOT ONE of
+# those names was left in the tree -measured: a grep for them over the whole repository
+# returns nothing-. A count that cannot be re-derived is a count that gets recited wrong, and
+# that one was one step away from being signed. This set is derived from the classes the
+# census above declares: ELEVEN probes that have to be counted, ELEVEN boundaries where the rule
+# does not apply, and the ONE blind spot the comment names, an unquoted pattern. Each probe
+# declares its outcome BEFORE the run, in the table this python prints, and a probe that stops
+# landing on its outcome moves the last two fields of the row and turns it red.
+#
+# WHAT IT COSTS, and the figures are not recited here for the reason given in the paragraph
+# above: the two ways of asking were timed -one census call per probe, and ONE call for all 22
+# with a recount per file- and BOTH series, with their three axes, are published in ../corridas/naylamp-cifras-20260915T1659Z.txt,
+# which is where a clock figure belongs. What is said here is the shape: this block is a small
+# fraction of this bench's clock, and the recount is what turns it red if a probe stops
+# landing on its outcome.
+#
+# AND EVERY BOUNDARY WAS PROVEN TO BITE, one mutation per boundary and one probe watched: the
+# rule that boundary claims to test was REMOVED from a copy of the census, and a boundary whose
+# count does not move is not a boundary but a control. The first run of that harness caught TWO
+# of them: marker.sh expected 0 from a rule that could not fire, because its pattern was BASIC
+# and had no mid dollar, and expansion.sh only bit when TWO rules were removed at once, which is
+# not the boundary it names. Both were rebuilt -the marker one now carries -qE and a mid dollar,
+# and the expansion one sits in single quotes- and a twenty-third probe was added for the
+# double-quote rule, which had none. The harness, its mutations and its output are in
+# ../corridas/naylamp-cifras-20260915T1659Z.txt.
+#
+# THE PROBE LINES ARE BUILT FROM PIECES, and the reason is the one this file already paid for
+# once: the census reads THIS file too, and a whole `grep ... 'pattern'` on one line would be
+# counted by the census as an invocation of this bench. The word and the pattern live in
+# different pieces of the same line, so what this text WRITES is censused -the files under
+# ${PROBES} are read by the two last fields- and what this text SAYS is not.
+PROBES="${BANCO}/probes"
+python3 - "${PROBES}" > "${PROBES}.tabla" <<'PROBESET'
+import os, sys
+
+D = sys.argv[1]
+G = "gr" + "ep"
+
+# (class, name, the line the probe carries, the count it has to land on)
+PROBES = [
+ ("catch", "escape-t.sh", G + " '^\\tx$' /tmp/f", 1),
+ ("catch", "escape-d.sh", G + " -E '\\d' /tmp/f", 1),
+ ("catch", "dollar-middle.sh", G + " -E 'a$b' /tmp/f", 1),
+ ("catch", "caret-middle.sh", G + " -qE 'a^b' /tmp/f", 1),
+ ("catch", "sticky-flag.sh", G + " -m1 '^\\tx$' /tmp/f", 1),
+ ("catch", "split-flag.sh", G + " -A 3 '^\\tx$' /tmp/f", 1),
+ ("catch", "double-dash.sh", G + " -q -- '^\\tx$' /tmp/f", 1),
+ ("catch", "long-option.sh", G + " --extended-regexp 'a$b' /tmp/f", 1),
+ ("catch", "numeric-flag.sh", G + " -3 '\\w' /tmp/f", 1),
+ ("catch", "ere-split-flag.sh", G + " -E -A 3 'a$b' /tmp/f", 1),
+ ("catch", "ere-double-dash.sh", G + " -qE -- 'a$b' /tmp/f", 1),
+ ("boundary", "bre-literal.sh", G + " 'a$b' /tmp/f", 0),
+ ("boundary", "ere-anchor-end.sh", G + " -E 'a$' /tmp/f", 0),
+ ("boundary", "ere-paren.sh", G + " -E '(a$|b)' /tmp/f", 0),
+ ("boundary", "ere-open-paren.sh", G + " -E '(^| )x' /tmp/f", 0),
+ ("boundary", "bracket.sh", G + " -E '[^ ]x' /tmp/f", 0),
+ ("boundary", "expansion.sh", G + " -E 'a${p}b' /tmp/f", 0),
+ ("boundary", "expansion-double-quote.sh", G + ' -E "a$x-b" /tmp/f', 0),
+ ("boundary", "bash-dollar.sh", G + " $" + "'\\t' /tmp/f", 0),
+ ("boundary", "long-option-bre.sh", G + " --extended-regexp --basic-regexp 'a$b' /tmp/f", 0),
+ ("boundary", "comment.sh", "# " + G + " -E 'a$b' /tmp/f", 0),
+ ("boundary", "marker.sh", "n=$(" + G + " -qE 'a$b' /tmp/f)  # SONDA-DE-ENTORNO", 0),
+ ("blind", "no-quotes.sh", G + " -E a$b /tmp/f", 0),
+]
+
+for clase, nombre, linea, esperado in PROBES:
+    os.makedirs(os.path.join(D, clase), exist_ok=True)
+    with open(os.path.join(D, clase, nombre), "w") as destino:
+        destino.write(linea + "\n")
+    print(os.path.join(D, clase, nombre), esperado)
+PROBESET
+sondas_ok=0
+sondas_tot=0
+sondas_salida="$(entorno_escapes_sin_definir "${PROBES}"/*/*.sh)"
+while read -r sonda esperado; do
+	sondas_tot=$((sondas_tot + 1))
+	sonda_cuenta="$(printf '%s\n' "${sondas_salida}" | grep -c "^${sonda}:" || true)"
+	if [ "${sonda_cuenta}" = "${esperado}" ]; then
+		sondas_ok=$((sondas_ok + 1))
+	fi
+done < "${PROBES}.tabla"
+roja 17ei "0|1|4|23|23" "$(entorno_escapes_sin_definir "${GATE_DIR}"/*.sh | wc -l | tr -d ' ')|$(entorno_escapes_sin_definir "${MUT_ESC}" | wc -l | tr -d ' ')|$(entorno_escapes_sin_definir "${MUT_ANCLA}" | wc -l | tr -d ' ')|${sondas_ok}|${sondas_tot}" "ningun patron de grep de gate/ lleva un escape -\t, \s, \d, \w- ni un metacaracter en una posicion que POSIX no defina, que es lo que hizo que la fila de arriba respondiera distinto en dos maquinas con el mismo arbol y lo que hace que un dolar del medio responda a la implementacion y no al arbol; y el censo cuenta las dos clases cuando se le inyectan en una copia, con las CUATRO formas de invocacion del brazo del ancla -bandera con argumento pegada, separada, doble guion y opcion larga-, o sea que sabe contar lo que dice contar; AND, with the two last fields, the set of probes DERIVED FROM THE CLASSES this census declares -eleven that have to be counted, eleven boundaries where the rule does not apply and the one blind spot it names- lands on its declared outcome in all of them, and that count is PRINTED by the row and not recited in this text"
 
 # LA FILA DE UN PISO POR ENCIMA, del mismo dia y de la misma forma: un guion que
 # SOURCEA un fichero que git no trackea corre aqui y muere en un clon, y CI clona
@@ -1069,6 +1181,163 @@ s += '\n. "${GATE_DIR}/no-esta-en-git.sh"  # linea inyectada por el brazo rojo d
 open(sys.argv[2], "w", encoding="utf-8").write(s)
 MUTCARGA
 roja 17ej "0|1" "$(entorno_cargas_sin_trackear "${GATE_DIR}"/*.sh | wc -l | tr -d ' ')|$(entorno_cargas_sin_trackear "${MUT_CARGA}" | wc -l | tr -d ' ')" "ningun guion de gate/ sourcea un fichero del arbol que git no trackee, que es lo que corre aqui y muere en un clon; y con una carga inyectada a un fichero que no esta en el indice el censo la cuenta, o sea que sabe contarla"
+
+# THE THIRD ONE, and the predicate is DIFFERENTIAL: the same bench, the same pass,
+# under /bin/dash and under bash. dash-red alone is PORTABILITY, and it is this row's;
+# both red is a BROKEN bench, which is NOT this row and gets named apart; both green
+# pass. The fourth case, green under dash and red under bash, is counted in its own
+# bucket because the taxonomy of three does not cover it and this is the only place in
+# the tree that measures the pair, and that bucket has had its own red arm since this
+# line was written: a copy that only knows how to measure under sh and refuses under
+# bash, which is a shape this tree can take for real. Before that arm it was a counter
+# with a zero expectation and nothing that could turn it red.
+#
+# The differential exists for a measured reason: order-guard drives Go and it is most of
+# a pass under dash, so a regression OF ITS OWN would turn this row red saying "not
+# portable", which is the class of the leader literal: naming the wrong cause.
+#
+# WHAT IT COSTS, and the figures do NOT live here, for the same reason the probe set above
+# gives: this file moves them every time it is touched, and the block that wrote that sentence
+# moved them. What stays is the FORM, which does not rot: order-guard drives Go and is the
+# LARGEST PART of one pass under dash; the whole row costs about as much as one whole bench of
+# this family, both passes and its mutants included; and both passes together are most of what
+# this row adds to a push. The clock, with its two series and its three axes, comes from
+# `time ./gate/p2-iron-test.sh` and from the row's own instruments, and both are published in
+# ../corridas/naylamp-signing-readiness-20260916T1629Z.txt.
+#
+# AND THIS ROW RUNS FOR THE SECOND TIME FOUR BENCHES THAT CI ALREADY RUNS AS ITS OWN
+# STEPS, the ones at ci.yml 230, 304, 323 and 353: under dash that pass is DUPLICATED,
+# and the pass under bash is new coverage. It is accepted on purpose, because
+# the differential needs both halves and a CI step cannot run its bench under bash as
+# well without someone writing it here; and it is declared because whoever adds up CI's
+# clock has a right to know that part of those seconds were already being spent.
+#
+# AND THE NESTING WAS MEASURED, NOT ASSUMED, because no place in this tree looks as much
+# like the incident the neighbouring bench guards as this row, which puts four benches
+# inside its own: during a run of THIS bench there IS a live artifact with its RUNNING
+# under gate/out - the hygiene phase creates it named p2-<stamp>-<pid>, which is exactly
+# the shape `make clean` refuses to sweep - and this row still comes out green because
+# clean-guard-test.sh builds its fake gate/out in a ${TMPDIR} drawer, copies the REAL
+# Makefile there and cds into the drawer. Measured with the bench running: the real
+# RUNNING seen in the polls this row takes while the bench runs, and the drawer holding
+# Makefile and gate/ and no engine/.
+# If clean-guard ever ran make clean against the real tree, this row would be the first
+# place it would show, and that last sentence is a prediction and not a result.
+#
+# THE FAMILY IS DERIVED BY LOAD AND NOT BY MENTION, and that is new here. A `grep -l`
+# over the NAME of the file pulls in anything that WRITES that string, a comment
+# included; today it gives the same four members by luck, and tomorrow it would run a
+# non-member ENTIRELY, twice, inside another bench. The predicate is `sources_entorno`:
+# a line that is not a comment, whose first token is a LOAD OPERATOR, and which names
+# gate/entorno.sh. And its red half is a trio of drawers: one copy that only MENTIONS the
+# file in a comment, which must be zero members, and TWO copies that load it, one per
+# operator, which must be one each.
+#
+# BOTH OPERATORS AND NOT ONLY THE POSIX ONE, and the reason is the reason this whole row
+# exists: `source` is NOT POSIX, so a bench that loads with it dies under dash AT THAT
+# VERY LINE, exactly like the bench that went red in CI and for the same cause. A guard
+# written to catch benches that die under dash would be BLIND to a spelling that dies
+# under dash, and that is the defect it would carry inside itself. `source` is a token a
+# grep can see, and that is why it is in, and nothing more than that.
+#
+# AND THE OTHER TWO SHAPES STAY OUT, WITH A DIFFERENT REASON, because they are not the
+# same kind of thing. A load written BEHIND ANOTHER COMMAND on the same line, and a load
+# BY VARIABLE INDIRECTION, need to know where a command begins and what a variable holds:
+# that is an analyzer and not a grep, no matter how wide the expression gets. Measured on
+# this tree, no bench loads by either shape, and they stay declared as the hole this
+# predicate does not cover: a bench loading that way stays outside the family and is not
+# run at all.
+classify_bank() {
+	local rc_dash=0 rc_bash=0
+	/bin/dash "$1" >/dev/null 2>&1 || rc_dash=$?
+	bash "$1" >/dev/null 2>&1 || rc_bash=$?
+	if [ "${rc_dash}" -ne 0 ] && [ "${rc_bash}" -eq 0 ]; then
+		echo portable
+	elif [ "${rc_dash}" -ne 0 ]; then
+		echo broken
+	elif [ "${rc_bash}" -ne 0 ]; then
+		echo bash-red
+	else
+		echo ok
+	fi
+}
+# Does this file EXECUTE a load of gate/entorno.sh? A comment decides no verdict, so a
+# commented line does not count; and a bench whose shebang asks for bash may use what
+# bash has, so it is not this class. The pattern carries no escape POSIX does not
+# define: `[.]` is a literal dot and the blanks go by character class.
+sources_entorno() {
+	grep -qE '^[[:space:]]*(source|[.])[[:space:]].*entorno[.]sh' "$1"
+}
+# The sh benches under a directory that LOAD the file, one name per line. The directory
+# is an argument so that a row can drive the derivation over a controlled drawer and not
+# only over gate/.
+sh_benches_loading_entorno() {
+	local dir="${1:-${GATE_DIR}}" b
+	for b in "${dir}"/*.sh; do
+		[ -f "${b}" ] || continue
+		case "$(sed -n '1p' "${b}")" in *bash*) continue ;; esac
+		sources_entorno "${b}" || continue
+		basename "${b}"
+	done
+}
+# How many members the family has and how they classify, over the real gate/ directory.
+# The COUNT is the field that moves when the derivation changes, which is what puts the
+# derivation itself under test and not only the classifier. Any member that is only
+# dash-red, broken, or only bash-red gets named in the dash-*.txt files of the workshop,
+# so the failure is read by name and not by count.
+sh_benches_classified() {
+	local b v portable=0 broken=0 bash_red=0 examined=0
+	: > "${BANCO}/dash-portable.txt"; : > "${BANCO}/dash-broken.txt"; : > "${BANCO}/dash-bash-red.txt"
+	for b in $(sh_benches_loading_entorno); do
+		examined=$((examined + 1))
+		v="$(classify_bank "${GATE_DIR}/${b}")"
+		case "${v}" in
+			portable) portable=$((portable + 1)); echo "${b}" >> "${BANCO}/dash-portable.txt" ;;
+			broken)   broken=$((broken + 1));     echo "${b}" >> "${BANCO}/dash-broken.txt" ;;
+			bash-red) bash_red=$((bash_red + 1)); echo "${b}" >> "${BANCO}/dash-bash-red.txt" ;;
+		esac
+	done
+	echo "${examined}|${portable}|${broken}|${bash_red}"
+}
+# THE THREE RED ARMS OF THE CLASSIFIER, and they are not the same mutation. The top one
+# injects the OLD FORM as the second line and exits 0 on the third: under dash the
+# expansion kills it before it gets there, under bash the load fails, the script goes on
+# and exits 0, which is portability. The middle one exits 7 on the second line, which is
+# red under BOTH interpreters, a broken bench. The bottom one refuses only under bash,
+# which is the fourth bucket: a copy of the same bench that demands to run under sh.
+MUT_RESOLUTION="${BANCO}/p2-iron-test-resolution.sh"
+MUT_BROKEN="${BANCO}/p2-iron-test-broken.sh"
+MUT_BASH_RED="${BANCO}/p2-iron-test-bash-red.sh"
+python3 - "${GATE_DIR}/clean-guard-test.sh" "${MUT_RESOLUTION}" "${MUT_BROKEN}" "${MUT_BASH_RED}" <<'MUTANTS'
+import sys
+base = open(sys.argv[1], encoding="utf-8").read().splitlines(True)
+portable = list(base)
+portable.insert(1, '. "$(dirname "${BASH_SOURCE[0]}")/entorno.sh"  # old form, injected by the red arm of 17ek\n')
+portable.insert(2, 'exit 0  # the copy stops here: what the row measures is the classifier\n')
+open(sys.argv[2], "w", encoding="utf-8").writelines(portable)
+broken = list(base)
+broken.insert(1, 'exit 7  # injected by the broken arm of 17ek\n')
+open(sys.argv[3], "w", encoding="utf-8").writelines(broken)
+bash_red = list(base)
+bash_red.insert(1, '[ -z "${BASH_VERSION:-}" ] || exit 9  # refuses to run under bash\n')
+bash_red.insert(2, 'exit 0  # the copy stops here: what the row measures is the classifier\n')
+open(sys.argv[4], "w", encoding="utf-8").writelines(bash_red)
+MUTANTS
+# AND THE DRAWERS OF THE DERIVATION, which is the red half of the family predicate: the
+# same shape three times, one that only MENTIONS the file in a comment and two that LOAD
+# it, one per operator. None is ever executed, because what the row measures here is the
+# DERIVATION, and the field that has to move is the count of members. The workshop path
+# is literal at the top of this file, so the removal below is checked before it runs.
+DRAWER_MENTION="${BANCO}/family-mention"
+DRAWER_LOAD="${BANCO}/family-load"
+DRAWER_SOURCE="${BANCO}/family-source"
+[ -d "${BANCO}" ] || { echo "p2-iron-test: no workshop to build the family drawers in" >&2; exit 1; }
+rm -rf -- "${DRAWER_MENTION}" "${DRAWER_LOAD}" "${DRAWER_SOURCE}"
+mkdir -p "${DRAWER_MENTION}" "${DRAWER_LOAD}" "${DRAWER_SOURCE}"
+printf '#!/bin/sh\n# this bench mentions entorno.sh and does not load it\n' > "${DRAWER_MENTION}/mention-only.sh"
+printf '#!/bin/sh\n. "$(dirname "$0")/entorno.sh"\n' > "${DRAWER_LOAD}/dot-only.sh"
+printf '#!/bin/sh\nsource "$(dirname "$0")/entorno.sh"\n' > "${DRAWER_SOURCE}/source-only.sh"
+roja 17ek "4|0|0|0|portable|broken|bash-red|0|1|1" "$(sh_benches_classified)|$(classify_bank "${MUT_RESOLUTION}")|$(classify_bank "${MUT_BROKEN}")|$(classify_bank "${MUT_BASH_RED}")|$(sh_benches_loading_entorno "${DRAWER_MENTION}" | wc -l | tr -d ' ')|$(sh_benches_loading_entorno "${DRAWER_LOAD}" | wc -l | tr -d ' ')|$(sh_benches_loading_entorno "${DRAWER_SOURCE}" | wc -l | tr -d ' ')" "no bench under gate/ that asks for sh is dash-red alone, nor broken, nor bash-red alone, and any that is gets named in the dash-portable.txt, dash-broken.txt and dash-bash-red.txt files of the workshop; the classifier tells the three causes apart; and the family is derived by LOAD and not by mention, so a copy that only names the file in a comment is not a member and copies that load it are, with EITHER operator: the POSIX dot and the non-POSIX source, which dies under dash at that very line"
 
 # ---- 17fa a 17fd: EL CIRCUITO Y NO LA PIEZA, POR TERCERA VEZ ------------------
 #
@@ -1232,8 +1501,9 @@ CHECK_FAILED=0
 # del primer ack salio MUDO.
 #
 # SE CORRE LA FASE DE VERDAD, con el corte SIMULADO sobre la flota de mentira, y
-# eso cuesta unos segundos en vez de los 360 que costaria dejar que sus dos esperas
-# se agoten. Un ayudante en segundo plano hace lo que haria el corte: marca los
+# eso cuesta SEGUNDOS en vez del coste de dejar que sus dos esperas se agoten, que es de
+# ORDEN MINUTOS y es la razon de simularlo. El reloj con sus tres ejes esta en
+# ../corridas/naylamp-cifras-20260915T1659Z.txt. Un ayudante en segundo plano hace lo que haria el corte: marca los
 # tres hosts muertos, les cambia el boot id, deja el testigo en su semilla, y los
 # devuelve. Nada de esto enciende nada: los tres hosts son directorios.
 GUARDA_OUT7="${OUT_LOCAL}"; GUARDA_MAN7="${MANIFEST}"; GUARDA_FIERRO7="${ES_FIERRO}"
@@ -1386,33 +1656,111 @@ roja 17ic "si|si|si" "$(L_ESC="$(printf '%s\n' "${CUERPO_CORTE_F}" | grep -n 'es
 # la corriente sale por el otro lado.
 roja 17id "si|si|fail" "$(printf '%s' "${SALIDA_CORTE}" | grep -q 'node 2 would not arm its canary' && echo si || echo no)|$(printf '%s' "${SALIDA_CORTE}" | grep -q 'cutting the THREE' && echo si || echo no)|$(verdict_of P2.cut.fired)" "con el stub negandole al nodo 2 el unico viaje que hace un >> sobre el testigo, su arma falla de verdad y la siembra pasa: se anota P2.cut.fired contra ESE nodo, la fase sobrevive y dispara el corte, y el veredicto sale FAIL y no none. Sin la exencion de errexit dentro de la subcapa del armado paralelo las tres columnas caen a la vez, porque el gate muere antes de escribir ninguna"
 
-# ---- 17ie: EL ARMADO PARALELO, BAJO errexit DE VERDAD -------------------------
+# ---- 17ie: THE PARALLEL ARMING, UNDER REAL errexit ----------------------------
 #
-# LA 17id NO PODIA CAZAR ESTO Y SE MIDIO, no se supuso. Se deshizo el arreglo a
-# mano -se le quito el `if` a la subcapa- y la 17id siguio VERDE. La razon es que
-# la captura de la fase va entre `set +e` y `set -e`, para que un retorno distinto
-# de cero de la fase no se lleve el banco; con errexit apagado, la subcapa que
-# tenia que morir no muere y el defecto no se manifiesta. Un banco que apaga la
-# guarda que quiere medir mide otra cosa.
+# 17id COULD NOT CATCH THIS AND IT WAS MEASURED, not assumed. The fix was undone by hand
+# -the `if` was taken out of the subshell- and 17id stayed GREEN. The reason is that the
+# capture of the phase runs between `set +e` and `set -e`, so a non-zero return from the
+# phase does not take the bench down; with errexit off, the subshell that had to die does
+# not die and the defect does not show. A bench that switches off the guard it wants to
+# measure measures something else.
 #
-# ASI QUE EL TROZO SE SACA DEL GUION Y SE CORRE EN UN HIJO CON `set -euo pipefail`
-# de verdad, con un `testigo_arma` que siempre falla. El trozo se EXTRAE, no se
-# copia: va de la linea que declara `pids_arma` al `wait` que la recoge, dentro del
-# cuerpo de phase_cut_fierro, asi que el dia que alguien lo reescriba esta fila
-# corre lo reescrito. Con el `if` puesto, el hijo llega a su ultima linea; sin el,
-# errexit mata la subcapa antes del `echo`, el `wait` devuelve distinto de cero y
-# el hijo muere sin imprimir nada, que es exactamente lo que le pasaria a la
-# corrida de fierro en el minuto tres de una sesion de VMs.
-TROZO_ARMA="$(printf '%s\n' "${CUERPO_CORTE_F}" | awk '/pids_arma=""/,/wait \$\{pids_arma\}/')"
-mkdir -p "${BANCO}/errexit-arma"
+# SO THE PIECE IS EXTRACTED FROM THE SCRIPT AND RUN IN A CHILD WITH A REAL
+# `set -euo pipefail`, with a `testigo_arma` that always fails. The piece is EXTRACTED and
+# not copied: it runs from the line that declares `pids_arma` to the `wait` that collects
+# it, inside the body of phase_cut_fierro, so the day someone rewrites it this row runs the
+# rewritten one. With the `if` in place the child reaches its last line; without it, errexit
+# kills the subshell before the `echo`, `wait` returns non-zero and the child dies printing
+# nothing, which is exactly what would happen to the iron run in the third minute of a
+# session of VMs.
+# AN EXTRACTION IS CHECKED BEFORE ANYTHING IS MEASURED WITH IT, which is the form row 17ea
+# already uses over its live-ids file, and the reason is that a piece taken out of the phase
+# is what both rows below measure with. An `awk` over a RANGE is the fragile half: with the
+# OPENING anchor moved the piece comes out EMPTY, and with the CLOSING one moved it comes out
+# LONG -it runs to the end of the function- while still carrying the pattern. Both were
+# measured on copies with the anchor broken, and so was a rewritten reader line. A row that
+# measures with a piece like that does not go quiet: it reddens NAMING THE WRONG CAUSE,
+# because the child finds no loop, reads nothing and reports zero, or it dies without
+# printing the line the row greps for. The piece has to hold content and not merely exist -a
+# piece written with printf '%s\n' is one byte and passes a size test- carry the line the row
+# matches on, and END on the anchor that closes the range.
+#
+# AND THE PIECE IS READ FROM A FILE AND NEVER FROM A PIPE, which is the form row 17eh chose
+# two hundred lines above and for the same measured reason: under pipefail a pipeline that
+# ends in `grep -q` returns 141 as soon as the writer upstream exceeds what the pipe holds, so
+# the predicate answers FALSE on a piece larger than the pipe even when the match is inside
+# it, and the row would then redden saying the extraction broke when what broke was the guard.
+# Measured on this machine: the pipe takes 65536 bytes, and a piece of 2000013 characters
+# carrying the match in its FIRST line returns 141 through a pipe and 0 through a file. This
+# bench runs under pipefail, so the pipe form is the one that would have failed.
+piece_ok() {	# piece_ok <file> <pattern>
+	grep -q '[^[:space:]]' "$1" && grep -q "$2" "$1"
+}
+range_ok() {	# range_ok <file> <pattern> <closing line>
+	piece_ok "$1" "$2" || return 1
+	[ "$(tail -n1 "$1" | sed 's/^[[:space:]]*//')" = "$3" ]
+}
+ARM_PIECE="$(printf '%s\n' "${CUERPO_CORTE_F}" | awk '/pids_arma=""/,/wait \$\{pids_arma\}/')"
+mkdir -p "${BANCO}/errexit-arm"
+printf '%s\n' "${ARM_PIECE}" > "${BANCO}/errexit-arm.piece"
 {
 	printf '%s\n' 'set -euo pipefail' 'NODE_IDS=(1 2 3)'
-	printf 'OUT_LOCAL=%s\n' "'${BANCO}/errexit-arma'"
-	printf '%s\n' 'testigo_arma() { return 1; }' 'fail() { :; }' 'armar() {'
-	printf '%s\n' "${TROZO_ARMA}"
-	printf '%s\n' '}' 'armar' 'echo SOBREVIVE'
-} > "${BANCO}/errexit-arma.sh"
-roja 17ie "1|3" "$(bash "${BANCO}/errexit-arma.sh" 2>/dev/null | grep -c SOBREVIVE)|$(ls -1 "${BANCO}/errexit-arma" 2>/dev/null | grep -c '^arma-rc-')" "el trozo del armado paralelo, EXTRAIDO del guion y corrido en un hijo con set -euo pipefail y un testigo_arma que siempre falla: llega a su ultima linea y deja los TRES rc escritos. Sin el if dentro de la subcapa, errexit la mata antes del echo, el wait devuelve distinto de cero, y el hijo no imprime nada ni escribe ningun rc"
+	printf 'OUT_LOCAL=%s\n' "'${BANCO}/errexit-arm'"
+	printf '%s\n' 'testigo_arma() { return 1; }' 'fail() { :; }' 'arm_the_three() {'
+	printf '%s\n' "${ARM_PIECE}"
+	printf '%s\n' '}' 'arm_the_three' 'echo SURVIVED'
+} > "${BANCO}/errexit-arm.sh"
+roja 17ie "1|3|si" "$(bash "${BANCO}/errexit-arm.sh" 2>/dev/null | grep -c SURVIVED)|$(ls -1 "${BANCO}/errexit-arm" 2>/dev/null | grep -c '^arma-rc-')|$(range_ok "${BANCO}/errexit-arm.piece" 'testigo_arma' 'wait ${pids_arma}' && echo si || echo no)" "the piece of the parallel arming, EXTRACTED from the script and run in a child with set -euo pipefail and a testigo_arma that always fails: it reaches its last line and leaves the THREE rc files written. Without the if inside the subshell, errexit kills it before the echo, wait returns non-zero, and the child prints nothing and writes no rc. The third column is the EXTRACTION GUARD: if the piece comes out empty, or comes out long because the closing anchor moved, or does not carry the call this row matches on, it falls here instead of falling in the first two naming a cause that is not its own"
+
+# ---- 17if: THE ARMING STATUS CHANNEL, WHICH THE PAYLOAD MUST NOT BE ABLE TO DIRTY ----
+#
+# THE DEFECT THIS ROW WAS WRITTEN FOR IS IN THE PHASE AND NOT IN THE BENCH, and it is
+# the class this file has closed twice already, in 17bg and in client_op: a status
+# channel that the payload can falsify is not a status channel. In phase_cut_fierro the
+# arming writes its status with
+#
+#   ( if testigo_arma "$n"; then echo 0; else echo 1; fi > "${OUT_LOCAL}/arma-rc-${n}" ) &
+#
+# where the redirect sits AFTER the `fi`, so by the grammar of bash it covers the WHOLE
+# compound and the condition is part of that compound: whatever testigo_arma prints on
+# its stdout lands inside the status file. The reader then compares the WHOLE FILE
+# against 0, so one line of noise in front of the digit reads as "not armed". The cost
+# is the expensive one: the three nodes are noted as unable to arm their canary,
+# P2.cut.fired reddens over a healthy fleet and P2.cut.bytes goes NOT RUN, which
+# switches off the central reading of the phase in the one run that is never repeated.
+#
+# TODAY THE PAYLOAD IS SILENT AND THAT WAS MEASURED, NOT ASSUMED: ask_on in
+# gate/common.sh captures run_on inside a command substitution and prints nothing, so
+# the status file holds the digit and nothing else. The defect is LATENT, and a latent
+# defect is what this row exists to make loud: the payload here ARMS WELL and prints one
+# line, which is exactly what any future payload that logs its work would do.
+#
+# THE ROW EXTRACTS BOTH HALVES FROM THE PHASE, the writer and the reader, so the day
+# either one is rewritten this row runs what was rewritten. The first column is the
+# phase's own reading of its three status files. The second is the channel itself: with
+# the redirect on the echo alone each file holds one line, and with the redirect on the
+# compound each holds the payload's line plus the digit. Each half is ALSO written to its
+# own file, because the guards read files and not pipes.
+CHANNEL_PIECE="$(printf '%s\n' "${CUERPO_CORTE_F}" | awk '/pids_arma=""/,/wait \$\{pids_arma\}/')"
+READER_PATTERN='rc_arma="$(cat'
+printf '%s\n' "${CUERPO_CORTE_F}" > "${BANCO}/phase-cut-fierro.body"
+READER_LINE="$(grep -m1 "${READER_PATTERN}" "${BANCO}/phase-cut-fierro.body")"
+mkdir -p "${BANCO}/arming-channel"; rm -f -- "${BANCO}"/arming-channel/arma-rc-*
+printf '%s\n' "${CHANNEL_PIECE}" > "${BANCO}/arming-channel.piece"
+printf '%s\n' "${READER_LINE}" > "${BANCO}/arming-channel.reader"
+{
+	printf '%s\n' 'set -euo pipefail' 'NODE_IDS=(1 2 3)'
+	printf 'OUT_LOCAL=%s\n' "'${BANCO}/arming-channel'"
+	printf '%s\n' 'testigo_arma() { echo "arming the canary on node $1"; return 0; }' 'fail() { :; }' 'arm_the_three() {'
+	printf '%s\n' "${CHANNEL_PIECE}"
+	printf '%s\n' '}' 'arm_the_three' 'armed=0'
+	printf '%s\n' 'for n in "${NODE_IDS[@]}"; do'
+	printf '%s\n' "${READER_LINE}"
+	printf '%s\n' '	if [ "${rc_arma}" = 0 ]; then armed=$((armed + 1)); fi'
+	printf '%s\n' 'done'
+	printf '%s\n' 'echo "ARMED ${armed}"'
+} > "${BANCO}/arming-channel.sh"
+roja 17if "1|3|si|si" "$(bash "${BANCO}/arming-channel.sh" 2>/dev/null | grep -c '^ARMED 3$')|$(cat "${BANCO}"/arming-channel/arma-rc-* 2>/dev/null | awk 'END{print NR}')|$(range_ok "${BANCO}/arming-channel.piece" 'testigo_arma' 'wait ${pids_arma}' && echo si || echo no)|$(piece_ok "${BANCO}/arming-channel.reader" "${READER_PATTERN}" && echo si || echo no)" "the parallel arming, with the writer and the reader EXTRACTED from the phase and a testigo_arma that arms well and ALSO prints one line: the three canaries are read as armed and the status channel keeps ONE line per node. With the redirect behind the fi, the testigo's line lands in the status file, the reader compares the WHOLE FILE against 0, the three nodes are noted as unable to arm and the phase reddens over a healthy fleet. The third and fourth columns are the EXTRACTION GUARDS of the two halves this row takes out of the phase: the arming range, which has to end on the anchor that closes it, and the reader's line, which has to keep being the one that reads the status file. Without them either anchor moving would bring the first two columns down for a cause that is not the one being measured"
 
 
 

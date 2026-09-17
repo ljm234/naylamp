@@ -156,7 +156,7 @@ set -eu
 # esta linea distingue una corrida de una cita a una corrida.
 echo "BANCO: order-guard-test"
 
-. "$(dirname "${BASH_SOURCE[0]}")/entorno.sh"
+. "$(dirname "$0")/entorno.sh"
 
 GO=${GO:-go}
 command -v "${GO}" >/dev/null 2>&1 || { echo "test: no encuentro el binario de Go (${GO})" >&2; exit 2; }
