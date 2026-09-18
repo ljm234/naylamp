@@ -151,7 +151,9 @@ func runClient(args []string) {
 		fmt.Printf("  shard %d: %s\n", i, strings.Join(names, ","))
 	}
 	fmt.Println("type help for commands")
-	c.repl()
+	if err := c.repl(); err != nil {
+		log.Fatalf("reading commands: %v", err)
+	}
 }
 
 // makeRouterHost builds the view for one generation: each group rotated gen
@@ -204,18 +206,28 @@ func largestGroup(groups [][]nodeAddr) int {
 	return largest
 }
 
-// repl reads commands until end of input or exit.
-func (c *client) repl() {
+// repl reads commands until end of input or exit. It returns the scanner's own error, because a
+// stream that dies mid-read and a stream that ends look identical at the prompt: the loop stops,
+// and the exit status is the only place left where the difference can still be told.
+func (c *client) repl() error {
 	sc := bufio.NewScanner(os.Stdin)
 	fmt.Print("> ")
 	for sc.Scan() {
 		if fields := strings.Fields(sc.Text()); len(fields) > 0 {
 			if c.dispatch(fields) {
-				return
+				return nil
 			}
 		}
 		fmt.Print("> ")
 	}
+	// The loop above ends for two different reasons, and only one of them is the
+	// operator: a read error and a line past the scanner's ceiling land here too.
+	// Returning it is what keeps the process from exiting zero over a session that
+	// died, which is the difference this function exists to make visible.
+	if err := sc.Err(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // dispatch runs one command and reports whether the REPL should exit.
