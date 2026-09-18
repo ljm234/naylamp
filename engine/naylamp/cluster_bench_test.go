@@ -197,8 +197,7 @@ func BenchmarkEngineUpsertStandalone(b *testing.B) {
 		b.Fatalf("create collection: %v", err)
 	}
 	const idRange = 64
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		id := uint64(i%idRange) + 1
 		if uerr := col.Upsert(id, benchVec(id)); uerr != nil {
 			b.Fatalf("upsert: %v", uerr)

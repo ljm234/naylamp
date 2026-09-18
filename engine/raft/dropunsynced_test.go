@@ -198,7 +198,7 @@ func appendBatches(s *Storage, seed uint64, onAck func()) []Entry {
 			batch = append(batch, Entry{
 				Index: index,
 				Term:  term,
-				Data:  []byte(fmt.Sprintf("seed-%d-entry-%d-payload", seed, index)),
+				Data:  fmt.Appendf(nil, "seed-%d-entry-%d-payload", seed, index),
 			})
 			index++
 		}

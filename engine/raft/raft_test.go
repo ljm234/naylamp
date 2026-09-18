@@ -39,7 +39,7 @@ func TestRaft_LogMatchingUnderFaults(t *testing.T) {
 		h.waitLeader(400)
 		accepted := 0
 		for step := 0; step < 200; step++ {
-			if step%5 == 0 && h.propose([]byte(fmt.Sprintf("s%d-p%d", seed, step))) {
+			if step%5 == 0 && h.propose(fmt.Appendf(nil, "s%d-p%d", seed, step)) {
 				accepted++
 			}
 			h.tick()
@@ -182,7 +182,7 @@ func TestRaft_SafetyInvariants_Seeded(t *testing.T) {
 				partitioned = false
 			}
 			if step%5 == 0 {
-				h.propose([]byte(fmt.Sprintf("s%d-p%d", seed, step)))
+				h.propose(fmt.Appendf(nil, "s%d-p%d", seed, step))
 			}
 			h.tick()
 		}

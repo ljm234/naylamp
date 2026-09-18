@@ -38,7 +38,7 @@ func makeSnapLeader(t *testing.T, seed uint64, entries int, compactTo uint64, im
 		t.Fatalf("vote grant did not elect")
 	}
 	for i := 0; i < entries; i++ {
-		if _, _, perr := r.Propose([]byte(fmt.Sprintf("e%d", i+1))); perr != nil {
+		if _, _, perr := r.Propose(fmt.Appendf(nil, "e%d", i+1)); perr != nil {
 			t.Fatalf("propose %d: %v", i, perr)
 		}
 	}

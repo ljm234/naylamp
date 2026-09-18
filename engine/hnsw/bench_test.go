@@ -179,8 +179,7 @@ func BenchmarkHNSWSearch(b *testing.B) {
 		query[j] = float32(qRng.NormFloat64())
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = idx.Search(query, k)
 	}
 }
@@ -203,8 +202,7 @@ func BenchmarkBruteForceSearch(b *testing.B) {
 		query[j] = float32(qRng.NormFloat64())
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = store.Search(query, k, vector.CosineDistance)
 	}
 }
