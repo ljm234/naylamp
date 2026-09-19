@@ -81,10 +81,10 @@ limpia_y_cierra() {
 trap limpia_y_cierra EXIT
 
 fallos=0
-REGISTRO="${CAJON}/filas"
-: > "${REGISTRO}"
-ok()  { echo "$1"; printf 'OK\n' >> "${REGISTRO}"; }
-mal() { echo "$1" >&2; printf 'FALLA\n' >> "${REGISTRO}"; fallos=$((fallos + 1)); }
+ROW_LOG="${CAJON}/bench-rows"
+: > "${ROW_LOG}"
+ok()  { echo "$1"; printf 'OK\n' >> "${ROW_LOG}"; }
+mal() { echo "$1" >&2; printf 'FAILING\n' >> "${ROW_LOG}"; fallos=$((fallos + 1)); }
 
 # Los guiones que TIENEN que estar de acuerdo. La lista va escrita una vez y las
 # dos filas de abajo se derivan de ella, para que anadir un cuarto guion no deje
@@ -250,10 +250,10 @@ else
 	mal "ausente: FALLA, no se niegan bien:${faltan_cerrados}; sin margen no hay comprobacion y suponer uno seria inventarlo"
 fi
 
-n_filas=$(grep -c . "${REGISTRO}" || true)
-n_falla=$(grep -c '^FALLA$' "${REGISTRO}" || true)
+n_filas=$(grep -c . "${ROW_LOG}" || true)
+n_falla=$(grep -c '^FAILING$' "${ROW_LOG}" || true)
 COMPLETO=1
-echo "RESULTADO: ${n_filas} filas, ${n_falla} en FALLA"
+echo "RESULTADO: ${n_filas} rows, ${n_falla} failing"
 if [ "${n_filas}" -eq 0 ]; then
 	echo "test: VACIO. El registro de filas salio a cero, asi que este banco no ha probado nada" >&2
 	exit 1

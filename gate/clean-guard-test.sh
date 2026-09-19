@@ -111,9 +111,9 @@ CAJON=$(mktemp -d "${TMPDIR:-/tmp}/clean-guard-test.XXXXXX")
 # 7, asi que el predicado dio por ABORTADA una corrida entera. Una marca de
 # terminacion no puede ser prosa; tiene que ser una FORMA estable e igual en los
 # siete bancos, con la cuenta derivada del registro y no tecleada.
-REGISTRO_FILAS="${CAJON}/filas-del-banco"
-: > "${REGISTRO_FILAS}"
-anota_fila() { printf '%s\n' "$1" >> "${REGISTRO_FILAS}"; }
+ROW_LOG="${CAJON}/bench-rows"
+: > "${ROW_LOG}"
+anota_fila() { printf '%s\n' "$1" >> "${ROW_LOG}"; }
 COMPLETO=0
 limpia_y_cierra() {
 	if [ "${COMPLETO}" -ne 1 ]; then
@@ -174,13 +174,13 @@ monta
 rc=0
 make clean >/dev/null 2>&1 || rc=$?
 if [ "${rc}" -eq 0 ]; then
-	anota_fila FALLA; mal "1 negativa: FALLA, make clean salio con 0 habiendo un artefacto de fierro sin sello"
+	anota_fila FAILING; mal "1 negativa: FALLA, make clean salio con 0 habiendo un artefacto de fierro sin sello"
 elif [ "$(n_en gate/out/p1-sellada)" -eq 2 ] && [ "$(n_en gate/out/p1-sin-sello)" -eq 1 ] \
 	&& [ "$(n_en gate/out/p2-sin-sello)" -eq 1 ] \
 	&& [ "$(hay gate/out/suelto.log.txt)" = si ] && [ "$(hay scale_result.txt)" = si ]; then
 	anota_fila OK; echo "1 negativa: OK, se niega con rc=${rc} y no se lleva nada, ni lo que si limpiaria"
 else
-	anota_fila FALLA; mal "1 negativa: FALLA, se nego pero borro algo por el camino"
+	anota_fila FAILING; mal "1 negativa: FALLA, se nego pero borro algo por el camino"
 fi
 
 # ---- 2. la valvula, y el sellado sobrevive entero ----
@@ -189,7 +189,7 @@ make clean UNSEALED_OK=1 >/dev/null 2>&1 || mal "2 preserva: FALLA, con la valvu
 if [ "$(n_en gate/out/p1-sellada)" -eq 2 ]; then
 	anota_fila OK; echo "2 preserva: OK, el artefacto sellado sobrevive con sus dos ficheros"
 else
-	anota_fila FALLA; mal "2 preserva: FALLA, el sellado quedo con $(n_en gate/out/p1-sellada) ficheros y esperaba 2"
+	anota_fila FAILING; mal "2 preserva: FALLA, el sellado quedo con $(n_en gate/out/p1-sellada) ficheros y esperaba 2"
 fi
 
 # ---- 3. anti-vacuidad: lo que tiene que irse, se va ----
@@ -197,14 +197,14 @@ if [ "$(hay gate/out/p1-sin-sello)" = no ] && [ "$(hay gate/out/p2-sin-sello)" =
 	&& [ "$(hay scale_result.txt)" = no ]; then
 	anota_fila OK; echo "3 barre:   OK, lo que no lleva sello si se va, asi que la fila 2 no pasa por no borrar nada"
 else
-	anota_fila FALLA; mal "3 barre:   FALLA, con la valvula puesta no se llevo lo que tenia que llevarse"
+	anota_fila FAILING; mal "3 barre:   FALLA, con la valvula puesta no se llevo lo que tenia que llevarse"
 fi
 
 # ---- 3b. las dos excepciones que no son el sello ----
 if [ "$(hay gate/out/certs/ca.pem)" = si ] && [ "$(hay gate/out/consola.log)" = si ]; then
 	anota_fila OK; echo "3b excep:  OK, certs y los *.log de primer nivel sobreviven sin llevar sello"
 else
-	anota_fila FALLA; mal "3b excep:  FALLA, la limpieza se llevo certs o un *.log, que la receta promete conservar"
+	anota_fila FAILING; mal "3b excep:  FALLA, la limpieza se llevo certs o un *.log, que la receta promete conservar"
 fi
 
 # ---- 4. un directorio de fierro VACIO no dispara la negativa ----
@@ -216,7 +216,7 @@ make clean >/dev/null 2>&1 || rc=$?
 if [ "${rc}" -eq 0 ]; then
 	anota_fila OK; echo "4 vacio:   OK, un artefacto de fierro vacio y sin sello no para la limpieza"
 else
-	anota_fila FALLA; mal "4 vacio:   FALLA, la negativa salto con rc=${rc} por un directorio vacio"
+	anota_fila FAILING; mal "4 vacio:   FALLA, la negativa salto con rc=${rc} por un directorio vacio"
 fi
 
 # ---- 5. los local-* no disparan la negativa, y aun asi se los lleva ----
@@ -226,12 +226,12 @@ rm -rf gate/out/p1-sin-sello gate/out/p2-sin-sello
 rc=0
 make clean >/dev/null 2>&1 || rc=$?
 if [ "${rc}" -ne 0 ]; then
-	anota_fila FALLA; mal "5 local:   FALLA, un local-* sin sello disparo la negativa, y la exclusion es deliberada"
+	anota_fila FAILING; mal "5 local:   FALLA, un local-* sin sello disparo la negativa, y la exclusion es deliberada"
 elif [ "$(hay gate/out/p1-local-ensayo)" = no ] && [ "$(hay gate/out/p2-local-ensayo)" = no ] \
 	&& [ "$(n_en gate/out/p1-sellada)" -eq 2 ]; then
 	anota_fila OK; echo "5 local:   OK, ni p1-local-* ni p2-local-* paran la limpieza y los dos se van"
 else
-	anota_fila FALLA; mal "5 local:   FALLA, un local-* sobrevivio o se llevo por delante al sellado"
+	anota_fila FAILING; mal "5 local:   FALLA, un local-* sobrevivio o se llevo por delante al sellado"
 fi
 
 # ---- 5b. el de Phase 2 dispara la negativa EL SOLO ----
@@ -244,7 +244,7 @@ make clean >/dev/null 2>&1 || rc=$?
 if [ "${rc}" -ne 0 ] && [ "$(n_en gate/out/p2-sin-sello)" -eq 1 ]; then
 	anota_fila OK; echo "5b p2:     OK, un p2-<run id> sin sello para la limpieza el solo y sigue entero"
 else
-	anota_fila FALLA; mal "5b p2:     FALLA, con rc=${rc} el artefacto de fierro de Phase 2 sin sello no paro la limpieza"
+	anota_fila FAILING; mal "5b p2:     FALLA, con rc=${rc} el artefacto de fierro de Phase 2 sin sello no paro la limpieza"
 fi
 
 # ---- 5c. una phase que no existe, para separar la forma de la lista ----
@@ -260,7 +260,7 @@ make clean >/dev/null 2>&1 || rc=$?
 if [ "${rc}" -ne 0 ] && [ "$(n_en gate/out/p3-20260906T0000Z-1)" -eq 1 ]; then
 	anota_fila OK; echo "5c forma:  OK, un p3-<run id> de una phase inexistente para la limpieza y sigue entero"
 else
-	anota_fila FALLA; mal "5c forma:  FALLA, con rc=${rc} la guarda no miro a p3-; el predicado es una lista y no una forma"
+	anota_fila FAILING; mal "5c forma:  FALLA, con rc=${rc} la guarda no miro a p3-; el predicado es una lista y no una forma"
 fi
 
 # ---- 9. una corrida VIVA para la limpieza ----
@@ -280,7 +280,7 @@ if [ "${rc}" -ne 0 ] && [ "$(hay gate/out/p2-local-encurso/dato.txt)" = si ] \
 	&& printf '%s' "${salida}" | grep -q 'still writing'; then
 	anota_fila OK; echo "9 vivo:    OK, una corrida viva para la limpieza entera y su directorio sigue ahi"
 else
-	anota_fila FALLA; mal "9 vivo:    FALLA, con rc=${rc} la limpieza no respeto un RUNNING con el pid vivo"
+	anota_fila FAILING; mal "9 vivo:    FALLA, con rc=${rc} la limpieza no respeto un RUNNING con el pid vivo"
 fi
 kill "${pid_vivo}" 2>/dev/null || true
 wait "${pid_vivo}" 2>/dev/null || true
@@ -305,14 +305,14 @@ make clean >/dev/null 2>&1 || rc=$?
 if [ "${rc}" -ne 0 ] && [ "$(hay gate/out/p1-local-ensayo/dato.txt)" = si ]; then
 	anota_fila OK; echo "9b p1:     OK, un p1-local-* con marcador vivo para la limpieza, que es el incidente del 28 de agosto"
 else
-	anota_fila FALLA; mal "9b p1:     FALLA, con rc=${rc} un ensayo de p1 en vuelo se perdio igual que entonces"
+	anota_fila FAILING; mal "9b p1:     FALLA, con rc=${rc} un ensayo de p1 en vuelo se perdio igual que entonces"
 fi
 kill "${pid_p1}" 2>/dev/null || true
 wait "${pid_p1}" 2>/dev/null || true
 
 P1SH="${RAIZ_REPO}/gate/p1.sh"
 if [ ! -f "${P1SH}" ]; then
-	anota_fila FALLA; mal "9c escribe: FALLA, no encuentro ${P1SH}"
+	anota_fila FAILING; mal "9c escribe: FALLA, no encuentro ${P1SH}"
 else
 	# LAS TRES CONDICIONES MIRAN SITIOS DE LLAMADA Y NO DEFINICIONES, y la primera
 	# version miraba definiciones: `grep -q escribe_running` casa con la linea que
@@ -346,7 +346,7 @@ else
 		&& ! printf '%s' "${cuerpo_ret}" | grep -qE '^[[:space:]]*return 0[[:space:]]*$'; then
 		anota_fila OK; echo "9c escribe: OK, gate/p1.sh define y LLAMA a las dos, la escritura va tras el mkdir, y ninguna esta vaciada"
 	else
-		anota_fila FALLA; mal "9c escribe: FALLA, def=${def_esc}/${def_ret} llamadas=${lla_esc}/${lla_ret} tras_mkdir=${tras_mkdir}; la fila 9b se quedaria fabricando el marcador sola"
+		anota_fila FAILING; mal "9c escribe: FALLA, def=${def_esc}/${def_ret} llamadas=${lla_esc}/${lla_ret} tras_mkdir=${tras_mkdir}; la fila 9b se quedaria fabricando el marcador sola"
 	fi
 fi
 
@@ -373,7 +373,7 @@ make clean >/dev/null 2>&1 || rc=$?
 if [ "${rc}" -eq 0 ] && [ "$(hay gate/out/p1-20260907T0000Z-1)" = no ]; then
 	anota_fila OK; echo "9d vacio:  OK, un artefacto cuyo unico fichero es un RUNNING muerto se barre y no queda atrapado"
 else
-	anota_fila FALLA; mal "9d vacio:  FALLA, con rc=${rc} ese directorio quedo ni sellable ni barrible"
+	anota_fila FAILING; mal "9d vacio:  FALLA, con rc=${rc} ese directorio quedo ni sellable ni barrible"
 fi
 
 # ---- 10. una corrida MUERTA no para la limpieza, y se anuncia ----
@@ -392,7 +392,7 @@ if [ "${rc}" -eq 0 ] && [ "$(hay gate/out/p2-local-resto)" = no ] \
 	&& printf '%s' "${salida}" | grep -q 'did not finish'; then
 	anota_fila OK; echo "10 resto:  OK, un RUNNING de proceso muerto no para la limpieza, se anuncia y se barre"
 else
-	anota_fila FALLA; mal "10 resto:  FALLA, con rc=${rc} el resto de una corrida muerta no se barrio o no se anuncio"
+	anota_fila FAILING; mal "10 resto:  FALLA, con rc=${rc} el resto de una corrida muerta no se barrio o no se anuncio"
 fi
 
 # ---- 12. la valvula de los sellos no mata una corrida viva ----
@@ -411,14 +411,14 @@ make clean UNSEALED_OK=1 >/dev/null 2>&1 || rc=$?
 if [ "${rc}" -ne 0 ] && [ "$(hay gate/out/p2-local-encurso/dato.txt)" = si ]; then
 	anota_fila OK; echo "12 valvula: OK, UNSEALED_OK=1 no se lleva una corrida viva, que es otra decision y otro precio"
 else
-	anota_fila FALLA; mal "12 valvula: FALLA, con rc=${rc} la valvula de los sellos se llevo la corrida viva"
+	anota_fila FAILING; mal "12 valvula: FALLA, con rc=${rc} la valvula de los sellos se llevo la corrida viva"
 fi
 rc=0
 make clean KILL_RUNNING_OK=1 >/dev/null 2>&1 || rc=$?
 if [ "${rc}" -eq 0 ] && [ "$(hay gate/out/p2-local-encurso)" = no ]; then
 	anota_fila OK; echo "12b propia: OK, KILL_RUNNING_OK=1 si se la lleva, que es lo que esa valvula dice"
 else
-	anota_fila FALLA; mal "12b propia: FALLA, con rc=${rc} la valvula propia no se llevo la corrida viva"
+	anota_fila FAILING; mal "12b propia: FALLA, con rc=${rc} la valvula propia no se llevo la corrida viva"
 fi
 kill "${pid_valvula}" 2>/dev/null || true
 wait "${pid_valvula}" 2>/dev/null || true
@@ -479,7 +479,7 @@ make -f Makefile-sin-negativa clean >/dev/null 2>&1 || rc=$?
 if [ "${rc}" -eq 0 ] && [ "$(hay gate/out/p1-sin-sello)" = no ]; then
 	anota_fila OK; echo "6 rojo(a): OK, MUERDE: sin la negativa, el artefacto sin sello se va y make clean sale con 0"
 else
-	anota_fila FALLA; mal "6 rojo(a): FALLA, sin la negativa la limpieza no se llevo el artefacto sin sello; la fila 1 no prueba nada"
+	anota_fila FAILING; mal "6 rojo(a): FALLA, sin la negativa la limpieza no se llevo el artefacto sin sello; la fila 1 no prueba nada"
 fi
 
 # ---- 7. ROJO de la preservacion ----
@@ -488,7 +488,7 @@ make -f Makefile-sin-preservar clean UNSEALED_OK=1 >/dev/null 2>&1 || true
 if [ "$(hay gate/out/p1-sellada)" = no ]; then
 	anota_fila OK; echo "7 rojo(b): OK, MUERDE: sin la condicion de preservacion, el artefacto SELLADO se destruye"
 else
-	anota_fila FALLA; mal "7 rojo(b): FALLA, el sellado sobrevivio sin su condicion, asi que la fila 2 no prueba nada"
+	anota_fila FAILING; mal "7 rojo(b): FALLA, el sellado sobrevivio sin su condicion, asi que la fila 2 no prueba nada"
 fi
 
 # ---- 8. ROJO del predicado viejo, el de p1 solo ----
@@ -502,7 +502,7 @@ make -f Makefile-solo-p1 clean >/dev/null 2>&1 || rc=$?
 if [ "${rc}" -eq 0 ] && [ "$(hay gate/out/p2-sin-sello)" = no ]; then
 	anota_fila OK; echo "8 rojo(c): OK, MUERDE: con el predicado viejo el artefacto de Phase 2 sin sello se va y make clean sale con 0"
 else
-	anota_fila FALLA; mal "8 rojo(c): FALLA, con rc=${rc} el predicado viejo no perdio el artefacto de Phase 2; la fila 5b no prueba nada"
+	anota_fila FAILING; mal "8 rojo(c): FALLA, con rc=${rc} el predicado viejo no perdio el artefacto de Phase 2; la fila 5b no prueba nada"
 fi
 
 # ---- 11. ROJO de la negativa del RUNNING ----
@@ -520,7 +520,7 @@ make -f Makefile-sin-running clean >/dev/null 2>&1 || rc=$?
 if [ "${rc}" -eq 0 ] && [ "$(hay gate/out/p2-local-encurso)" = no ]; then
 	anota_fila OK; echo "11 rojo(d): OK, MUERDE: sin la negativa, el directorio de una corrida VIVA se va y make clean sale con 0"
 else
-	anota_fila FALLA; mal "11 rojo(d): FALLA, con rc=${rc} el mutante no perdio la corrida viva; la fila 9 no prueba nada"
+	anota_fila FAILING; mal "11 rojo(d): FALLA, con rc=${rc} el mutante no perdio la corrida viva; la fila 9 no prueba nada"
 fi
 kill "${pid_vivo2}" 2>/dev/null || true
 wait "${pid_vivo2}" 2>/dev/null || true
@@ -559,14 +559,14 @@ BANCO="${AQUI}/p2-guard-test.sh"
 BANCO_OK=1
 if [ ! -x "${BANCO}" ]; then
 	BANCO_OK=0
-	anota_fila FALLA; mal "13 banco:    FALLA, no encuentro ${BANCO}"
-	anota_fila FALLA; mal "13a respeta: FALLA, sin banco no se puede medir"
-	anota_fila FALLA; mal "13b rancio:  FALLA, sin banco no se puede medir"
-	anota_fila FALLA; mal "13c rojo:    FALLA, sin banco no se puede medir"
-	anota_fila FALLA; mal "13d retira:  FALLA, sin banco no se puede medir"
-	anota_fila FALLA; mal "13e rojo(f): FALLA, sin banco no se puede medir"
-	anota_fila FALLA; mal "13f ajeno:   FALLA, sin banco no se puede medir"
-	anota_fila FALLA; mal "13g a-la-vez: FALLA, sin banco no se puede medir"
+	anota_fila FAILING; mal "13 banco:    FALLA, no encuentro ${BANCO}"
+	anota_fila FAILING; mal "13a respeta: FALLA, sin banco no se puede medir"
+	anota_fila FAILING; mal "13b rancio:  FALLA, sin banco no se puede medir"
+	anota_fila FAILING; mal "13c rojo:    FALLA, sin banco no se puede medir"
+	anota_fila FAILING; mal "13d retira:  FALLA, sin banco no se puede medir"
+	anota_fila FAILING; mal "13e rojo(f): FALLA, sin banco no se puede medir"
+	anota_fila FAILING; mal "13f ajeno:   FALLA, sin banco no se puede medir"
+	anota_fila FAILING; mal "13g a-la-vez: FALLA, sin banco no se puede medir"
 fi
 
 if [ "${BANCO_OK}" -eq 1 ]; then
@@ -680,13 +680,13 @@ if [ "${BANCO_OK}" -eq 1 ]; then
 	   && ! echo "${salida_b}" | grep -q "pase el prologo"; then
 		anota_fila OK; echo "13 banco:   OK, se niega con rc=2 ante otro banco vivo, PARA antes del prologo y no crea directorio"
 	else
-		anota_fila FALLA; mal "13 banco:   FALLA, rc=${rc}, directorios ${antes_dirs}->${despues_dirs}"
+		anota_fila FAILING; mal "13 banco:   FALLA, rc=${rc}, directorios ${antes_dirs}->${despues_dirs}"
 	fi
 	# 13a: y el marcador del cebo SIGUE, que es lo que la negativa tiene que respetar
 	if grep -q "^pid: ${pid_cebo}\$" "${MARCA_A}" 2>/dev/null; then
 		anota_fila OK; echo "13a respeta: OK, la negativa no toco el marcador del banco vivo"
 	else
-		anota_fila FALLA; mal "13a respeta: FALLA, el marcador del cebo (pid ${pid_cebo}) ya no esta"
+		anota_fila FAILING; mal "13a respeta: FALLA, el marcador del cebo (pid ${pid_cebo}) ya no esta"
 	fi
 	kill -9 "${pid_cebo}" 2>/dev/null || true
 	wait "${pid_cebo}" 2>/dev/null || true
@@ -697,13 +697,13 @@ if [ "${BANCO_OK}" -eq 1 ]; then
 	mkdir -p "${MARCA_A}.lock"
 	salida_b="$(bash "${ARNES}" 2>&1)" || true
 	if ! echo "${salida_b}" | grep -q "ya no existe; se retira"; then
-		anota_fila FALLA; mal "13b rancio: FALLA, el marcador con pid muerto no se retiro"
+		anota_fila FAILING; mal "13b rancio: FALLA, el marcador con pid muerto no se retiro"
 	elif ! echo "${salida_b}" | grep -q "pase el prologo"; then
-		anota_fila FALLA; mal "13b rancio: FALLA, retiro el marcador y NO siguio; la pregunta del flujo dice que tiene que seguir"
+		anota_fila FAILING; mal "13b rancio: FALLA, retiro el marcador y NO siguio; la pregunta del flujo dice que tiene que seguir"
 	elif echo "${salida_b}" | grep -q "another bench is already running"; then
-		anota_fila FALLA; mal "13b rancio: FALLA, se nego pese a que el marcador estaba rancio"
+		anota_fila FAILING; mal "13b rancio: FALLA, se nego pese a que el marcador estaba rancio"
 	elif ! echo "${salida_b}" | grep -q "ARNES: retire"; then
-		anota_fila FALLA; mal "13b rancio: FALLA, no llego a su retirada"
+		anota_fila FAILING; mal "13b rancio: FALLA, no llego a su retirada"
 	else
 		anota_fila OK; echo "13b rancio: OK, retira el rancio, SIGUE hasta el final y retira el suyo"
 	fi
@@ -714,7 +714,7 @@ if [ "${BANCO_OK}" -eq 1 ]; then
 	sed 's|^if \[ -n "${OTRO}" \]; then|if false; then|' "${ARNES}" > "${ARNES_SIN_GUARDA}"
 	chmod +x "${ARNES_SIN_GUARDA}"
 	if cmp -s "${ARNES}" "${ARNES_SIN_GUARDA}"; then
-		anota_fila FALLA; mal "13c rojo:   FALLA, la mutacion no cambio nada, asi que no muta la negativa"
+		anota_fila FAILING; mal "13c rojo:   FALLA, la mutacion no cambio nada, asi que no muta la negativa"
 	else
 		limpia_arnes
 		bash "${ARNES_LARGO}" > "${CAJON}/a13c-cebo.txt" 2>&1 &
@@ -724,7 +724,7 @@ if [ "${BANCO_OK}" -eq 1 ]; then
 		if echo "${salida_c}" | grep -q "pase el prologo"; then
 			anota_fila OK; echo "13c rojo:   OK, MUERDE: sin la negativa el segundo banco pasa el prologo con el primero vivo"
 		else
-			anota_fila FALLA; mal "13c rojo:   FALLA, el mutante no paso; la fila 13 no prueba la negativa"
+			anota_fila FAILING; mal "13c rojo:   FALLA, el mutante no paso; la fila 13 no prueba la negativa"
 		fi
 		kill -9 "${pid_cebo3}" 2>/dev/null || true
 		wait "${pid_cebo3}" 2>/dev/null || true
@@ -737,7 +737,7 @@ if [ "${BANCO_OK}" -eq 1 ]; then
 	if echo "${salida_d}" | grep -q "ARNES: retire" && [ ! -e "${MARCA_A}" ] && [ ! -d "${MARCA_A}.lock" ]; then
 		anota_fila OK; echo "13d retira: OK, al terminar bien no deja marcador ni cerrojo"
 	else
-		anota_fila FALLA; mal "13d retira: FALLA, quedan marcador=$([ -e "${MARCA_A}" ] && echo si || echo no) cerrojo=$([ -d "${MARCA_A}.lock" ] && echo si || echo no)"
+		anota_fila FAILING; mal "13d retira: FALLA, quedan marcador=$([ -e "${MARCA_A}" ] && echo si || echo no) cerrojo=$([ -d "${MARCA_A}.lock" ] && echo si || echo no)"
 	fi
 
 	# 13e ROJO: sin la retirada, el marcador sobrevive al banco
@@ -749,7 +749,7 @@ if [ "${BANCO_OK}" -eq 1 ]; then
 	if [ -e "${MARCA_A}" ]; then
 		anota_fila OK; echo "13e rojo(f): OK, MUERDE: sin la retirada el marcador sobrevive al banco"
 	else
-		anota_fila FALLA; mal "13e rojo(f): FALLA, el marcador se fue igual, asi que 13d no prueba la retirada"
+		anota_fila FAILING; mal "13e rojo(f): FALLA, el marcador se fue igual, asi que 13d no prueba la retirada"
 	fi
 	limpia_arnes
 
@@ -766,7 +766,7 @@ retira_marca_banco' 2>/dev/null || true
 	if [ -e "${MARCA_A}" ] && grep -q "^pid: 999998\$" "${MARCA_A}"; then
 		anota_fila OK; echo "13f ajeno:  OK, la retirada respeta el marcador de otro banco"
 	else
-		anota_fila FALLA; mal "13f ajeno:  FALLA, borro un marcador que no era suyo"
+		anota_fila FAILING; mal "13f ajeno:  FALLA, borro un marcador que no era suyo"
 	fi
 	limpia_arnes
 
@@ -784,15 +784,15 @@ retira_marca_banco' 2>/dev/null || true
 	if [ "${llegaron}" -le 1 ]; then
 		anota_fila OK; echo "13g a-la-vez: OK, con los dos entrando juntos solo ${llegaron} paso el prologo"
 	else
-		anota_fila FALLA; mal "13g a-la-vez: FALLA, pasaron ${llegaron}; el cerrojo no excluye"
+		anota_fila FAILING; mal "13g a-la-vez: FALLA, pasaron ${llegaron}; el cerrojo no excluye"
 	fi
 	limpia_arnes
 	rm -f "${ARNES}" "${ARNES_LARGO}" "${ARNES_SOLAPA}" "${ARNES_SIN_GUARDA}" "${ARNES_SIN_RET}"
 fi
 
-n_filas=$(grep -c . "${REGISTRO_FILAS}" || true)
-n_falla=$(grep -c '^FALLA$' "${REGISTRO_FILAS}" || true)
-echo "RESULTADO: ${n_filas} filas, ${n_falla} en FALLA"
+n_filas=$(grep -c . "${ROW_LOG}" || true)
+n_falla=$(grep -c '^FAILING$' "${ROW_LOG}" || true)
+echo "RESULTADO: ${n_filas} rows, ${n_falla} failing"
 # COMPLETO SE PONE AQUI Y NO DESPUES DE LAS DOS ANTI-VACUIDADES, y es una
 # correccion del 8 de septiembre de 2026. Estaban las dos por delante, saliendo
 # por exit 1 con COMPLETO todavia en cero, asi que la trampa imprimia "ABORTADO

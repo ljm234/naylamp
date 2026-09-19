@@ -49,9 +49,9 @@ P1="${RAIZ}/gate/p1.sh"
 CAJON="${TMPDIR:-/tmp}/naylamp-sello-$$"
 mkdir -p "${CAJON}/out"
 
-REGISTRO_FILAS="${CAJON}/filas-del-banco"
-: > "${REGISTRO_FILAS}"
-anota_fila() { printf '%s\n' "$1" >> "${REGISTRO_FILAS}"; }
+ROW_LOG="${CAJON}/bench-rows"
+: > "${ROW_LOG}"
+anota_fila() { printf '%s\n' "$1" >> "${ROW_LOG}"; }
 fallos=0
 mal() { echo "$1" >&2; fallos=$((fallos + 1)); }
 # UNA FILA PUEDE NO APLICAR AQUI, y entonces no se cuenta como fila. gate/out/
@@ -155,7 +155,7 @@ despues_e=$(cuenta "${S}" expected)
 if [ "${antes_v}" -eq 18 ] && [ "${despues_v}" -eq 19 ] && [ "${despues_e}" -eq 19 ]; then
 	anota_fila OK; echo "1 completa: OK, el sello entraba con ${antes_v} veredictos contra ${despues_e} esperados y sale con ${despues_v}"
 else
-	anota_fila FALLA; mal "1 completa: FALLA, antes ${antes_v}, despues ${despues_v}, esperados ${despues_e}"
+	anota_fila FAILING; mal "1 completa: FALLA, antes ${antes_v}, despues ${despues_v}, esperados ${despues_e}"
 fi
 
 # ---- 2 esperada intacta -----------------------------------------------------
@@ -164,14 +164,14 @@ fi
 if [ "$(grep -m1 '^expected:' "${S}")" = "expected:    ${ESPERADOS}" ]; then
 	anota_fila OK; echo "2 intacta: OK, la linea expected sale identica byte a byte"
 else
-	anota_fila FALLA; mal "2 intacta: FALLA, la linea expected cambio: $(grep -m1 '^expected:' "${S}" | cut -c1-70)"
+	anota_fila FAILING; mal "2 intacta: FALLA, la linea expected cambio: $(grep -m1 '^expected:' "${S}" | cut -c1-70)"
 fi
 
 # ---- 3 cierre ---------------------------------------------------------------
 if grep -qE '^closed:      [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' "${S}"; then
 	anota_fila OK; echo "3 cierre: OK, el sello dice a que hora se termino, que no es la hora en que se escribio"
 else
-	anota_fila FALLA; mal "3 cierre: FALLA, no hay linea closed: con forma de instante UTC"
+	anota_fila FAILING; mal "3 cierre: FALLA, no hay linea closed: con forma de instante UTC"
 fi
 
 # ---- 4 bandera --------------------------------------------------------------
@@ -187,7 +187,7 @@ md5_despues=$(md5 -q "${S2}" 2>/dev/null || md5sum "${S2}" | cut -d' ' -f1)
 if [ "${md5_antes}" = "${md5_despues}" ]; then
 	anota_fila OK; echo "4 bandera: OK, sin la bandera de ESCRITURA el sello no se toca, que es lo que salva a una higiene suelta"
 else
-	anota_fila FALLA; mal "4 bandera: FALLA, el sello cambio con SELLO_ESCRITO_AQUI=0"
+	anota_fila FAILING; mal "4 bandera: FALLA, el sello cambio con SELLO_ESCRITO_AQUI=0"
 fi
 
 # ---- 5 ajeno ----------------------------------------------------------------
@@ -207,7 +207,7 @@ md5_despues=$(md5 -q "${S3}" 2>/dev/null || md5sum "${S3}" | cut -d' ' -f1)
 if [ "${md5_antes}" = "${md5_despues}" ] && grep -q 'NOT completed' "${CAJON}/err"; then
 	anota_fila OK; echo "5 ajeno: OK, un OUT_LOCAL que no es p1-<run id> se rechaza en voz alta y no toca nada"
 else
-	anota_fila FALLA; mal "5 ajeno: FALLA, md5 $([ "${md5_antes}" = "${md5_despues}" ] && echo igual || echo distinto), stderr [$(head -c 80 "${CAJON}/err")]"
+	anota_fila FAILING; mal "5 ajeno: FALLA, md5 $([ "${md5_antes}" = "${md5_despues}" ] && echo igual || echo distinto), stderr [$(head -c 80 "${CAJON}/err")]"
 fi
 
 # ---- 6 repite ---------------------------------------------------------------
@@ -217,7 +217,7 @@ n_ver=$(grep -c '^verdicts:' "${S}" || true)
 if [ "${n_closed}" -eq 1 ] && [ "${n_ver}" -eq 1 ]; then
 	anota_fila OK; echo "6 repite: OK, dos pasadas dejan una sola linea closed y una sola verdicts"
 else
-	anota_fila FALLA; mal "6 repite: FALLA, ${n_closed} lineas closed y ${n_ver} verdicts tras la segunda pasada"
+	anota_fila FAILING; mal "6 repite: FALLA, ${n_closed} lineas closed y ${n_ver} verdicts tras la segunda pasada"
 fi
 
 # ---- 7 basura ---------------------------------------------------------------
@@ -225,7 +225,7 @@ restos=$(find "${CAJON}/out" -name 'SEALED.a-medias' | wc -l | tr -d ' ')
 if [ "${restos}" -eq 0 ]; then
 	anota_fila OK; echo "7 basura: OK, no sobrevive ningun SEALED.a-medias"
 else
-	anota_fila FALLA; mal "7 basura: FALLA, quedan ${restos} ficheros SEALED.a-medias"
+	anota_fila FAILING; mal "7 basura: FALLA, quedan ${restos} ficheros SEALED.a-medias"
 fi
 
 # ---- 8 archivo --------------------------------------------------------------
@@ -242,7 +242,7 @@ if [ -r "${REAL}" ]; then
 	if [ "${a_e}" -eq 19 ] && [ "${a_v}" -eq 18 ] && [ "${d_e}" -eq 19 ] && [ "${d_v}" -eq 19 ]; then
 		anota_fila OK; echo "8 archivo: OK, el sello de fierro del 4 de septiembre entra ${a_e}/${a_v} y sale ${d_e}/${d_v}"
 	else
-		anota_fila FALLA; mal "8 archivo: FALLA, entra ${a_e}/${a_v} y sale ${d_e}/${d_v}"
+		anota_fila FAILING; mal "8 archivo: FALLA, entra ${a_e}/${a_v} y sale ${d_e}/${d_v}"
 	fi
 else
 	no_aplica "8 archivo: NO APLICA aqui, ${REAL} no existe porque gate/out/ esta en .gitignore"
@@ -281,7 +281,7 @@ if [ "${sin_cerrar}" -eq 0 ] && [ "${c_e}" -ne "${c_v}" ] \
 	&& [ "${con_cierre}" -eq 1 ] && [ "${d_e}" -ne "${d_v}" ]; then
 	anota_fila OK; echo "9 corta: OK, sin cerrar no hay closed y las cuentas no cuadran (${c_v}/${c_e}); cortada SI hay closed y siguen sin cuadrar (${d_v}/${d_e})"
 else
-	anota_fila FALLA; mal "9 corta: FALLA, closed sin cerrar=${sin_cerrar} cortada=${con_cierre}; cuentas ${c_v}/${c_e} y ${d_v}/${d_e}"
+	anota_fila FAILING; mal "9 corta: FALLA, closed sin cerrar=${sin_cerrar} cortada=${con_cierre}; cuentas ${c_v}/${c_e} y ${d_v}/${d_e}"
 fi
 
 # ---- 10 mutante -------------------------------------------------------------
@@ -290,7 +290,7 @@ fi
 # se machaca, y la fila 4 tendria que ponerse roja.
 sed 's/SELLO_ESCRITO_AQUI/SEALED_THIS_RUN/g' "${FUENTE}" > "${CAJON}/mutante.sh"
 if cmp -s "${FUENTE}" "${CAJON}/mutante.sh"; then
-	anota_fila FALLA; mal "10 mutante: FALLA, la mutacion no cambio nada, asi que no prueba nada"
+	anota_fila FAILING; mal "10 mutante: FALLA, la mutacion no cambio nada, asi que no prueba nada"
 else
 	siembra 20260908T100000Z-555 "${VER_PARCIAL}"
 	S6="${CAJON}/out/p1-20260908T100000Z-555/SEALED"
@@ -309,7 +309,7 @@ else
 	if [ "${m_antes}" != "${m_despues}" ] && [ "${m_v}" -eq 2 ]; then
 		anota_fila OK; echo "10 mutante: OK, MUERDE: con la bandera equivocada la higiene suelta deja ${m_v} veredictos donde habia 18"
 	else
-		anota_fila FALLA; mal "10 mutante: FALLA, la bandera equivocada no destruyo el sello, asi que la fila 4 no prueba nada"
+		anota_fila FAILING; mal "10 mutante: FALLA, la bandera equivocada no destruyo el sello, asi que la fila 4 no prueba nada"
 	fi
 fi
 
@@ -334,7 +334,7 @@ comprueba_rechazo() {
 		&& grep -q 'could not be completed' "${CAJON}/err"; then
 		anota_fila OK; echo "${eti}: OK, ${glosa}, y el sello sale intacto, sin restos y con su aviso"
 	else
-		anota_fila FALLA
+		anota_fila FAILING
 		mal "${eti}: FALLA, sello $([ "${m_despues}" = "${MD5_ANTES}" ] && echo intacto || echo CAMBIADO), ${restos} resto(s), aviso [$(head -c 60 "${CAJON}/err")]"
 	fi
 }
@@ -345,7 +345,7 @@ S11="${CAJON}/out/p1-20260908T100011Z-777/SEALED"
 MD5_ANTES=$(md5 -q "${S11}" 2>/dev/null || md5sum "${S11}" | cut -d' ' -f1)
 sed 's|{linea}" ;;|{linea}XX" ;;|' "${FUENTE}" > "${CAJON}/rota-11.sh"
 if cmp -s "${FUENTE}" "${CAJON}/rota-11.sh"; then
-	anota_fila FALLA; mal "11 rechaza: FALLA, la mutacion no cambio nada, asi que esta fila no prueba nada"
+	anota_fila FAILING; mal "11 rechaza: FALLA, la mutacion no cambio nada, asi que esta fila no prueba nada"
 else
 	(
 		set +e
@@ -386,7 +386,7 @@ sv_despues=$(md5 -q "${SV}" 2>/dev/null || md5sum "${SV}" | cut -d' ' -f1)
 if [ "${sv_antes}" = "${sv_despues}" ] && grep -q 'no verdicts line' "${CAJON}/err"; then
 	anota_fila OK; echo "13 sin-verdicts: OK, un sello sin linea de veredictos se deja como esta y se dice"
 else
-	anota_fila FALLA; mal "13 sin-verdicts: FALLA, md5 $([ "${sv_antes}" = "${sv_despues}" ] && echo igual || echo distinto), stderr [$(head -c 60 "${CAJON}/err")]"
+	anota_fila FAILING; mal "13 sin-verdicts: FALLA, md5 $([ "${sv_antes}" = "${sv_despues}" ] && echo igual || echo distinto), stderr [$(head -c 60 "${CAJON}/err")]"
 fi
 
 # ---- 14 sin-salto -----------------------------------------------------------
@@ -400,7 +400,7 @@ corre 20260908T100015Z-777 1 "${CAJON}/out/p1-20260908T100015Z-777"
 if grep -q '^ULTIMA SIN SALTO$' "${CAJON}/out/p1-20260908T100015Z-777/SEALED"; then
 	anota_fila OK; echo "14 sin-salto: OK, la ultima linea sin salto de linea sobrevive a la reescritura"
 else
-	anota_fila FALLA; mal "14 sin-salto: FALLA, la ultima linea sin salto se perdio en la reescritura"
+	anota_fila FAILING; mal "14 sin-salto: FALLA, la ultima linea sin salto se perdio en la reescritura"
 fi
 
 # ---- 15 rechaza-corta -------------------------------------------------------
@@ -423,7 +423,7 @@ S15="${CAJON}/out/p1-20260908T100015Z-777/SEALED"
 MD5_ANTES=$(md5 -q "${S15}" 2>/dev/null || md5sum "${S15}" | cut -d' ' -f1)
 sed 's|closed:\*) ;;|closed:*\|"") ;;|' "${FUENTE}" > "${CAJON}/rota-15.sh"
 if cmp -s "${FUENTE}" "${CAJON}/rota-15.sh"; then
-	anota_fila FALLA; mal "15 rechaza-corta: FALLA, la mutacion no cambio nada, asi que esta fila no prueba nada"
+	anota_fila FAILING; mal "15 rechaza-corta: FALLA, la mutacion no cambio nada, asi que esta fila no prueba nada"
 else
 	(
 		set +e
@@ -439,12 +439,12 @@ else
 fi
 
 # ---- el resumen -------------------------------------------------------------
-n_filas=$(grep -c . "${REGISTRO_FILAS}" || true)
-n_falla=$(grep -c '^FALLA$' "${REGISTRO_FILAS}" || true)
+n_filas=$(grep -c . "${ROW_LOG}" || true)
+n_falla=$(grep -c '^FAILING$' "${ROW_LOG}" || true)
 if [ "${omitidas}" -ne 0 ]; then
 	echo "${omitidas} fila(s) no aplican en esta maquina y no se cuentan como filas; el motivo va impreso arriba"
 fi
-echo "RESULTADO: ${n_filas} filas, ${n_falla} en FALLA"
+echo "RESULTADO: ${n_filas} rows, ${n_falla} failing"
 # COMPLETO SE PONE AQUI Y NO CUATRO LINEAS MAS ABAJO, y es una correccion del 8 de
 # septiembre. En los otros bancos las dos anti-vacuidades salen por exit 1 ANTES
 # de COMPLETO=1, asi que la trampa imprime "ABORTADO antes del resumen" habiendo

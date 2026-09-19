@@ -248,9 +248,9 @@ MAL=0
 # contrastara. Aqui cada fila deja su rastro en un fichero, y el resumen deriva
 # las dos cifras del fichero: si una fila se olvida de contarse, las cuentas no
 # casan y el banco lo dice en vez de publicarlas.
-REGISTRO_FILAS="${SCRATCH}/filas-del-banco"
-: > "${REGISTRO_FILAS}"
-anota_fila() { printf '%s\n' "$1" >> "${REGISTRO_FILAS}"; }
+ROW_LOG="${SCRATCH}/bench-rows"
+: > "${ROW_LOG}"
+anota_fila() { printf '%s\n' "$1" >> "${ROW_LOG}"; }
 # Categorias contadas y no recitadas. El epilogo de la version anterior decia
 # OCHO filas que siguen cuando eran ONCE, porque tres filas nuevas entraron y el
 # cardinal escrito a mano se quedo, y esa cifra mala llego a archivarse en una
@@ -350,7 +350,7 @@ sin_supervivientes() {
 		anota_fila OK
 		printf '%-26s %s\n' "${etiqueta}-sin-supervivientes" "0 nodos vivos ${glosa}   OK"
 	else
-		anota_fila FALLA
+		anota_fila FAILING
 		printf '%-26s %s\n' "${etiqueta}-sin-supervivientes" "NO CUADRA: ${n} nodos siguen vivos tras terminar el guion"
 		MAL=$((MAL + 1))
 	fi
@@ -377,7 +377,7 @@ techo_de_ensayos() {
 	TECHO=$((TECHO + 1))
 	techo="$(sed -n 's/^CONSERVA_ENSAYOS=\([0-9]*\)$/\1/p' "${P2}" | head -1)"
 	if [ -z "${techo}" ]; then
-		anota_fila FALLA
+		anota_fila FAILING
 		printf '%-26s %s\n' "techo-de-ensayos" "NO CUADRA: no se puede leer CONSERVA_ENSAYOS de ${P2}, asi que esta fila no mide nada"
 		MAL=$((MAL + 1))
 		return
@@ -387,7 +387,7 @@ techo_de_ensayos() {
 		anota_fila OK
 		printf '%-26s %s\n' "techo-de-ensayos" "quedan ${quedan} artefactos de ensayo bajo un techo de ${techo}, tras 18 corridas del ensayo   OK"
 	else
-		anota_fila FALLA
+		anota_fila FAILING
 		printf '%-26s %s\n' "techo-de-ensayos" "NO CUADRA: quedan ${quedan} artefactos de ensayo y el techo de gate/p2.sh es ${techo}"
 		MAL=$((MAL + 1))
 	fi
@@ -431,7 +431,7 @@ fila() {
 		*) [ "${rc}" = "${rc_espera}" ] || bien=no ;;
 	esac
 	[ "${espera}" = fail ] && [ "${cierre}" = verde ] && bien=no
-	if [ "${bien}" = no ]; then anota_fila FALLA; MAL=$((MAL + 1)); else anota_fila OK; fi
+	if [ "${bien}" = no ]; then anota_fila FAILING; MAL=$((MAL + 1)); else anota_fila OK; fi
 	[ "${v}" = fail ] && ROJAS=$((ROJAS + 1))
 	if [ "${llego_final}" = abort ]; then ABORTAN=$((ABORTAN + 1)); else SIGUEN=$((SIGUEN + 1)); fi
 
@@ -499,7 +499,7 @@ if [ "${rc}" -eq 2 ] && printf '%s' "${salida}" | grep -q 'NAYLAMP_GATE_HOSTS is
 	anota_fila OK; echo "F0-fierro-sin-identidad      sin las variables de la flota     rc=2, ninguna fase corrio, ningun veredicto   OK"
 	NO_EMPIEZAN=$((NO_EMPIEZAN + 1))
 else
-	anota_fila FALLA; echo "F0-fierro-sin-identidad      NO CUADRA: rc=${rc}"; MAL=$((MAL + 1))
+	anota_fila FAILING; echo "F0-fierro-sin-identidad      NO CUADRA: rc=${rc}"; MAL=$((MAL + 1))
 fi
 
 # Y LA OTRA MITAD, que la fila vieja no tenia: CON la identidad puesta, el camino
@@ -521,7 +521,7 @@ if [ "${rc}" -eq 0 ] && printf '%s' "${salida}" | grep -q 'ES_FIERRO=1' && print
 	anota_fila OK; echo "F0b-fierro-elegido           con la identidad de la flota      toma el camino de fierro y nombra p2-<run id>  OK"
 	NO_EMPIEZAN=$((NO_EMPIEZAN + 1))
 else
-	anota_fila FALLA; echo "F0b-fierro-elegido           NO CUADRA: rc=${rc} [$(printf '%s' "${salida}" | tr '\n' '|' | cut -c1-90)]"; MAL=$((MAL + 1))
+	anota_fila FAILING; echo "F0b-fierro-elegido           NO CUADRA: rc=${rc} [$(printf '%s' "${salida}" | tr '\n' '|' | cut -c1-90)]"; MAL=$((MAL + 1))
 fi
 
 set +e
@@ -532,7 +532,7 @@ if [ "${rc}" -eq 2 ] && printf '%s' "${salida}" | grep -q 'usage:' && ! printf '
 	anota_fila OK; echo "F1-sin-subcomando            invocacion desnuda               rc=2, uso impreso, ningun veredicto           OK"
 	NO_EMPIEZAN=$((NO_EMPIEZAN + 1))
 else
-	anota_fila FALLA; echo "F1-sin-subcomando            NO CUADRA: rc=${rc}"; MAL=$((MAL + 1))
+	anota_fila FAILING; echo "F1-sin-subcomando            NO CUADRA: rc=${rc}"; MAL=$((MAL + 1))
 fi
 
 # Un subcomando que el uso NO anuncia tiene que salir por el mismo sitio y no
@@ -547,7 +547,7 @@ if [ "${rc}" -eq 2 ] && printf '%s' "${salida}" | grep -q 'usage:' && ! printf '
 	anota_fila OK; echo "F1b-subcomando-no-cableado   'hygiene', que el uso no anuncia   rc=2 y ningun veredicto                      OK"
 	NO_EMPIEZAN=$((NO_EMPIEZAN + 1))
 else
-	anota_fila FALLA; echo "F1b-subcomando-no-cableado   NO CUADRA: rc=${rc}"; MAL=$((MAL + 1))
+	anota_fila FAILING; echo "F1b-subcomando-no-cableado   NO CUADRA: rc=${rc}"; MAL=$((MAL + 1))
 fi
 
 copia="$(prepara runid-roto \
@@ -561,7 +561,7 @@ if [ "${rc}" -eq 2 ] && printf '%s' "${salida}" | grep -q 'not the shape this sc
 	anota_fila OK; echo "F2-runid-fuera-de-forma      la guarda del borrado            rc=2, antes de crear nada, ningun veredicto   OK"
 	NO_EMPIEZAN=$((NO_EMPIEZAN + 1))
 else
-	anota_fila FALLA; echo "F2-runid-fuera-de-forma      NO CUADRA: rc=${rc}"; MAL=$((MAL + 1))
+	anota_fila FAILING; echo "F2-runid-fuera-de-forma      NO CUADRA: rc=${rc}"; MAL=$((MAL + 1))
 fi
 
 echo
@@ -789,7 +789,7 @@ echo
 # este registro persigue por nombre.
 if [ "$((NO_EMPIEZAN + SIGUEN + ABORTAN + SUPERVIV + TECHO))" -ne "${FILAS}" ]; then
 	echo "guard: el reparto por categorias no suma las filas corridas" >&2
-	anota_fila FALLA
+	anota_fila FAILING
 	MAL=$((MAL + 1))
 fi
 
@@ -797,9 +797,9 @@ fi
 # existe el registro: si una fila se olvida de anotarse, o se anota dos veces, las
 # dos cuentas dejan de casar y eso se ve. FILAS y MAL siguen contandose a mano
 # para poder contrastarlos.
-n_filas=$(grep -c . "${REGISTRO_FILAS}" || true)
-n_falla=$(grep -c '^FALLA$' "${REGISTRO_FILAS}" || true)
-echo "RESULTADO: ${n_filas} filas, ${n_falla} en FALLA"
+n_filas=$(grep -c . "${ROW_LOG}" || true)
+n_falla=$(grep -c '^FAILING$' "${ROW_LOG}" || true)
+echo "RESULTADO: ${n_filas} rows, ${n_falla} failing"
 # COMPLETO SE PONE AQUI, detras del resumen y delante de las anti-vacuidades, por
 # la razon escrita en los otros tres bancos: salir por exit 1 con COMPLETO en cero
 # hace que la trampa imprima "ABORTADO antes del resumen" debajo del resumen.

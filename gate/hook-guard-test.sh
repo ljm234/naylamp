@@ -125,10 +125,10 @@ fallos=0
 # `RESULTADO: $(( 41 ))`. Un banco cuyo total no sale de sus filas puede mentir
 # sobre si mismo en cuanto alguien anada una. Cada fila pasa por aqui, verde o
 # roja, y el resumen del final se deriva de este fichero.
-REGISTRO="${CAJON}/filas"
-: > "${REGISTRO}"
-ok()  { echo "$1"; printf '%s\n' "OK" >> "${REGISTRO}"; }
-mal() { echo "$1" >&2; printf '%s\n' "FALLA" >> "${REGISTRO}"; fallos=$((fallos + 1)); }
+ROW_LOG="${CAJON}/bench-rows"
+: > "${ROW_LOG}"
+ok()  { echo "$1"; printf '%s\n' "OK" >> "${ROW_LOG}"; }
+mal() { echo "$1" >&2; printf '%s\n' "FAILING" >> "${ROW_LOG}"; fallos=$((fallos + 1)); }
 
 # ---- la lista, leida del objeto ----
 # El hook nombra su alternancia dos veces, una para decidir y otra para imprimir.
@@ -960,10 +960,10 @@ fi
 # EL RESUMEN, CONTADO SOBRE EL REGISTRO Y NO TECLEADO. Va en la forma que
 # gate/msg-cifras.sh sabe leer, para que quien firme pueda apuntarle a este
 # crudo y el total que compare salga del banco y no de una mano.
-n_filas=$(grep -c . "${REGISTRO}" || true)
-n_falla=$(grep -c '^FALLA$' "${REGISTRO}" || true)
+n_filas=$(grep -c . "${ROW_LOG}" || true)
+n_falla=$(grep -c '^FAILING$' "${ROW_LOG}" || true)
 COMPLETO=1
-echo "RESULTADO: ${n_filas} filas, ${n_falla} en FALLA"
+echo "RESULTADO: ${n_filas} rows, ${n_falla} failing"
 if [ "${n_filas}" -eq 0 ]; then
 	echo "test: VACIO. El registro de filas salio a cero, asi que este banco no ha probado nada" >&2
 	exit 1

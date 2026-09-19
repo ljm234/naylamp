@@ -79,7 +79,7 @@ CAJON=$(mktemp -d "${TMPDIR:-/tmp}/redrow-guard-test.XXXXXX")
 # daba por ABORTADA una corrida entera, asi que un
 # predicado anclado a su redaccion daba por ABORTADA una corrida entera. Una
 # marca de terminacion no puede ser prosa: tiene que ser una FORMA estable,
-# `RESULTADO: <n> filas, <n> en FALLA`. **Y NO ES IGUAL EN LOS SIETE, que es lo
+# `RESULTADO: <n> rows, <n> failing`. **Y NO ES IGUAL EN LOS SIETE, que es lo
 # que decia esta linea y no describia el arbol:** son SEIS con esa forma y uno,
 # `gate/p2-iron-test.sh`, con un superconjunto de tres numeros,
 # `RESULTADO: <n> filas, <n> de ellas rojas, <n> en FALLA`. El predicado del
@@ -87,9 +87,9 @@ CAJON=$(mktemp -d "${TMPDIR:-/tmp}/redrow-guard-test.XXXXXX")
 # eran siete iguales se escribio cuatro veces en el arbol y era falsa en todas.
 # Desde el 8 de septiembre son OCHO bancos, con gate/sello-test.sh. Y con la
 # cuenta derivada del registro y no tecleada.
-REGISTRO_FILAS="${CAJON}/filas-del-banco"
-: > "${REGISTRO_FILAS}"
-anota_fila() { printf '%s\n' "$1" >> "${REGISTRO_FILAS}"; }
+ROW_LOG="${CAJON}/bench-rows"
+: > "${ROW_LOG}"
+anota_fila() { printf '%s\n' "$1" >> "${ROW_LOG}"; }
 COMPLETO=0
 limpia_y_cierra() {
 	if [ "${COMPLETO}" -ne 1 ]; then
@@ -135,21 +135,21 @@ done
 # verde saldria bien sin haber mirado nada. Es el instrumento muerto que esta
 # casa ya pago una vez.
 if [ "${enteros}" -lt 17 ]; then
-	anota_fila FALLA
+	anota_fila FAILING
 	di "verde: VACIO. Solo encontre ${enteros} crudos enteros y hacen falta al menos 17" >&2
 	di "verde: los artefactos sellados de las dos corridas de fierro no estan donde se esperan" >&2
 	fallos=$((fallos + 1))
 elif [ "${malos}" -eq 0 ]; then
 	anota_fila OK; di "verde: OK, los ${enteros} crudos enteros de las dos corridas dicen TERMINO"
 else
-	anota_fila FALLA
+	anota_fila FAILING
 	di "verde: FALLA, ${malos} de los ${enteros} crudos enteros no dijeron TERMINO" >&2
 	fallos=$((fallos + 1))
 fi
 
 # ---- ROJO 1: el corte REAL, que es el que destapo el defecto ----
 if [ ! -r "${CORTADO}" ]; then
-	anota_fila FALLA
+	anota_fila FAILING
 	di "rojo:  VACIO. Falta el crudo cortado real ${CORTADO}" >&2
 	fallos=$((fallos + 1))
 elif ! grep -q 'upserted 30000 / 60009' "${CORTADO}" \
@@ -158,7 +158,7 @@ elif ! grep -q 'upserted 30000 / 60009' "${CORTADO}" \
 	# cualquier cosa: un fichero vacio, uno de basura, uno que perdio su contenido.
 	# La fila pasaria sin pinchar en nada del corte real. Se ancla por TEXTO y no
 	# por numero de linea, como el tripwire de gate/common_red_pins.txt.
-	anota_fila FALLA
+	anota_fila FAILING
 	di "rojo:  VACIO. ${CORTADO} ya no trae las dos lineas del corte real" >&2
 	di "       hacen falta 'upserted 30000 / 60009' y 'client_loop: send disconnect: Broken pipe'" >&2
 	fallos=$((fallos + 1))
@@ -166,7 +166,7 @@ elif [ "$(verdicto "${CORTADO}")" = "NO CORRIDA" ]; then
 	anota_fila OK; di "rojo:  OK, MUERDE sobre el corte real, con sus dos lineas ancladas dentro"
 	di "       su ultima linea es: $(tail -n1 "${CORTADO}")"
 else
-	anota_fila FALLA
+	anota_fila FAILING
 	di "rojo:  FALLA, el corte real dice TERMINO y el defecto sigue abierto" >&2
 	fallos=$((fallos + 1))
 fi
@@ -174,7 +174,7 @@ fi
 # ---- ROJO 2: un entero truncado a mano, y su ANTI-VACUIDAD ----
 PATRON="${A29}/red-fuga.txt"
 if [ ! -r "${PATRON}" ]; then
-	anota_fila FALLA
+	anota_fila FAILING
 	di "rojo:  VACIO. Falta el crudo entero que sirve de patron" >&2
 	fallos=$((fallos + 1))
 else
@@ -183,13 +183,13 @@ else
 	v_ent=$(verdicto "${CAJON}/entero.txt")
 	v_tru=$(verdicto "${CAJON}/truncado.txt")
 	if [ "${v_ent}" = "${v_tru}" ]; then
-		anota_fila FALLA
+		anota_fila FAILING
 		di "test:  VACIO. El entero y su truncado dan lo mismo (${v_ent}), asi que esta prueba no separa nada" >&2
 		fallos=$((fallos + 1))
 	elif [ "${v_ent}" = "TERMINO" ] && [ "${v_tru}" = "NO CORRIDA" ]; then
 		anota_fila OK; di "rojo:  OK, MUERDE sobre un entero truncado a mano, y el entero sigue diciendo TERMINO"
 	else
-		anota_fila FALLA
+		anota_fila FAILING
 		di "rojo:  FALLA, entero=${v_ent} truncado=${v_tru}, que no es lo que se pide" >&2
 		fallos=$((fallos + 1))
 	fi
@@ -208,12 +208,12 @@ l_llam=$(grep -n 'if ! finished_cleanly "${out}"; then' "${CAJON}/red_row.sh" | 
 l_surv=$(grep -n 'SURVIVED\.' "${CAJON}/red_row.sh" | head -n1 | cut -d: -f1)
 l_pass=$(grep -n 'pass "${id}: red as written' "${CAJON}/red_row.sh" | head -n1 | cut -d: -f1)
 if [ ! -s "${CAJON}/red_row.sh" ] || [ -z "${l_surv}" ] || [ -z "${l_pass}" ]; then
-	anota_fila FALLA
+	anota_fila FAILING
 	di "sitio: VACIO. No pude leer red_row ni sus dos conclusiones en gate/p1.sh" >&2
 	di "sitio: alguien la renombro o cambio el texto de una conclusion, y esta mitad dejo de probar" >&2
 	fallos=$((fallos + 1))
 elif [ "${n_llam}" != 1 ] || [ -z "${l_llam}" ]; then
-	anota_fila FALLA
+	anota_fila FAILING
 	# EL MENSAJE NOMBRA LAS DOS MITADES DE LA CONDICION, y la primera version solo
 	# nombraba una. La rama salta si la llamada no aparece exactamente una vez O si
 	# la linea del `if` no se localiza, y con solo la cuenta impresa salia el
@@ -228,15 +228,15 @@ elif [ "${n_llam}" != 1 ] || [ -z "${l_llam}" ]; then
 elif [ "${l_llam}" -lt "${l_surv}" ] && [ "${l_llam}" -lt "${l_pass}" ]; then
 	anota_fila OK; di "sitio: OK, la llamada vive dentro de red_row y va antes de las DOS conclusiones"
 else
-	anota_fila FALLA
+	anota_fila FAILING
 	di "sitio: FALLA. La llamada va DESPUES de una conclusion (llamada=${l_llam} SURVIVED=${l_surv} pass=${l_pass})" >&2
 	di "sitio: que es el defecto del 29 de agosto otra vez" >&2
 	fallos=$((fallos + 1))
 fi
 
-n_filas=$(grep -c . "${REGISTRO_FILAS}" || true)
-n_falla=$(grep -c '^FALLA$' "${REGISTRO_FILAS}" || true)
-echo "RESULTADO: ${n_filas} filas, ${n_falla} en FALLA"
+n_filas=$(grep -c . "${ROW_LOG}" || true)
+n_falla=$(grep -c '^FAILING$' "${ROW_LOG}" || true)
+echo "RESULTADO: ${n_filas} rows, ${n_falla} failing"
 # COMPLETO SE PONE AQUI Y NO DESPUES DE LAS DOS ANTI-VACUIDADES, y es una
 # correccion del 8 de septiembre de 2026. Estaban las dos por delante, saliendo
 # por exit 1 con COMPLETO todavia en cero, asi que la trampa imprimia "ABORTADO
