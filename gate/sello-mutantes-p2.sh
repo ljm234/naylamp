@@ -126,7 +126,7 @@ control() {
 	cp "${REPO}/gate/p2.sh" "${TALLER}/gate/p2.sh"
 	local n salida
 	salida="$(corre)"
-	n="$(printf '%s' "${salida}" | grep -cE '^FILA .* FALLA ' || true)"
+	n="$(printf '%s' "${salida}" | grep -cE '^ROW .* FAILING ' || true)"
 	CONTROL="${n}"
 	if ! printf '%s' "${salida}" | grep -q '^RESULTADO: '; then
 		echo "CONTROL   sin mutar: el banco ABORTA. Sin control verde este barrido no dice nada" >&2
@@ -174,7 +174,7 @@ mitad() {
 		return
 	fi
 	salida="$(corre)"
-	caidas="$(printf '%s' "${salida}" | grep -E '^FILA .* FALLA ' | awk '{print $2}' | tr '\n' ' ')"
+	caidas="$(printf '%s' "${salida}" | grep -E '^ROW .* FAILING ' | awk '{print $2}' | tr '\n' ' ')"
 	if ! printf '%s' "${salida}" | grep -q '^RESULTADO: '; then
 		printf '%-5s INESPERADO  el banco ABORTA con media guarda quitada   %s\n' "${etiqueta}" "${glosa}"
 		MITADES_MAL=$((MITADES_MAL + 1))
@@ -206,7 +206,7 @@ mutante() {
 	fi
 	local salida
 	salida="$(corre)"
-	caidas="$(printf '%s' "${salida}" | grep -E '^FILA .* FALLA ' | awk '{print $2}' | tr '\n' ' ')"
+	caidas="$(printf '%s' "${salida}" | grep -E '^ROW .* FAILING ' | awk '{print $2}' | tr '\n' ' ')"
 	if ! printf '%s' "${salida}" | grep -q '^RESULTADO: '; then
 		printf '%-5s MUERDE  el banco ABORTA y no llega a su resumen   %s\n' "${etiqueta}" "$4"
 	elif [ -z "${caidas}" ]; then

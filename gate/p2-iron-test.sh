@@ -66,22 +66,22 @@ COMPLETO=0
 OMITIDAS=0
 no_aplica() {
 	OMITIDAS=$((OMITIDAS + 1))
-	printf 'FILA %-4s NO APLICA %s\n' "$1" "$2"
+	printf 'ROW %-4s NO APLICA %s\n' "$1" "$2"
 }
 fila() {
 	local id="$1" quiero="$2" tengo="$3" porque="$4"
 	FILAS=$((FILAS + 1))
 	if [ "${quiero}" = "${tengo}" ]; then
-		printf 'FILA %-4s OK    %s\n' "${id}" "${porque}"
+		printf 'ROW %-4s OK    %s\n' "${id}" "${porque}"
 	else
-		printf 'FILA %-4s FALLA %s (queria [%s], salio [%s])\n' "${id}" "${porque}" "${quiero}" "${tengo}"
+		printf 'ROW %-4s FAILING %s (queria [%s], salio [%s])\n' "${id}" "${porque}" "${quiero}" "${tengo}"
 		FALLAS=$((FALLAS + 1))
 	fi
 }
 roja() {
 	local id="$1" quiero="$2" tengo="$3" porque="$4"
 	ROJAS=$((ROJAS + 1))
-	fila "${id}" "${quiero}" "${tengo}" "ROJA ${porque}"
+	fila "${id}" "${quiero}" "${tengo}" "RED ${porque}"
 }
 
 # EL NOMBRE DE ESTA FUNCION NO ES CASUAL Y LA TRAMPA SE REGISTRA DESPUES DE
@@ -1922,7 +1922,7 @@ echo "==========================================================================
 if [ "${OMITIDAS}" -ne 0 ]; then
 	echo "${OMITIDAS} fila(s) no aplican en este entorno y no se cuentan como filas; el motivo va impreso arriba"
 fi
-echo "RESULTADO: ${FILAS} filas, ${ROJAS} de ellas rojas, ${FALLAS} en FALLA"
+echo "RESULTADO: ${FILAS} rows, ${ROJAS} of them red, ${FALLAS} failing"
 # COMPLETO SE PONE AQUI, detras del resumen y delante de la anti-vacuidad, por la
 # razon escrita en los otros bancos: salir por exit 1 con COMPLETO en cero hace que
 # la trampa imprima "ABORTADO antes del resumen" justo debajo del resumen.
