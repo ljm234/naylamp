@@ -204,7 +204,7 @@ else
 	OUT_LOCAL="${OUT_DIR}/p2-local-${RUN_ID}"
 fi
 MANIFEST="${OUT_LOCAL}/manifest.txt"
-BIN="${OUT_DIR}/p2-naylampd"   # en OUT_DIR y no por corrida: eran 7.4 MiB de copia en cada ensayo
+BIN="${OUT_DIR}/p2-naylampd"   # under OUT_DIR and not per run: it was 7.4 MiB of copy in every rehearsal
 CERT_DIR="${OUT_DIR}/certs"
 
 VERDICTS=" "
@@ -213,12 +213,12 @@ COMPLETED=0
 RUN_STARTED=0
 CHECK_FAILED=0
 EMITIDO=0
-# LO QUE EL SELLO NECESITA SABER DE LA CORRIDA, y va aqui arriba con el resto del
-# estado en vez de dentro de la funcion que lo escribe, por la misma razon que
-# VERDICTS: el sello se escribe desde phase_hygiene_fierro y se termina desde
-# al_salir, o sea desde dos sitios que no se llaman entre si, y un dato que solo
-# existiera en uno de los dos no llegaria al otro. SELLO_ESCRITO_AQUI es la
-# bandera de la clausula 30 y su unicidad esta razonada en el bloque del sello.
+# WHAT THE SEAL NEEDS TO KNOW ABOUT THE RUN, and it lives up here with the rest of
+# the state instead of inside the function that writes it, for the same reason as
+# VERDICTS: the seal is written from phase_hygiene_fierro and finished from
+# al_salir, that is, from two places that do not call each other, and a datum that
+# existed in only one of the two would not reach the other. SELLO_ESCRITO_AQUI is
+# clause 30's flag and its uniqueness is reasoned in the seal's block.
 SELLO_ESCRITO_AQUI=0
 SUBCOMANDO=""
 ARRANCO_A=""
@@ -269,12 +269,12 @@ emit_final_verdict() {
 	done
 	EMITIDO=1
 	if [ "${COMPLETED}" -eq 1 ] && [ -z "${bad}" ]; then
-		# LA LINEA DE CIERRE TAMBIEN TIENE RAMA DE FIERRO, y es la otra mitad de lo
-		# que el banner decia mal: una corrida sobre tres maquinas de verdad cerraba
-		# diciendo "all rehearsal checks passed". Es la ULTIMA linea del log, que es
-		# la que se cita, y estaba mintiendo sobre la unica corrida que no se puede
-		# repetir. El texto del ensayo se queda EXACTO, porque hay bancos que lo
-		# casan por su literal, y el de fierro dice lo que es.
+		# THE CLOSING LINE ALSO HAS AN IRON BRANCH, and it is the other half of what
+		# the banner got wrong: a run on three real machines closed saying "all
+		# rehearsal checks passed". It is the LAST line of the log, the one that gets
+		# cited, and it was lying about the only run that cannot be repeated. The
+		# rehearsal text stays EXACT, because benches match it by its literal, and the
+		# iron one says what it is.
 		if [ "${ES_FIERRO}" -eq 1 ]; then
 			echo "gate: all IRON checks passed (${EXPECTED})"
 		else
@@ -756,24 +756,24 @@ corte_completo() { [ "$1" -eq "$2" ]; }
 # faithful_suficiente <faithful> <total>: whether enough cold copies verified.
 # A MAJORITY, because Raft acks on a majority and a replica that had not yet
 # persisted the last acked write is legitimately short.
-# LA MAYORIA NO SE RE-DERIVA PARA LA VENTANA ESTRECHA, y la decision es del 9 de
-# septiembre de 2026 y de quien encarga. La pregunta la trajo un lector externo:
-# con escrituras EN VUELO, un ack puede llegar a un milisegundo del corte, y los
-# dos seguidores podrian quedarse legitimamente cortos, con lo que `fieles` daria 1
-# de 3 y esta funcion pondria roja la fidelidad.
+# THE MAJORITY IS NOT RE-DERIVED FOR THE NARROW WINDOW, and that decision is from
+# 2026-09-09 and from whoever commissions this work. An external reader brought
+# the question: with writes IN FLIGHT, an ack can arrive a millisecond from the
+# cut, and the two followers could legitimately come out short, so `fieles` would
+# give 1 of 3 and this function would turn faithfulness red.
 #
-# LA RESPUESTA, con sus palabras: **Raft ackea cuando la MAYORIA ha PERSISTIDO**.
-# Un ack a un milisegundo del corte YA tenia mayoria durable, o el motor esta roto.
-# Si despues del corte esa mayoria no esta, ese es exactamente el fallo que este
-# gate existe para medir, y entra en la politica de rojo como rojo de PROPIEDAD
-# legitimo. **Aflojar la mayoria por lo estrecha que sea la ventana retira el caso
-# que hace valer al gate**: el unico momento en que la promesa del ack se puede
-# romper es justo ese, y un gate que se protege de su propio caso interesante no
-# mide nada.
+# THE ANSWER, in their words: **Raft acks when the MAJORITY has PERSISTED**.
+# An ack a millisecond from the cut ALREADY had a durable majority, or the engine
+# is broken. If after the cut that majority is not there, that is exactly the
+# failure this gate exists to measure, and it enters the red policy as a
+# legitimate PROPERTY red. **Loosening the majority for however narrow the
+# window retires the case that makes the gate worth anything**: the only moment
+# the ack promise can break is precisely that one, and a gate that protects
+# itself from its own interesting case measures nothing.
 #
-# LO QUE ESO OBLIGA A ESCRIBIR, y va aqui porque es donde se lee: si esta funcion
-# se pone roja sobre una escritura en vuelo, la conclusion NO es "la ventana era
-# estrecha". Es que hubo un ack sin mayoria durable detras.
+# WHAT THAT OBLIGES SAID, and it goes here because this is where it is read: if
+# this function turns red over a write in flight, the conclusion is NOT "the
+# window was narrow". It is that there was an ack with no durable majority behind it.
 faithful_suficiente() { [ "$1" -ge "$(mayoria_de "$2")" ]; }
 
 # identidad_confirmada <sha vivo> <sha sano>: whether the live binary is NOT the
@@ -831,22 +831,22 @@ VENTANA_MAX=5
 
 testigo_siembra() {
 	local n="$1"
-	# EL `sync` GLOBAL NO VUELVE, y su marcha es la mitad B5 de la decision del 9 de
-	# septiembre de 2026. `sync` vacia TODA la pagina sucia del host, y ahi dentro va
-	# el log de raft: sembrar el testigo asi dejaba en el plato todo lo ackeado antes
-	# de cortar, con lo que el brazo positivo no podia ponerse rojo hubiera barrera o
-	# no. **Un sync global dentro de un gate de durabilidad es el instrumento
-	# anulando lo que mide**, y esta linea es su ejemplar.
+	# THE GLOBAL `sync` DOES NOT COME BACK, and its removal is half B5 of the
+	# 2026-09-09 decision. `sync` flushes the host's WHOLE dirty page cache, and the
+	# raft log rides in there: seeding the canary that way left on the platter
+	# everything acked before the cut, so the positive arm could not turn red whether
+	# or not there was a barrier. **A global sync inside a durability gate is the
+	# instrument cancelling what it measures**, and this line is its exemplar.
 	#
-	# LO QUE ENTRA ES LO QUE EL DISENO PEDIA: se sincroniza el FICHERO y su
-	# DIRECTORIO, y nada mas. El fsync del directorio no es adorno: es la mitad que
-	# hace durable la ENTRADA del fichero, y es exactamente el hueco que DEFER-028
-	# nombra en persist. Se hace con python3 porque ninguna orden de shell puede
-	# pedir un fsync de directorio, y `dd conv=fsync` solo alcanza al fichero.
+	# WHAT ENTERS IS WHAT THE DESIGN ASKED FOR: the FILE and its DIRECTORY are synced,
+	# and nothing else. The directory fsync is not decoration: it is the half that
+	# makes the file's ENTRY durable, and it is exactly the gap DEFER-028 names in
+	# persist. It is done with python3 because no shell command can request a
+	# directory fsync, and `dd conv=fsync` only reaches the file.
 	#
-	# Y SE NIEGA EN VOZ ALTA si python3 no esta, en vez de caerse al `sync` de antes:
-	# volver al instrumento que anula la medida por no encontrar el bueno es la clase
-	# 15 con otra ropa. La mitad `hot` del preflight comprueba que esta.
+	# AND IT REFUSES OUT LOUD if python3 is absent, instead of falling back to the
+	# `sync` from before: returning to the instrument that cancels the measure for
+	# lack of the right one is class 15 in other clothes; preflight `hot` checks it.
 	ask_on "${n}" "python3 -c \"
 import os
 d = os.path.dirname('${TESTIGO_REMOTO}') or '.'
@@ -886,16 +886,16 @@ testigo_tamano() {
 # exit status; it is the boot id read afterwards.
 corta_en() {
 	local n="$1"
-	# EL -n ES OBLIGATORIO Y NO ES ESTILO, y lo obliga una corrida real y no una
-	# precaucion. Esta orden se escribio para el host remoto, donde sudo es
-	# passwordless, pero el banco de fierro la ejecuta LOCALMENTE a traves de su stub
-	# de ssh, que reescribe /proc/ a una casa de mentira y corre la orden con bash -c.
-	# En una maquina de trabajo con tty, un sudo pelado PIDE CONTRASENA y la corrida
-	# se para ahi: medido el 14 de septiembre de 2026, y quien lo nombra es el
-	# registro del sistema, con TTY=ttys006 y tres intentos fallidos. Con -n falla en
-	# el acto en vez de colgarse, y donde sudo SI es passwordless -Azure y el runner
-	# de CI- se comporta exactamente igual que sin la bandera, asi que el camino de
-	# fierro no cambia. Lo que cambia es que deja de haber un sitio que cuelga.
+	# THE -n IS MANDATORY AND IT IS NOT STYLE, and a real run forced it, not a
+	# precaution. This command was written for the remote host, where sudo is
+	# passwordless, but the iron bench runs it LOCALLY through its ssh stub, which
+	# rewrites /proc/ into a pretend house and runs the command with bash -c. On a
+	# workstation with a tty, a bare sudo ASKS FOR A PASSWORD and the run stops
+	# right there: measured on 2026-09-14, and what names it is the system log, with
+	# TTY=ttys006 and three failed attempts. With -n it fails on the spot instead of
+	# hanging, and where sudo IS passwordless (Azure and the CI runner) it behaves
+	# exactly as it did without the flag, so the iron path does not change. What
+	# changes is that there stops being a place that hangs.
 	run_on "${n}" 'sudo -n sh -c "echo b > /proc/sysrq-trigger"' >/dev/null 2>&1 || true
 }
 
@@ -955,11 +955,11 @@ espera_caida() {
 # and the red arm is where it earns its keep.
 sha_del_binario_vivo() {
 	local n="$1" pidfile="$2"
-	# -n por la misma razon que el corte. Este sitio NO se alcanza hoy: su unico
-	# llamador es phase_red_fierro, que el banco de fierro solo extrae como texto con
-	# awk y nunca ejecuta. Se arregla igual porque el dia que esa fase se recorra
-	# contra la flota de mentira serian tres sudo pelados mas, y el defecto se
-	# descubriria otra vez por un prompt en mitad de una corrida.
+	# -n for the same reason as the cut. This site is NOT reached today: its only
+	# caller is phase_red_fierro, which the iron bench only extracts as text with
+	# awk and never runs. It is fixed anyway because the day that phase is walked
+	# against the pretend fleet it would be three more bare sudos, and the defect
+	# would be discovered again by a prompt in the middle of a run.
 	read_on "${n}" "0" "sudo -n sha256sum /proc/\$(cat ${pidfile})/exe 2>/dev/null | cut -d' ' -f1"
 }
 
@@ -1027,7 +1027,7 @@ retira_running() {
 	return 0
 }
 
-# ---- el sello, DEFER-098 ------------------------------------------------------
+# ---- the seal, DEFER-098 ------------------------------------------------------
 #
 # WHY THIS EXISTS, and it is not gate/p1.sh's block copied over: it is the same
 # defect measured in THIS file. The iron path creates gate/out/p2-<run id> and
@@ -1051,20 +1051,20 @@ retira_running() {
 # Here the seal closes in al_salir from the first day: a complete run leaves the
 # two counts equal and a killed one leaves them short.
 #
-# UNA SOLA BANDERA, y la diferencia con gate/p1.sh va escrita en vez de heredada.
-# La clausula 30 pide una bandera que distinga HABER ESCRITO el sello de
-# HABERTELO ENCONTRADO. En p1.sh esa distincion es cara y hace falta, porque tiene
-# un subcomando, `p1.sh hygiene <run id>`, que ADOPTA el id de otra corrida y
-# entra en su directorio: alli, terminar un sello que no escribiste le machaca sus
-# diecinueve veredictos con los dos tuyos. Este guion no tiene esa puerta. Sus
-# cinco subcomandos son all, build, pre, provenance y red, NINGUNO toma un run id,
-# y RUN_ID se acuna con la fecha y el pid de ESTE proceso. Asi que la bandera de
-# la escritura es la unica que puede valer algo aqui, y el caso "el sello ya
-# estaba" SI es alcanzable, porque seal_artifact se llama dos veces por corrida,
-# en phase_hygiene_fierro y en al_salir: se separa EN VOZ ALTA y no con una
-# segunda bandera que hoy no podria diferir nunca de la primera. Una guarda contra
-# una puerta que no existe es codigo muerto con aspecto de defensa, que es lo que
-# p1.sh dice de si mismo al negarse a escribir una rama para p1-local.
+# A SINGLE FLAG, and the difference from gate/p1.sh is written down rather than
+# inherited. Clause 30 asks for a flag that distinguishes HAVING WRITTEN the seal
+# from HAVING FOUND IT. In p1.sh that distinction is expensive and it is needed,
+# because it has a subcommand, `p1.sh hygiene <run id>`, that ADOPTS another run's
+# id and enters its directory: there, finishing a seal you did not write stamps
+# its nineteen verdicts over with your two. This script has no such door. Its five
+# subcommands are all, build, pre, provenance and red, NONE takes a run id, and
+# RUN_ID is minted from the date and the pid of THIS process. So the written-here
+# flag is the only one that can be worth anything here, and the case "the seal was
+# already there" IS reachable, because seal_artifact is called twice per run, in
+# phase_hygiene_fierro and in al_salir: it is separated OUT LOUD and not with a
+# second flag that today could never differ from the first. A guard against a door
+# that does not exist is dead code dressed as a defence, which is what p1.sh says
+# of itself when it refuses to write a branch for p1-local.
 #
 # THE PREDICATE IS NOT NEW. This script already separates an iron artifact,
 # p2-<run id>, from a rehearsal's, p2-local-<run id>, and says in the block that
@@ -1134,11 +1134,11 @@ seal_artifact() {
 	# re-count rather than to trust this sentence.
 	[ -n "$(ls -A "${OUT_LOCAL}" 2>/dev/null | grep -vx RUNNING)" ] || return 0
 	if [ -e "${OUT_LOCAL}/SEALED" ]; then
-		# LA SEGUNDA LLAMADA DE LA MISMA CORRIDA ES EL CASO NORMAL y sale por aqui en
-		# silencio: phase_hygiene_fierro sella, y al_salir vuelve a llamar por las
-		# corridas que nunca llegan a la higiene. Lo que NO es normal es encontrarse
-		# un sello en el propio directorio sin haberlo escrito, porque RUN_ID se acuna
-		# por corrida y nadie mas puede haber estado ahi; se dice y no se toca nada.
+		# THE SECOND CALL FROM THE SAME RUN IS THE NORMAL CASE and it leaves through
+		# here in silence: phase_hygiene_fierro seals, and al_salir calls again for the
+		# runs that never reach hygiene. What is NOT normal is finding a seal in this
+		# script's own directory without having written it, because RUN_ID is minted per
+		# run and nobody else can have been there; it is said and nothing is touched.
 		[ "${SELLO_ESCRITO_AQUI}" -eq 1 ] && return 0
 		echo "gate: ${OUT_LOCAL}/SEALED exists and THIS run did not write it, so nothing here is touched and no seal is completed" >&2
 		return 0
@@ -1165,24 +1165,24 @@ seal_artifact() {
 		echo "reach its own end. Remove this file when the run stops being cited,"
 		echo "which is a decision for a person and not for make clean."
 	} > "${OUT_LOCAL}/SEALED" || true
-	# EL `|| true` ES POR PORTABILIDAD Y NO POR DESCUIDO. Medido en el bash 3.2 de
-	# esta maquina, un grupo `{ ...; } > fichero` cuya redireccion falla devuelve 1 y
-	# NO dispara `set -e`; en el bash 5 del runner esa semantica no esta medida, y de
-	# las dos posibles la mala es que aborte, porque esta llamada corre dentro de
-	# phase_hygiene_fierro, que no lleva `set +e`, y un aborto ahi se llevaria por
-	# delante la fase entera. Con el `|| true` la respuesta es la misma en los dos
-	# shells y la decide la comprobacion de abajo, que es donde tiene que decidirse.
+	# THE `|| true` IS FOR PORTABILITY AND NOT FOR CARELESSNESS. Measured on this
+	# machine's bash 3.2, a `{ ...; } > file` group whose redirect fails returns 1
+	# and does NOT trigger `set -e`; on the runner's bash 5 that semantics is not
+	# measured, and of the two possibilities the bad one is aborting, because this
+	# call runs inside phase_hygiene_fierro, which does not carry `set +e`, and an
+	# abort there would take the whole phase with it. With the `|| true` the answer
+	# is the same in both shells and the check below decides it, where it must be.
 	#
-	# Y SE COMPRUEBA QUE EL SELLO ESTA, en vez de darlo por hecho porque la
-	# redireccion no se quejo. Medido en el bash 3.2 de esta maquina: un grupo
-	# `{ ...; } > fichero` cuyo destino no se puede crear imprime su error, devuelve
-	# 1 y NO dispara `set -e`. Sin esta comprobacion, la bandera se ponia a 1 y la
-	# consola decia "sealed the artifact" sin que existiera fichero ninguno, que es
-	# la clase 15 entera: un instrumento que contesta en falso es peor que uno que se
-	# rompe. Y el caso a medias, con el fichero creado y la escritura cortada por
-	# disco lleno, es peor todavia, porque un SEALED vacio pasa cualquier `-e` y la
-	# corrida cerraria verde sobre un sello sin contenido: por eso la pregunta es
-	# `-s` y no `-e`.
+	# AND THE SEAL IS CHECKED FOR EXISTENCE, not taken for granted because the
+	# redirect did not complain. Measured on this machine's bash 3.2, a `{ ...; } > file`
+	# group whose destination cannot be created prints its error, returns 1
+	# and does NOT trigger `set -e`. Without this check the flag went to 1 and the
+	# console said "sealed the artifact" with no file in existence, class 15
+	# entire: an instrument that answers falsely is worse than one that breaks. And
+	# the half case, with the file created and the write cut short by a full disk,
+	# is worse still, because an empty SEALED passes any `-e` and the run would
+	# close green over a seal with no content: that is why the question is `-s`
+	# and not `-e`.
 	if [ ! -s "${OUT_LOCAL}/SEALED" ]; then
 		rm -f -- "${OUT_LOCAL}/SEALED"
 		echo "gate: the seal could NOT be written at ${OUT_LOCAL}/SEALED, so this run's artifact is unsealed and make clean will refuse to sweep gate/out" >&2
@@ -1192,23 +1192,23 @@ seal_artifact() {
 	note "sealed the artifact: ${OUT_LOCAL}/SEALED"
 }
 
-# EL SELLO SE TERMINA EN al_salir, y nace terminandose. gate/p1.sh llego a esta
-# funcion el 8 de septiembre de 2026 despues de tres artefactos archivados que no
-# la tenian; este guion la trae desde su primer sello porque DEFER-098 lo exigio
-# por nombre antes de que existiera ninguno.
+# THE SEAL IS FINISHED IN al_salir, and it is born finishing itself. gate/p1.sh
+# reached this function on 2026-09-08 after three archived artifacts that were
+# archived without it; this script has carried it since its first seal because
+# DEFER-098 demanded it by name before any seal existed.
 #
-# LO QUE NO ARREGLA, dicho aqui para que el bloque no se lea como un cierre: la
-# ventana SIGUE EXISTIENDO. Un -9 entre el sello que escribe phase_hygiene_fierro
-# y la entrada en la trampa deja el sello a medias igual, y ademas deja el
-# marcador RUNNING puesto, que es la otra mitad de la evidencia. Esto no cierra la
-# ventana: la hace legible desde el artefacto, que es lo que la clausula 30 pide.
+# WHAT IT DOES NOT FIX, said here so the block is not read as a closure: the
+# window STILL EXISTS. A -9 between the seal that phase_hygiene_fierro writes and
+# the entry into the trap leaves the seal half written all the same, and on top
+# of that leaves the RUNNING marker set, which is the other half of the evidence. This
+# does not close the window: it makes it readable from the artifact, as clause 30 asks.
 completa_el_sello() {
 	[ "${SELLO_ESCRITO_AQUI}" -eq 1 ] || return 0
 	[ -f "${OUT_LOCAL}/SEALED" ] || return 0
-	# UNA SOLA FORMA DE NOMBRE, y no dos. El ensayo no llega hasta aqui porque
-	# seal_artifact devuelve en su primera linea con ES_FIERRO distinto de 1, asi
-	# que la bandera se queda en cero y una rama para p2-local seria codigo muerto
-	# con aspecto de defensa. Lo que no sea el nombre de fierro lo dice en voz alta.
+	# A SINGLE NAME SHAPE, and not two. The rehearsal never reaches here because
+	# seal_artifact returns on its first line with ES_FIERRO other than 1, so the
+	# flag stays at zero and a branch for p2-local would be dead code dressed as a
+	# defence. What is not the iron name says so out loud.
 	case "${OUT_LOCAL}" in
 		"${OUT_DIR}/p2-${RUN_ID}") ;;
 		*)
@@ -1216,30 +1216,30 @@ completa_el_sello() {
 			return 0 ;;
 	esac
 	local esperada marca linea vistas
-	# UN .a-medias HUERFANO SE BARRE ANTES, y existe: si el proceso muere a mitad de
-	# la escritura de al lado, el fichero temporal sobrevive dentro de un artefacto
-	# que el sello protege de make clean. No hace dano, porque el sello quedo
-	# intacto, pero se queda para siempre. Medido en p1.sh con `ulimit -f`.
+	# AN ORPHAN .a-medias IS SWEPT FIRST, and it exists: if the process dies in the
+	# middle of writing the one beside it, the temporary file survives inside an
+	# artifact the seal protects from make clean. It does no harm, because the seal
+	# stayed intact, but it stays forever. Measured in p1.sh with `ulimit -f`.
 	rm -f -- "${OUT_DIR}/p2-${RUN_ID}/SEALED.a-medias"
 	esperada="$(grep -m1 '^expected:' "${OUT_DIR}/p2-${RUN_ID}/SEALED" 2>/dev/null)"
 	marca="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-	# SE RECONSTRUYE LEYENDO, no con un sed sobre el sitio. Un sed en el sitio no es
-	# atomico: si muere a medias deja el sello truncado, y un sello truncado sigue
-	# frenando a make clean mientras pierde lo que decia. Aqui se escribe al lado,
-	# se comprueba, y solo entonces se mueve encima de una sola vez.
+	# IT IS REBUILT BY READING, not with an in place sed. An in place sed is not
+	# atomic: if it dies halfway it leaves the seal truncated, and a truncated seal
+	# still stops make clean while losing what it said. Here it is written beside,
+	# checked, and only then moved over in one step.
 	#
-	# Y SE ESCRIBE CON UNA REDIRECCION Y NO CON UNA SUSTITUCION DE COMANDO, que es
-	# la clausula 31: un `case` dentro de `$( )` es un error de sintaxis en bash 3.2
-	# que `bash -n` NO caza, porque el cuerpo de una sustitucion no se parsea hasta
-	# que se ejecuta, y al correr no mata el guion: el error va a stderr, la
-	# sustitucion devuelve el texto suelto de detras del parentesis y la ejecucion
-	# sigue con rc 0. Se cometio en p1.sh el 8 de septiembre y lo unico que evito
-	# publicar un sello de basura fue la comprobacion de `expected:` de abajo.
-	#
-	# EL `|| [ -n "${linea}" ]` NO SOBRA. Sin el, `read` devuelve falso en una
-	# ultima linea que no termina en salto y el bucle la TIRA; y el `closed:` que se
-	# anade compensa exactamente el uno que se pierde, asi que el recuento de lineas
-	# da el visto bueno y el sello se publica con una linea de menos.
+	# AND IT IS WRITTEN WITH A REDIRECT AND NOT WITH A COMMAND SUBSTITUTION, which
+	# is clause 31: a `case` inside `$( )` is a syntax error in bash 3.2 that
+	# `bash -n` does NOT catch, because a substitution's body is not parsed until
+	# it runs, and at run time it does not kill the script: the error goes to
+	# stderr, the substitution returns the loose text after the parenthesis and
+	# execution carries on with rc 0. It was committed in p1.sh on 2026-09-08 and
+	# the only thing that kept it from publishing a garbage seal was the
+	# `expected:` check below.
+	# THE `|| [ -n "${linea}" ]` IS NOT SPARE. Without it, `read` returns false on a
+	# last line that does not end in a newline and the loop THROWS IT AWAY; and the
+	# `closed:` it adds compensates exactly the one lost, so the line count gives its
+	# approval and the seal is published with one line missing.
 	vistas=0
 	{
 		while IFS= read -r linea || [ -n "${linea}" ]; do
@@ -1253,20 +1253,20 @@ completa_el_sello() {
 			esac
 		done < "${OUT_DIR}/p2-${RUN_ID}/SEALED"
 	} > "${OUT_DIR}/p2-${RUN_ID}/SEALED.a-medias" || true
-	# EL `|| true` ES EL MISMO DE seal_artifact Y POR LA MISMA RAZON: que la respuesta
-	# a una redireccion que falla no dependa de la version del shell. Aqui hay ademas
-	# un `set +e` en la trampa que llama, pero apoyarse en eso es apoyarse en el
-	# llamador, y esta funcion tiene mas de uno.
+	# THE `|| true` IS THE SAME ONE AS IN seal_artifact AND FOR THE SAME REASON:
+	# so that the answer to a redirection that fails does not depend on the shell version.
+	# Here there is also a `set +e` in the trap that calls it, but leaning on that is
+	# leaning on the caller, and this function has more than one.
 	#
-	# EL ORDEN DE ESTAS PREGUNTAS IMPORTA. Primero si hay fichero de al lado, porque
-	# con el directorio sin permiso de escritura la redireccion falla, el bucle no
-	# corre y `vistas` se queda en cero: preguntar por `vistas` antes anunciaria que
-	# el sello NO TIENE linea de veredictos, que es falso y ademas describe mal la
-	# causa. Luego que trae, y solo al final si cuadra.
+	# THE ORDER OF THESE QUESTIONS MATTERS. First whether there is a file beside it,
+	# because with the directory lacking write permission the redirection fails, the loop
+	# does not run and `vistas` stays at zero: asking about `vistas` first would announce
+	# that the seal HAS NO verdicts line, which is false and also describes badly the
+	# cause. Then what it brings, and only at the end whether it matches.
 	#
-	# Y LA DE `expected:` ES LA QUE IMPORTA de las dos ultimas: es la linea por la
-	# que dos sellos se comparan para decir que uno sustituye a otro, asi que esta
-	# reescritura no puede tocarla. Tiene que salir identica byte a byte.
+	# AND THE `expected:` ONE IS THE ONE THAT MATTERS of the last two: it is the line by
+	# which two seals are compared to say that one replaces the other, so this
+	# rewrite cannot touch it. It has to come out identical byte for byte.
 	if [ ! -s "${OUT_DIR}/p2-${RUN_ID}/SEALED.a-medias" ]; then
 		rm -f -- "${OUT_DIR}/p2-${RUN_ID}/SEALED.a-medias"
 		echo "gate: the seal could not be completed; it keeps the verdicts the hygiene phase wrote" >&2
@@ -1276,12 +1276,12 @@ completa_el_sello() {
 		echo "gate: the seal has no verdicts line, so it was left exactly as it was and carries no closed line" >&2
 	elif [ "$(grep -m1 '^expected:' "${OUT_DIR}/p2-${RUN_ID}/SEALED.a-medias" 2>/dev/null)" = "${esperada}" ] \
 		&& [ "$(grep -c '' "${OUT_DIR}/p2-${RUN_ID}/SEALED.a-medias" 2>/dev/null)" -ge "$(grep -c '' "${OUT_DIR}/p2-${RUN_ID}/SEALED" 2>/dev/null)" ]; then
-		# Y EL `mv` SE COMPRUEBA, que es la unica de las cuatro salidas que no decia
-		# nada cuando fallaba. Un `mv` que falla deja el `.a-medias` DENTRO de un
-		# artefacto que el sello protege de make clean, y ahi se queda para siempre:
-		# el barrido de huerfanos de arriba no puede volver a alcanzarlo, porque
-		# RUN_ID es unico por corrida y ninguna otra entrara en este directorio.
-		# Heredado tal cual de gate/p1.sh y corregido aqui.
+		# AND THE `mv` IS CHECKED, which is the only one of the four exits that said
+		# nothing when it failed. An `mv` that fails leaves the `.a-medias` INSIDE an
+		# artifact that the seal protects from make clean, and there it stays forever:
+		# the orphan sweep above cannot reach it again, because
+		# RUN_ID is unique per run and no other will enter this directory.
+		# Inherited as is from gate/p1.sh and fixed here.
 		if ! mv -f -- "${OUT_DIR}/p2-${RUN_ID}/SEALED.a-medias" "${OUT_DIR}/p2-${RUN_ID}/SEALED"; then
 			rm -f -- "${OUT_DIR}/p2-${RUN_ID}/SEALED.a-medias"
 			echo "gate: the seal could not be completed; the rewrite was correct but could not be moved on top of it, and the leftover beside it was removed" >&2
@@ -1293,21 +1293,21 @@ completa_el_sello() {
 	fi
 }
 
-# EL BARRIDO, y mira SOLO los artefactos de esta phase. Podria mirar cualquier
-# p<n>-, que es lo que hace la guarda del Makefile, y no lo hace: esa guarda
-# decide si BORRAR, asi que un nombre que no reconoce tiene que pararla; esta
-# funcion produce un VEREDICTO de Phase 2, y hacer que P2.hygiene se ponga roja
-# por como haya quedado el archivo de Phase 1 seria colgar el veredicto de una
-# corrida de la limpieza de otra. Lo que la casa no pierde por eso esta medido:
-# el Makefile sigue negandose ante cualquier p<n>- sin sello, y gate/p1.sh barre
-# los suyos con la funcion gemela.
+# THE SWEEP, and it looks ONLY at the artifacts of this phase. It could look at any
+# p<n>-, which is what the Makefile guard does, and it does not: that guard
+# decides whether to DELETE, so a name it does not recognise has to stop it; this
+# function produces a VERDICT for Phase 2, and making P2.hygiene turn red
+# because of how the Phase 1 file ended up would hang the verdict of one
+# run on the cleanup of another. What the house does not lose because of that is measured:
+# the Makefile still refuses on any p<n>- without a seal, and gate/p1.sh sweeps
+# its own with the twin function.
 #
-# IMPRIME LA CUENTA DE LOS QUE VISITO, y no es decoracion: sin ella la frase "todos
-# los artefactos de fierro llevan su sello" se publica igual habiendo visitado
-# NINGUNO, que es una afirmacion exhaustiva sobre el conjunto vacio con la misma
-# forma que la de verdad. Vuelve por la salida y no por una global porque quien la
-# llama la lee dentro de una sustitucion, o sea en un subshell donde una
-# asignacion global no sobreviviria.
+# IT PRINTS THE COUNT OF THOSE IT VISITED, and it is not decoration: without it the
+# sentence "all the iron artifacts carry their seal" is published the same having
+# visited NONE, which is an exhaustive statement about the empty set with the same
+# shape as the true one. It returns through the output and not through a global
+# because the caller reads it inside a substitution, that is, in a subshell where a
+# global assignment would not survive.
 artefactos_de_fierro_sin_sello() {
 	local d b out="" vistos=0
 	if [ -d "${OUT_DIR}" ]; then
@@ -1315,9 +1315,9 @@ artefactos_de_fierro_sin_sello() {
 			[ -d "${d}" ] || continue
 			b="$(basename "${d}")"
 			es_artefacto_de_fierro "${b}" || continue
-			# LA MISMA PREGUNTA SOBRE EL VACIO QUE seal_artifact, y el marcador se
-			# descuenta aqui tambien. Con una de las dos fuera de paso, un directorio
-			# cuyo unico fichero es RUNNING queda ni sellable ni limpiable.
+			# THE SAME QUESTION ABOUT EMPTINESS AS seal_artifact, and the marker is
+			# discounted here too. With one of the two out of step, a directory
+			# whose only file is RUNNING is left neither sealable nor sweepable.
 			[ -n "$(ls -A "${d}" 2>/dev/null | grep -vx RUNNING)" ] || continue
 			vistos=$((vistos + 1))
 			[ -e "${d}/SEALED" ] && continue
@@ -1327,90 +1327,90 @@ artefactos_de_fierro_sin_sello() {
 	printf '%s%s' "${vistos}" "${out}"
 }
 
-# EL ORDEN ES TODO EL PUNTO Y POR ESO ES UNA FUNCION Y NO DOS LINEAS SUELTAS:
-# SELLAR PRIMERO, BARRER DESPUES, para que el barrido incluya el sello que esta
-# misma corrida acaba de escribir. Una corrida que no consigue sellarse se pone
-# roja AQUI y AHORA, en la misma invocacion, en vez de que la evidencia se
-# descubra ausente meses despues cuando alguien vaya a citarla. Es la razon por la
-# que gate/p1.sh sella desde phase_hygiene y no solo desde su trampa, y la
-# heredamos entera.
+# THE ORDER IS THE WHOLE POINT AND THAT IS WHY IT IS A FUNCTION AND NOT TWO LOOSE LINES:
+# SEAL FIRST, SWEEP AFTERWARDS, so that the sweep includes the seal that this
+# same run has just written. A run that does not manage to seal itself turns
+# red HERE and NOW, in the same invocation, instead of the evidence being
+# discovered missing months later when somebody goes to cite it. It is the reason
+# why gate/p1.sh seals from phase_hygiene and not only from its trap, and we
+# inherit it whole.
 #
-# LA LLAMAN LAS DOS HIGIENES, la de fierro y la del ensayo, y no hacen lo mismo
-# dentro: en el ensayo seal_artifact devuelve en su primera linea y lo unico que
-# corre es el barrido. Eso es deliberado. El barrido es lo que convierte un
-# artefacto de fierro sin sello en una linea roja, y un ensayo que corre en esta
-# maquina todos los dias es quien mas veces va a pasar por delante de uno.
-# ---- el techo de los artefactos de ENSAYO -------------------------------------
+# BOTH HYGIENES CALL IT, the iron one and the rehearsal one, and they do not do the same
+# inside: in the rehearsal seal_artifact returns on its first line and the only thing
+# that runs is the sweep. That is deliberate. The sweep is what turns an
+# iron artifact without a seal into a red line, and a rehearsal that runs on this
+# machine every day is the one that will pass in front of one the most times.
+# ---- the cap on REHEARSAL artifacts -------------------------------------------
 #
-# POR QUE EXISTE, y la medida va delante de la decision. El 8 de septiembre de 2026
-# habia bajo gate/out DOS JORNADAS de ensayos acumulados y una flota huerfana, del 7
-# de septiembre a las 02:19 al 8 a las 12:14 en hora local. Cuantos eran, con la
-# orden que lo cuenta, esta en ../corridas/naylamp-signing-readiness-20260916T1629Z.txt:
-# la forma que no caduca es que la acumulacion eran dos jornadas y no una sesion.
-# Ninguno lleva sello y ninguno puede llevarlo: seal_artifact
-# devuelve en su primera linea con ES_FIERRO distinto de 1. Nada los vigilaba y nada
-# los retiraba.
+# WHY IT EXISTS, and the measurement comes before the decision. On 8 September 2026
+# under gate/out there were TWO DAYS of accumulated rehearsals and an orphan fleet, from 7
+# September at 02:19 to the 8th at 12:14 local time. How many they were, with the
+# command that counts them, is in ../corridas/naylamp-signing-readiness-20260916T1629Z.txt:
+# the shape that does not go stale is that the accumulation was two days and not one session.
+# None carries a seal and none can carry one: seal_artifact
+# returns on its first line with ES_FIERRO other than 1. Nothing watched them and nothing
+# removed them.
 #
-# Y LO QUE NO ERA CIERTO, dicho porque la decision se tomo sobre lo contrario y la
-# medida la corrigio: NO estaban protegidos por el sello, ni antes ni despues del
-# arreglo de esta manana. La guarda de `make clean` excluye `p[0-9]-local-*` por
-# FORMA, asi que se los llevaria a todos de una vez. Lo que faltaba no era la
-# distincion entre ensayo y fierro, que ya vive en TRES sitios -aqui, en
-# es_artefacto_de_fierro y en el Makefile-, sino un techo del lado del ensayo.
+# AND WHAT WAS NOT TRUE, said because the decision was taken on the opposite and the
+# measurement corrected it: they were NOT protected by the seal, neither before nor after
+# the fix of this morning. The `make clean` guard excludes `p[0-9]-local-*` by
+# FORM, so it would take them all at once. What was missing was not the
+# distinction between rehearsal and iron, which already lives in THREE places -here, in
+# es_artefacto_de_fierro and in the Makefile-, but a cap on the rehearsal side.
 #
-# POR QUE UN TECHO Y NO LA REGLA DE DEFER-097. Ese item dice que ningun barrido de
-# limpieza toca gate/out mientras siga abierto, y esa regla se escribio para lo que
-# cuesta VM y no se puede reconstruir: un artefacto de FIERRO mide un arbol y una
-# segunda corrida mide otro. Un ensayo de localhost no es eso, y lo que cuesta lo
-# dice el reloj y no una cifra recitada aqui: minutos de reloj de esta maquina y
-# ningun dinero. El reloj, con sus tres ejes, sale de
-# `NAYLAMP_P2_LOCAL=1 ./gate/p2.sh all` y esta en
-# ../corridas/naylamp-signing-readiness-20260916T1629Z.txt. La regla se lee
-# ahora como lo que protege, el fierro, y el ensayo queda fuera. La decision es de
-# quien encarga y esta fechada el 8 de septiembre de 2026.
+# WHY A CAP AND NOT THE RULE OF DEFER-097. That item says that no sweep of
+# cleanup touches gate/out while it stays open, and that rule was written for what
+# costs VM and cannot be rebuilt: an IRON artifact measures one tree and a
+# second run measures another. A rehearsal on localhost is not that, and what it costs is
+# told by the clock and not by a figure recited here: minutes of clock of this machine and
+# no money. The clock, with its three axes, comes from
+# `NAYLAMP_P2_LOCAL=1 ./gate/p2.sh all` and is in
+# ../corridas/naylamp-signing-readiness-20260916T1629Z.txt. The rule is read
+# now as what it protects, iron, and the rehearsal is left out. The decision belongs to
+# the one who commissions it and is dated 8 September 2026.
 #
-# POR QUE CINCO, con la medida al lado y no por simetria con el banco. Cada
-# artefacto ocupa una fraccion pequena de lo que ocupaba el conjunto, y la medida de
-# hoy, con su orden, esta en ../corridas/naylamp-signing-readiness-20260916T1629Z.txt: la forma
-# que no caduca es que el techo se elige por un orden de magnitud y no al filo. Las
-# dos jornadas medidas corrieron mas ensayos que cinco, o sea que
-# cinco NO cubre una sesion entera, y eso es deliberado: para lo que se miran estos
-# artefactos, que son los logs de los nodos de una corrida que acaba de ponerse
-# roja, la ventana es de minutos y la de la sesion de al lado ya no sirve porque el
-# arbol se movio.
+# WHY FIVE, with the measurement beside it and not by symmetry with the bench. Each
+# artifact takes up a small fraction of what the whole used to take up, and today's
+# measurement with its command is in ../corridas/naylamp-signing-readiness-20260916T1629Z.txt:
+# the shape that does not go stale is that the cap is chosen by an order of magnitude
+# and not at the edge. The two measured days ran more rehearsals than five, so
+# five does NOT cover an entire session, and that is deliberate: for what these
+# artifacts are looked at for, which are the node logs of a run that has just turned
+# red, the window is minutes and the one of the session next door no longer serves
+# because the tree moved.
 #
-# LO QUE EL TECHO CUESTA, dicho y no escondido: reproducir un ensayo da una corrida
-# contra el arbol de HOY, no contra el que midio el que se retiro. Lo que se pierde
-# no es el tiempo de un ensayo, sino la posibilidad de leer un ensayo de un
-# arbol que ya no existe. Es el intercambio que se acepta a proposito, y es el mismo
-# que esta casa NO acepta para el fierro.
-# ---- EL MARCADOR MANDA SOBRE EL TECHO ----------------------------------------
+# WHAT THE CAP COSTS, said and not hidden: reproducing a rehearsal gives a run
+# against TODAY's tree, not against the one that the removed one measured. What is lost
+# is not the time of a rehearsal, but the possibility of reading a rehearsal of a
+# tree that no longer exists. It is the trade accepted on purpose, and it is the same
+# one that this house does NOT accept for iron.
+# ---- THE MARKER TAKES PRECEDENCE OVER THE CAP ---------------------------------
 #
-# ESTA FUNCION EXISTE POR UN INCIDENTE QUE YA VA POR LA TERCERA VEZ, y las dos
-# primeras estan escritas en el Makefile: el 28 de agosto de 2026 un `make clean`
-# se llevo el directorio de un ensayo VIVO a mitad de un recall de 50k, y el 7 de
-# septiembre lo hizo otra vez. De ahi salio el marcador RUNNING y la guarda que lo
-# respeta. **La tercera la escribi con el techo de los ensayos**, que borraba por
-# antiguedad sin mirar el marcador. Medido y no razonado: con un artefacto viejo
-# que llevaba dentro un RUNNING con un pid VIVO, y seis mas nuevos por delante, el
-# techo se lo llevo. Un mecanismo nuevo que repite el incidente que otro mecanismo
-# ya aprendio a evitar es peor que el incidente, porque la leccion estaba escrita a
-# dos ficheros de distancia.
+# THIS FUNCTION EXISTS BECAUSE OF AN INCIDENT THAT IS NOW ON ITS THIRD TIME, and the two
+# first ones are written in the Makefile: on 28 August 2026 a `make clean`
+# wiped out the directory of a LIVE rehearsal halfway through a 50k recall, and on 7
+# September it did it again. Out of that came the RUNNING marker and the guard that
+# respects it. **The third one I wrote with the rehearsal cap**, which deleted by
+# age without looking at the marker. Measured and not reasoned: with an old artifact
+# that carried inside a RUNNING with a LIVE pid, and six newer ones ahead of it, the
+# cap took it away. A new mechanism that repeats the incident that another mechanism
+# had already learned to avoid is worse than the incident, because the lesson was written
+# two files away.
 #
-# EL PREDICADO ES EL PROCESO Y NO EL FICHERO, que es la forma exacta que usa la
-# guarda del Makefile y se copia a proposito. Un marcador cuyo proceso murio NO
-# protege: si protegiera, una corrida matada con -9 bloquearia el techo para
-# siempre, y asi es como una defensa se acaba quitando por estorbar. Se dice al
-# barrerlo, en vez de barrerlo en silencio.
+# THE PREDICATE IS THE PROCESS AND NOT THE FILE, which is the exact form that the
+# Makefile guard uses and is copied on purpose. A marker whose process died does NOT
+# protect: if it did, a run killed with -9 would block the cap forever,
+# and that is how a defence ends up being removed for getting in the way. It is said
+# when sweeping it, instead of sweeping it in silence.
 #
-# Y `kill -0` NO BASTA, que es la otra mitad que el Makefile pago: devuelve
-# no-cero por EPERM igual que por ESRCH, asi que un proceso vivo de OTRO usuario
-# se leia como muerto y se barria con un mensaje tranquilizador. Se pregunta
-# tambien a `ps`, y solo se llama muerto a un pid que NINGUNO de los dos ve.
+# And `kill -0` IS NOT ENOUGH, which is the other half the Makefile paid for: it returns
+# non-zero for EPERM just as for ESRCH, so a live process of ANOTHER user
+# was read as dead and swept with a reassuring message. It asks
+# `ps` too, and only a pid that NEITHER of the two sees is called dead.
 #
-# TRES RESPUESTAS Y NO DOS: vivo, muerto, y sin marcador. La de en medio es la que
-# se dice en voz alta, porque un directorio que se retira llevando dentro los
-# restos de una corrida que no termino es informacion, no ruido.
+# THREE ANSWERS AND NOT TWO: alive, dead, and no marker. The middle one is the one that
+# is said out loud, because a directory that is removed while carrying inside the
+# remains of a run that did not finish is information, not noise.
 marcador_de() {
 	local d="$1" pid
 	[ -f "${d}/RUNNING" ] || { printf 'sin-marcador'; return 0; }
@@ -1428,69 +1428,69 @@ marcador_de() {
 CONSERVA_ENSAYOS=5
 
 barre_ensayos_viejos() {
-	# SOLO EN EL ENSAYO. Una corrida de fierro cuesta horas de VM y no esta ahi para
-	# hacer limpieza; y lo unico que este barrido borra son nombres de ensayo, asi
-	# que en fierro no tendria nada que hacer de todas formas. Se dice con una guarda
-	# en vez de dejarlo a que los patrones no casen.
+	# ONLY IN THE REHEARSAL. An iron run costs hours of VM and is not there to
+	# do cleanup; and the only thing this sweep deletes is rehearsal names, so
+	# on iron it would have nothing to do anyway. It is said with a guard
+	# instead of leaving it to the patterns not to match.
 	#
-	# Y LA SALIDA TEMPRANA IMPRIME SU CERO, que la primera version no hacia: devolvia
-	# rc 0 y NADA por la salida, asi que quien la leyera recibia una cadena vacia
-	# donde el resto de los caminos le da un numero. Lo caza la fila 17z del banco,
-	# que esperaba `0` y recibia ``. Una funcion que a veces contesta una cifra y a
-	# veces nada obliga a todo el que la llame a defenderse de las dos formas, y esa
-	# defensa es justo la que se olvida un dia.
+	# AND THE EARLY EXIT PRINTS ITS ZERO, which the first version did not do: it returned
+	# rc 0 and NOTHING through the output, so whoever read it received an empty string
+	# where the rest of the paths give it a number. Row 17z of the bench catches it,
+	# which expected `0` and received ``. A function that sometimes answers a number and
+	# sometimes nothing forces everyone who calls it to defend against both forms, and that
+	# defense is exactly the one that gets forgotten one day.
 	[ "${ES_FIERRO}" -eq 1 ] && { printf '0'; return 0; }
 	local nombre d n=0 retirados=0 propio
 	propio="$(basename "${OUT_LOCAL}")"
-	# EL BUCLE PARTE NOMBRES Y NO RUTAS, que es una mejora sobre la version de
-	# gate/p2-guard-test.sh y no una copia. Alli el `for` parte la salida de `ls -dt`
-	# sobre rutas enteras, y esa forma asume que ningun componente del camino lleva un
-	# espacio; la suposicion va escrita alli. Aqui el `ls` corre DENTRO del directorio
-	# y lo que se parte son nombres, que este guion valida por forma antes de crear
-	# nada, asi que la suposicion desaparece en vez de declararse.
+	# THE LOOP SPLITS NAMES AND NOT PATHS, which is an improvement over the version in
+	# gate/p2-guard-test.sh and not a copy. There the `for` splits the output of `ls -dt`
+	# over whole paths, and that form assumes that no component of the path carries a
+	# space; the assumption is written there. Here the `ls` runs INSIDE the directory
+	# and what is split are names, which this script validates by form before creating
+	# anything, so the assumption disappears instead of being declared.
 	for nombre in $(cd "${OUT_DIR}" 2>/dev/null && ls -dt p2-local-[0-9]*Z-[0-9]* 2>/dev/null); do
 		d="${OUT_DIR}/${nombre}"
 		[ -d "${d}" ] || continue
-		# EL DE ESTA CORRIDA NUNCA, y se excluye POR NOMBRE y no por confiar en que
-		# sea el mas reciente. El banco se apoya en que el suyo es el mas nuevo; eso
-		# es cierto hasta el dia que dos corridas se solapan, y entonces una borra el
-		# artefacto vivo de la otra. Una exclusion explicita no tiene ese dia.
+		# THIS RUN'S OWN NEVER, and it is excluded BY NAME and not by trusting that
+		# it is the most recent. The bench relies on its own being the newest; that
+		# is true until the day two runs overlap, and then one deletes the other's
+		# live artifact. An explicit exclusion does not have that day.
 		[ "${nombre}" = "${propio}" ] && continue
 		n=$((n + 1))
 		[ "${n}" -le "${CONSERVA_ENSAYOS}" ] && continue
-		# EL MARCADOR MANDA SOBRE EL TECHO, y esta es la linea que faltaba. Un
-		# artefacto cuya corrida sigue VIVA no se retira por viejo: el techo es una
-		# regla sobre lo que ya termino. Y el que lleva un marcador cuyo proceso murio
-		# se retira, pero diciendolo, porque sus restos son informacion. La cuenta del
-		# techo NO se le devuelve al vivo: ocupa su sitio en la ventana igual que
-		# cualquier otro, y lo unico que cambia es que no se borra.
+		# THE MARKER TAKES PRECEDENCE OVER THE CAP, and this is the missing line. An
+		# artifact whose run is still LIVE is not removed for being old: the cap is a
+		# rule about what has already finished. And the one carrying a marker whose
+		# process died is removed, but saying so, because its remains are information.
+		# The cap's count is NOT given back to the live one: it takes its place in the
+		# window just like any other, and the only change is that it is not deleted.
 		case "$(marcador_de "${d}")" in
 			vivo)
-				echo "gate: NO retiro ${d}: su corrida sigue viva, con marcador y pid vivo dentro" >&2
+				echo "gate: NOT removing ${d}: its run is still alive, marker and live pid inside" >&2
 				continue ;;
 			ilegible)
-				echo "gate: NO retiro ${d}: lleva un marcador con un pid que no se puede leer, y eso no es lo mismo que estar muerto" >&2
+				echo "gate: NOT removing ${d}: it carries a marker whose pid cannot be read, and that is not the same as being dead" >&2
 				continue ;;
 			muerto)
-				echo "gate: retiro ${d} por el techo: lleva el marcador de una corrida que no termino" >&2 ;;
+				echo "gate: removing ${d} under the cap: it carries the marker of an unfinished run" >&2 ;;
 		esac
-		# Clausula 23: la ruta se compone de OUT_DIR mas un nombre que se acaba de
-		# comprobar contra la forma exacta por la que este guion borra, y lo que no
-		# sea esa forma se dice en voz alta en vez de borrarse.
+		# Clause 23: the path is made of OUT_DIR plus a name that has just been
+		# checked against the exact form by which this script deletes, and what is not
+		# that form is said out loud instead of being deleted.
 		case "${nombre}" in
 			p2-local-[0-9]*Z-[0-9]*)
 				rm -rf -- "${OUT_DIR}/${nombre}"
 				retirados=$((retirados + 1)) ;;
 			*)
-				echo "gate: NO retiro ${d}: no es un artefacto de ensayo de este gate" >&2 ;;
+				echo "gate: NOT removing ${d}: not a rehearsal artifact of this gate" >&2 ;;
 		esac
 	done
-	# Y LAS FLOTAS HUERFANAS, que es un invariante y no un segundo techo: una flota
-	# NUNCA sobrevive a su artefacto. limpia_flota retira la de la corrida en curso,
-	# asi que una que siga ahi es de una corrida muerta; si su artefacto ya no esta,
-	# lo que queda no lo cita nadie. Hay una en el arbol desde el 7 de septiembre de
-	# 2026, p2-local-fleet-20260907T161431Z-86419, y es la prueba de que el caso
-	# ocurre.
+	# AND THE ORPHAN FLEETS, which is an invariant and not a second cap: a fleet
+	# NEVER survives its artifact. limpia_flota removes the one of the run in progress,
+	# so one that is still there is from a dead run; if its artifact is no longer there,
+	# what remains is cited by nobody. There is one in the tree since 7 September
+	# 2026, p2-local-fleet-20260907T161431Z-86419, and it is the proof that the case
+	# happens.
 	local flota id
 	for flota in $(cd "${OUT_DIR}" 2>/dev/null && ls -d p2-local-fleet-[0-9]*Z-[0-9]* 2>/dev/null); do
 		[ -d "${OUT_DIR}/${flota}" ] || continue
@@ -1501,7 +1501,7 @@ barre_ensayos_viejos() {
 				rm -rf -- "${OUT_DIR}/${flota}"
 				retirados=$((retirados + 1)) ;;
 			*)
-				echo "gate: NO retiro ${OUT_DIR}/${flota}: no es una flota de ensayo de este gate" >&2 ;;
+				echo "gate: NOT removing ${OUT_DIR}/${flota}: not a rehearsal fleet of this gate" >&2 ;;
 		esac
 	done
 	printf '%s' "${retirados}"
@@ -1509,19 +1509,19 @@ barre_ensayos_viejos() {
 
 veredicto_del_sello() {
 	seal_artifact
-	# LA CONDICION PREGUNTA SI HABIA ALGO QUE SELLAR. Sin eso, una corrida de fierro
-	# que murio antes de escribir un solo fichero crudo se pondria roja diciendo
-	# "esta corrida escribio un artefacto", que no es verdad. Un artefacto vacio es
-	# el unico caso en que no sellar es lo correcto.
-	# LA PREGUNTA ES POR EL FICHERO Y NO POR LA BANDERA, y la primera version de esta
-	# linea preguntaba por la bandera. La diferencia la trajo un lector con su caso:
-	# si el artefacto YA lleva un sello que esta corrida no escribio, seal_artifact
-	# se niega en voz alta y deja la bandera en cero, y con la bandera como predicado
-	# esta linea gritaba "esta corrida no sello" sobre un artefacto que SI esta
-	# sellado. Veredicto equivocado y remedio equivocado. gate/p1.sh no cae en eso
-	# porque en su sitio pregunta por SEALED_THIS_RUN, que tambien vale 1 cuando el
-	# sello simplemente se encuentra; aqui, con una sola bandera, la salida limpia es
-	# no preguntar por ninguna y mirar el objeto.
+	# THE CONDITION ASKS WHETHER THERE WAS SOMETHING TO SEAL. Without that, an iron run
+	# that died before writing a single raw file would turn red saying
+	# "this run wrote an artifact", which is not true. An empty artifact is
+	# the only case in which not sealing is the right thing.
+	# THE QUESTION IS ABOUT THE FILE AND NOT ABOUT THE FLAG, and the first version of this
+	# line asked about the flag. The difference was brought by a reader with their case:
+	# if the artifact ALREADY carries a seal that this run did not write, seal_artifact
+	# refuses out loud and leaves the flag at zero, and with the flag as predicate
+	# this line shouted "this run did not seal" about an artifact that IS
+	# sealed. Wrong verdict and wrong remedy. gate/p1.sh does not fall into that
+	# because in its place it asks about SEALED_THIS_RUN, which is also 1 when the
+	# seal is simply found; here, with a single flag, the clean way out is
+	# not to ask about any and look at the object.
 	if [ "${ES_FIERRO}" -eq 1 ] && [ ! -e "${OUT_LOCAL}/SEALED" ] \
 		&& [ -d "${OUT_LOCAL}" ] && [ -n "$(ls -A "${OUT_LOCAL}" 2>/dev/null | grep -vx RUNNING)" ]; then
 		fail "P2.hygiene: this run wrote an artifact and did not seal it, so make clean will refuse to sweep gate/out until somebody seals it by hand"
@@ -1761,29 +1761,29 @@ phase_provenance() {
 	# which is the shape clause 15 calls worse than a break.
 	head="$(cd "${REPO_DIR}" && git rev-parse HEAD 2>/dev/null || true)"
 	dirty="$(cd "${REPO_DIR}" && git status --porcelain 2>/dev/null | wc -l | tr -d ' ' || true)"
-	# Y SE GUARDAN, porque el sello los cita y el sello se escribe dos fases mas
-	# tarde. Se guarda lo que ya se derivo aqui en vez de que seal_artifact vuelva a
-	# leer provenance.txt: un fichero se puede quedar a medias, y entonces el sello
-	# describiria la corrida por un crudo roto en vez de por lo que la corrida midio.
-	# Las tres quedan vacias en los subcomandos que no pasan por esta fase, y el
-	# sello imprime "not recorded" con el subcomando al lado para que se sepa cual.
+	# AND THEY ARE SAVED, because the seal cites them and the seal is written two phases
+	# later. What was already derived here is saved instead of seal_artifact going back to
+	# read provenance.txt: a file can be left half written, and then the seal
+	# would describe the run by a broken raw instead of by what the run measured.
+	# All three stay empty in the subcommands that do not go through this phase, and the
+	# seal prints "not recorded" with the subcommand beside it so that it is known which.
 	PROV_HEAD="${head}"
 	PROV_DIRTY="${dirty}"
 	note "HEAD ${head}"
 	note "uncommitted entries: ${dirty}"
 	note "toolchain $(go version)"
 	note "run id ${NOMBRE_CORRIDA}"
-	# LA HUELLA SE CALCULA UNA VEZ Y SE USA DOS, y no dos veces por dos sitios: el
-	# crudo y el sello tienen que decir el mismo numero, y dos lecturas del mismo
-	# binario separadas por una fase admiten un dia en que no lo digan.
-	# EL `|| true` NO SOBRA, y su ausencia era una regresion de esta misma pasada.
-	# `VAR="$(tuberia)"` toma el estado de la tuberia, y con `pipefail` un `shasum`
-	# que falla lo vuelve no-cero, o sea que bajo `set -e` mata la corrida entera y
-	# la deja sin un solo veredicto: la forma que la clausula 15 llama peor que una
-	# rotura, y que el comentario de doce lineas mas arriba prohibe con esas
-	# palabras. Lo que habia antes vivia dentro de un `echo`, donde el estado de la
-	# sustitucion se descarta; sacarlo a una asignacion lo convirtio en fatal. Las
-	# dos lecturas de arriba llevan su `|| true` por lo mismo, y esta faltaba.
+	# THE DIGEST IS COMPUTED ONCE AND USED TWICE, and not twice from two places: the
+	# raw and the seal have to say the same number, and two reads of the same
+	# binary separated by a phase admit a day when they do not say it.
+	# THE `|| true` IS NOT SUPERFLUOUS: its absence was a regression of this same pass.
+	# `VAR="$(tuberia)"` takes the state of the pipeline, and with `pipefail` a `shasum`
+	# that fails turns it non-zero, that is, under `set -e` it kills the whole run and
+	# leaves it without a single verdict: the shape that clause 15 calls worse than a
+	# break, and that the comment twelve lines above forbids with those
+	# words. What was there before lived inside an `echo`, where the state of the
+	# substitution is discarded; moving it out into an assignment turned it fatal. The
+	# two reads above carry their `|| true` for the same reason, and this one was missing.
 	PROV_SHA="$(shasum -a 256 "${BIN}" 2>/dev/null | cut -d' ' -f1 || true)"
 	{
 		echo "run: ${NOMBRE_CORRIDA}"
@@ -1907,94 +1907,94 @@ phase_cut() {
 # down by boot id. Nothing here reads the entry log to decide whether the cut was
 # dry: with the barrier healthy the acked loss is zero by construction, so the
 # entry log is the wrong witness. The canary is the right one.
-# ---- B5: LA MITAD DEL ACK QUE NUNCA SE EJERCITABA -----------------------------
+# ---- B5: THE ACK HALF THAT WAS NEVER EXERCISED --------------------------------
 #
-# LA DECISION ES DEL 9 DE SEPTIEMBRE DE 2026 Y ES DE QUIEN ENCARGA, y cambia lo
-# que este gate mide, asi que va escrita entera y no como un arreglo.
+# THE DECISION IS FROM 9 SEPTEMBER 2026 AND BELONGS TO THE COMMISSIONER, and it
+# changes what this gate measures, so it is written out whole and not as a patch.
 #
-# LO QUE UN LECTOR EXTERNO MIDIO, y es el hallazgo mas caro que ha tenido este
-# fichero: **la corrida de fierro habria salido VERDE sin haber medido la
-# propiedad, por el camino por defecto**. Dos cosas a la vez.
+# WHAT AN EXTERNAL READER MEASURED, and it is the most costly finding this
+# file has had: **the iron run would have come out GREEN without having
+# measured the property, on the default path**. Two things at once.
 #
-#   UNA. `testigo_siembra` hacia `head -c N /dev/zero > fichero && sync`. `sync`
-#   es GLOBAL: vacia toda la pagina sucia del host, y ahi dentro va el log de
-#   raft. El diseno no pedia eso, pedia sincronizar el FICHERO y su DIRECTORIO.
+#   ONE. `testigo_siembra` did `head -c N /dev/zero > file && sync`. `sync`
+#   is GLOBAL: it flushes the host's whole dirty page, and in there goes the raft
+#   log. The design did not ask that, it asked to sync the FILE and its DIRECTORY.
 #
-#   DOS. No habia ninguna escritura EN VUELO en el instante del corte. La carga
-#   termina sus 33 operaciones, devuelve, y solo entonces se corta.
+#   TWO. There was no write IN FLIGHT at the instant of the cut. The workload
+#   finishes its 33 operations, returns, and only then is it cut.
 #
-# Con las dos juntas, en el instante del `echo b` todo lo ackeado estaba en el
-# plato HAYA BARRERA O NO, y `P2.recover.acked` y `P2.recover.faithful` en verde
-# significaban "lo que se sincronizo a mano sobrevivio a un reinicio", que no es la
-# propiedad. **Un oraculo que no puede fallar no es un oraculo.**
+# With the two together, at the instant of `echo b` everything acked was on the
+# platter WITH OR WITHOUT A BARRIER, and `P2.recover.acked` and
+# `P2.recover.faithful` in green meant "what was synced by hand survived a
+# reboot", which is not the property. **An oracle that cannot fail is not an oracle.**
 #
-# Y ES UN EJEMPLAR QUE SE ANOTA POR SU CLASE, no por su instancia: **un `sync`
-# global dentro de un gate de durabilidad es el instrumento anulando lo que mide.**
-# No es una orden de mas: es la orden que borra la pregunta. La misma forma que la
-# clausula 15 describe, llevada al unico sitio donde no deja rastro, porque el
-# resultado sigue saliendo y sale verde.
+# AND IT IS A SPECIMEN NOTED BY ITS CLASS, not by its instance: **a `sync`
+# global inside a durability gate is the instrument cancelling what it measures.**
+# It is not one order too many: it is the order that erases the question. The
+# same form that clause 15 describes, taken to the only place where it leaves
+# no trace, because the result still comes out and comes out green.
 #
-# LA MITAD DEL ACK, dicha como la dijo quien decide: la propiedad es "ack implica
-# durable", y sin escrituras en vuelo nunca se ejercita la mitad del ack, porque
-# el mutante solo pierde algo si el corte cae ENTRE el ack y la barrera. Con la
-# carga cerrada antes del corte, esa ventana no existe y el brazo rojo no tiene
-# donde morder.
+# THE ACK HALF, said the way the decider said it: the property is "ack implies
+# durable", and without writes in flight the ack half is never exercised,
+# because the mutant only loses something if the cut falls BETWEEN the ack and
+# the barrier. With the workload closed before the cut, that window does not
+# exist and the red arm has nowhere to bite.
 
-# EL RANGO DE IDS EN VUELO ES PROPIO Y NO SE SOLAPA con el de la carga, que usa
-# del 1 al 30. Se separan para que un id en vuelo no pueda confundirse con uno de
-# la carga al leer el manifiesto ni al leer el log.
-# EL RANGO SE ELIGE CONTRA vec_for Y NO CONTRA LOS IDS, y la primera version lo
-# eligio contra los ids. Lo trajo un lector externo y es el defecto de la seccion
-# 10.9 REABIERTO: `vec_for` compone su vector con `(id >> j) & 1` para j en 0..DIM-1
-# con DIM=8, o sea que **solo depende de `id mod 256`**. Con el rango en 500 y una
-# cota de 200, el id 512 daba el VECTOR CERO y los ids 513 a 542 daban exactamente
-# los mismos vectores que los ids 1 a 30 de la carga. `P2.recover.acked` busca por
-# el VECTOR con `-k 1` y exige que vuelva su id: en cuanto la carga y el vuelo
-# comparten punto, sale un rojo que nombra la causa equivocada.
+# THE IN-FLIGHT ID RANGE IS ITS OWN AND DOES NOT OVERLAP the workload's, which
+# uses 1 to 30. They are kept apart so an in-flight id cannot be confused
+# with one of the workload's when reading the manifest or when reading the log.
+# THE RANGE IS CHOSEN AGAINST vec_for AND NOT AGAINST THE IDS, and the first
+# version chose it against the ids. An external reader brought it and it is the
+# defect of section 10.9 REOPENED: `vec_for` composes its vector with
+# `(id >> j) & 1` for j in 0..DIM-1 with DIM=8, that is, **it only depends on
+# `id mod 256`**. With the range at 500 and a bound of 200, id 512 gave the ZERO
+# VECTOR and ids 513 to 542 gave exactly the same vectors as workload ids 1 to 30.
+# `P2.recover.acked` searches by the VECTOR with `-k 1` and demands its id back:
+# as soon as workload and flight share a point, the red names the wrong cause.
 #
-# La correccion que 10.9 escribio, la expansion binaria, se invalida en cuanto un id
-# pasa de 255, y nadie lo dijo entonces porque entonces ningun id pasaba. El rango
-# vive ahora ENTERO por debajo de 256 y por encima de los ids de la carga, asi que
-# no envuelve y no puede colisionar. Y no se deja escrito como un comentario: se
-# comprueba, abajo, con una funcion que se niega en voz alta.
+# The fix that 10.9 wrote, the binary expansion, is invalidated as soon as an
+# id goes above 255, and nobody said so then because then no id did. The range
+# now lives ENTIRELY below 256 and above the workload's ids, so it does not
+# wrap and cannot collide. And it is not left written as a comment: it is
+# checked, below, with a function that refuses out loud.
 ID_EN_VUELO_DESDE=100
-# LA COTA, que la clausula 24 obliga: sin ella el bucle sigue intentando contra
-# tres maquinas que ya no contestan hasta que alguien lo mate. Se para por dos
-# vias, la cuenta y los fallos seguidos, y la segunda es la que de verdad lo cierra
-# porque es la que dice que la conexion murio.
+# THE BOUND, which clause 24 requires: without it the loop keeps trying
+# against three machines that no longer answer until someone kills it. It
+# stops by two ways, the count and the consecutive failures, and the second is
+# what really closes it, because it is the one that says the connection died.
 EN_VUELO_MAX=120
 EN_VUELO_FALLOS_SEGUIDOS=3
-# LA COTA DE LA ESPERA DEL PRIMER ACK, en cuartos de segundo. Doce son tres segundos,
-# que caben en VENTANA_MAX de cinco dejando margen para los tres cortes en paralelo.
-# No es el tiempo que tarda un ack: es lo que esta fase puede gastar sin invalidar la
-# otra cota, y por eso la de aqui se derivo de aquella y no al reves.
+# THE WAIT-FOR-FIRST-ACK BOUND, in quarters of a second. Twelve is three seconds
+# and fits inside VENTANA_MAX of five with margin for the three parallel cuts.
+# It is not how long an ack takes: it is what this phase may spend without
+# invalidating the other bound, so the one here came from that one, not the reverse.
 EN_VUELO_ESPERA_MAX=12
 
-# veredicto_en_vuelo: LA DECISION VIVE EN SU PROPIA FUNCION Y NO DENTRO DE LA FASE,
-# y eso es una correccion del barrido de mutantes: dentro de `phase_cut_fierro` no
-# habia forma de ejercitarla sin tres maquinas, asi que ponerla a verde por las
-# bravas no tumbaba ninguna fila. Es la tercera vez en esta sesion que una fila
-# prueba la PIEZA y no el CIRCUITO, y la salida es siempre la misma, sacar la
-# decision a un sitio donde se la pueda llamar.
+# veredicto_en_vuelo: THE DECISION LIVES IN ITS OWN FUNCTION AND NOT INSIDE THE
+# PHASE, and that is a correction from the mutant sweep: inside `phase_cut_fierro`
+# there was no way to exercise it without three machines, so forcing it green
+# by brute force did not take down any row. It is the third time in this session
+# that a row tests the PIECE and not the CIRCUIT, and the way out is always the
+# same, moving the decision to a place where it can be called.
 veredicto_en_vuelo() {
-	# NO HAY `begin_check` AQUI, y haberlo puesto fue la QUINTA vez que esta casa
-	# comete el mismo defecto, en la funcion escrita para acabar con el. `begin_check`
-	# pone CHECK_FAILED a CERO, y esta funcion se llamaba desde DENTRO del bloque
-	# abierto de P2.cut.fired: borraba todos sus FAIL acumulados, incluido el de un
-	# nodo que no armo su testigo, el de uno que nunca dejo de contestar al ssh -o sea
-	# que NO se corto- y el de la frontera ausente. P2.cut.fired podia registrar PASS
-	# con sus propios FAIL impresos encima en el mismo log.
+	# THERE IS NO `begin_check` HERE, and having put one was the FIFTH time this
+	# house commits the same defect, in the function written to end it. `begin_check`
+	# sets CHECK_FAILED to ZERO, and this function was called from INSIDE the open
+	# block of P2.cut.fired: it erased all its accumulated FAILs, including that of
+	# a node that did not arm its canary, that of one that never stopped answering
+	# ssh -that is, it was NOT cut- and that of the missing boundary.
+	# P2.cut.fired could record PASS with its own FAILs printed on top in the same log.
 	#
-	# Y ES EXACTAMENTE LO QUE ESTE FICHERO YA DOCUMENTA VEINTE LINEAS MAS ARRIBA, en
-	# el comentario que cuenta como P2.cut.bytes abrio su propio begin_check y leyo
-	# un corte seco donde no lo habia. Se cerro moviendo aquel detras del end_check y
-	# se reabrio metiendo este por delante. Lo trajo un lector externo en su tercera
-	# vuelta, y lo que lo escondia era, otra vez, que la fila del banco llama a esta
-	# funcion SOLA, donde funciona: llamar a la pieza es justo lo que tapa que el
-	# circuito esta roto.
+	# AND IT IS EXACTLY WHAT THIS FILE ALREADY DOCUMENTS TWENTY LINES ABOVE, in
+	# the comment that tells how P2.cut.bytes opened its own begin_check and read
+	# a dry cut where there was none. It was closed by moving that one behind
+	# the end_check and reopened by putting this one in front of it. An external
+	# reader brought it on their third pass, and what hid it was, once again, that
+	# the bench row calls this function ON ITS OWN, where it works: calling the
+	# piece is exactly what covers up that the circuit is broken.
 	#
-	# QUIEN ABRE Y CIERRA SU BLOQUE ES QUIEN LLAMA, y esta funcion se invoca DESPUES
-	# de `end_check P2.cut.fired`.
+	# WHOEVER OPENS AND CLOSES ITS BLOCK IS WHOEVER CALLS, and this function is invoked AFTER
+	# `end_check P2.cut.fired`.
 	begin_check
 	local acks_en_vuelo
 	acks_en_vuelo="$(grep -c '^ack ' "${OUT_LOCAL}/en-vuelo.txt" 2>/dev/null || true)"
@@ -2007,11 +2007,11 @@ veredicto_en_vuelo() {
 	fi
 }
 
-# pliega_en_vuelo_sin_ack: todo id que se ENVIO y no dejo su linea `confirmed` en el
-# manifiesto entra como `uncertain`. Es idempotente y se puede llamar dos veces: la
-# segunda no encuentra nada que plegar. La llama el escritor al cerrar y la trampa
-# de salida, para que ni un aborto pueda dejar un id comprometido fuera del
-# manifiesto, que es lo unico que verifylog llama fantasma.
+# pliega_en_vuelo_sin_ack: every id that was SENT and did not leave its line
+# `confirmed` in the manifest comes in as `uncertain`. It is idempotent and can
+# be called twice: the second finds nothing to fold. The writer calls it on
+# closing, and the exit trap, so that not even an abort can leave a committed
+# id outside the manifest, which is the only thing verifylog calls a ghost.
 pliega_en_vuelo_sin_ack() {
 	local enviados="${OUT_LOCAL}/en-vuelo-enviados.txt"
 	[ -f "${enviados}" ] || return 0
@@ -2024,35 +2024,35 @@ pliega_en_vuelo_sin_ack() {
 	done < "${enviados}"
 }
 
-# escritor_en_vuelo: escribe SIN PARAR contra el host 1 hasta que la conexion
-# muere, que es lo que el corte hace. Corre en ESTA maquina, que es donde vive el
-# testigo, porque un testigo dentro del conjunto cortado no es un testigo.
+# escritor_en_vuelo: it writes WITHOUT STOPPING against host 1 until the
+# connection dies, which is what the cut does. It runs on THIS machine, which
+# is where the witness lives, because a witness inside the cut set is not a witness.
 #
-# CADA OPERACION DEJA SU LINEA EN EL MANIFIESTO Y SOLO UNA, y cual de las dos
-# depende de lo que el cliente contesto:
+# EACH OPERATION LEAVES ITS LINE IN THE MANIFEST AND ONLY ONE, and which of
+# the two depends on what the client answered:
 #
-#   rc 0  -> `confirmed`. El ack llego, asi que su AUSENCIA del log es un
-#            veredicto: eso es exactamente la propiedad.
-#   rc !=0 -> `uncertain`. Se envio y no volvio respuesta, asi que pudo
-#            comprometerse o no, y ninguna de las dos cosas es un defecto. Sin
-#            esta linea, un id comprometido cuyo ack se perdio con la conexion
-#            saldria FANTASMA y pondria roja la fidelidad por hacer justo lo que
-#            se le pidio.
+#   rc 0  -> `confirmed`. The ack arrived, so its ABSENCE from the log is a
+#            verdict: that is exactly the property.
+#   rc !=0 -> `uncertain`. It was sent and no answer came back, so it may
+#            have committed or not, and neither of the two is a defect.
+#            Without this line, a committed id whose ack was lost with the
+#            connection would come out GHOST and would turn faithfulness red
+#            for doing exactly what it was asked to do.
 #
-# NINGUN ID RECIBE LAS DOS LINEAS, y eso es a proposito: el comprobador marca
-# AMBIGUO todo id que toque una operacion sin respuesta, y un id ambiguo no se
-# compara por valor. Escribir las dos habria costado la comparacion de valor de
-# todos los ids en vuelo, incluidos los que si volvieron con su ack.
+# NO ID RECEIVES BOTH LINES, and that is on purpose: the checker marks
+# AMBIGUOUS every id that touches an operation with no answer, and an ambiguous
+# id is not compared by value. Writing both would have cost the value comparison
+# of all the in-flight ids, including those that did come back with their ack.
 #
-# Y LA LINEA `uncertain` SE ESCRIBE DESPUES Y NO ANTES, que es lo contrario de lo
-# que la prudencia sugiere y es lo correcto aqui: el bucle corre en esta maquina y
-# sobrevive al corte, asi que siempre llega a anotar lo que paso. Anotarlo antes
-# habria marcado ambiguos tambien a los que acabaron con ack.
-# comprueba_rango_en_vuelo: que ningun vector del rango en vuelo coincida con uno
-# de la carga ni con el vector cero. NO es un comentario: es la orden que lo mide,
-# y se corre antes de escribir la primera operacion. Un rango elegido bien hoy deja
-# de estarlo el dia que alguien mueva DIM, la cota o los ids de la carga, y ese dia
-# el sintoma seria un rojo de propiedad que nombra la causa equivocada.
+# AND THE `uncertain` LINE IS WRITTEN AFTER AND NOT BEFORE, which is the
+# opposite of what prudence suggests and it is correct here: the loop runs on
+# this machine and survives the cut, so it always gets to note what happened.
+# Noting it before would also have marked as ambiguous those that ended with an ack.
+# comprueba_rango_en_vuelo: that no vector of the in-flight range matches one
+# from the workload nor the zero vector. It is NOT a comment: it is the order
+# that measures it, and it runs before writing the first operation. A range
+# chosen well today stops being so when someone moves DIM, the bound or the
+# workload's ids, and then the symptom would be a property red naming the wrong cause.
 comprueba_rango_en_vuelo() {
 	local id v choques=0 cero=0
 	local -a carga=()
@@ -2076,7 +2076,7 @@ comprueba_rango_en_vuelo() {
 escritor_en_vuelo() {
 	local id="${ID_EN_VUELO_DESDE}" tope=$(( ID_EN_VUELO_DESDE + EN_VUELO_MAX ))
 	local out vec seguidos=0 choques
-	# LA GUARDA DEL RANGO SE CORRE ANTES DE ESCRIBIR NADA, y se niega en voz alta.
+	# THE RANGE GUARD RUNS BEFORE WRITING ANYTHING, and it refuses out loud.
 	choques="$(comprueba_rango_en_vuelo)"
 	if [ "${choques}" != "0 0" ]; then
 		echo "gate: refusing to write in flight: the id range ${ID_EN_VUELO_DESDE}..$(( ID_EN_VUELO_DESDE + EN_VUELO_MAX - 1 )) gives [${choques}] collisions and zero vectors against the workload's, and a search by vector would then answer with the wrong id" >&2
@@ -2084,13 +2084,13 @@ escritor_en_vuelo() {
 		return 0
 	fi
 	: > "${OUT_LOCAL}/en-vuelo.txt"
-	# LO QUE SE ENVIA SE ANOTA ANTES DE ENVIARLO, en un fichero APARTE del manifiesto.
-	# La ventana la trajo un lector: entre que el cliente vuelve y que se anota su
-	# linea hay un instante, y una muerte ahi -un Ctrl-C, que va al grupo de procesos
-	# entero- deja un id COMPROMETIDO y AUSENTE del manifiesto, que es lo que
-	# verifylog llama fantasma. Antes de este brazo un aborto no podia contaminar el
-	# oraculo; con el si podia. Se anota la INTENCION antes, y lo que no vuelva con
-	# ack se pliega al manifiesto como `uncertain` al cerrar, aqui o en la trampa.
+	# WHAT IS SENT IS NOTED BEFORE SENDING IT, in a file SEPARATE from the manifest.
+	# A reader brought the window: between the client returning and its line being
+	# noted there is an instant, and a death there -a Ctrl-C, which goes to the
+	# whole process group- leaves an id COMMITTED and ABSENT from the manifest, which
+	# is what verifylog calls a ghost. Before this arm an abort could not contaminate
+	# the oracle; with it, it could. The INTENTION is noted first, and what does not
+	# get an ack folds into the manifest as `uncertain` on closing, here or in the trap.
 	: > "${OUT_LOCAL}/en-vuelo-enviados.txt"
 	while [ "${id}" -lt "${tope}" ]; do
 		vec="$(vec_for "${id}")"
@@ -2108,16 +2108,16 @@ escritor_en_vuelo() {
 		id=$(( id + 1 ))
 	done
 	pliega_en_vuelo_sin_ack
-	# EL INSTANTE QUE SE ARCHIVA, y es la frontera entera de este brazo: el ultimo
-	# ack recibido ANTES del corte. Todo lo que este por encima de esa linea tiene
-	# que sobrevivir; lo que este por debajo no dice nada. Va al artefacto y no solo
-	# a la consola, porque es lo que se cita cuando la consola ya no esta.
+	# THE INSTANT THAT IS ARCHIVED, and it is the whole boundary of this arm: the
+	# last ack received BEFORE the cut. Everything above that line has to survive;
+	# what is below it says nothing. It goes to the artifact and not only to the
+	# console, because it is what gets cited when the console is no longer there.
 	{
-		echo "el manifiesto en vuelo se cierra con el ULTIMO ack recibido antes del corte"
-		echo "ultimo ack:      $(grep '^ack ' "${OUT_LOCAL}/en-vuelo.txt" | tail -1)"
-		echo "primer sin-ack:  $(grep '^sin-ack ' "${OUT_LOCAL}/en-vuelo.txt" | head -1)"
+		echo "the in-flight manifest closes at the LAST ack received before the cut"
+		echo "last ack:        $(grep '^ack ' "${OUT_LOCAL}/en-vuelo.txt" | tail -1)"
+		echo "first sin-ack:   $(grep '^sin-ack ' "${OUT_LOCAL}/en-vuelo.txt" | head -1)"
 		echo "acks:            $(grep -c '^ack ' "${OUT_LOCAL}/en-vuelo.txt" || true)"
-		echo "sin ack:         $(grep -c '^sin-ack ' "${OUT_LOCAL}/en-vuelo.txt" || true)"
+		echo "no acks:         $(grep -c '^sin-ack ' "${OUT_LOCAL}/en-vuelo.txt" || true)"
 	} > "${OUT_LOCAL}/en-vuelo-frontera.txt"
 }
 
@@ -2147,9 +2147,9 @@ phase_cut_fierro() {
 	done
 	if [ "${CHECK_FAILED}" -ne 0 ]; then
 		end_check P2.cut.fired
-		# EN ESTA SALIDA EL ESCRITOR NO LLEGO A ARRANCAR, asi que su veredicto no es
-		# `none` por no haber ackeado: es que la fase se fue antes de crearlo. Se dice
-		# con esa razon y no con la otra, que describiria mal la causa.
+		# ON THIS EXIT THE WRITER DID NOT GET TO START, so its verdict is not
+		# `none` for not having acked: it is that the phase left before creating it.
+		# It is said with that reason and not the other, which would describe the cause badly.
 		not_run P2.cut.envuelo "the phase left before the canaries were in place, so the in-flight writer never started and there was nothing to acknowledge"
 		not_run P2.cut.bytes "the canary was not in place, so the cut has no witness and this verdict is not a reading"
 		return
@@ -2164,28 +2164,28 @@ phase_cut_fierro() {
 	# its own begin_check, which resets CHECK_FAILED, read the seed alone on all
 	# three and called it a dry cut. An unarmed canary is indistinguishable from a
 	# dry cut by size, so the state has to be REMEMBERED PER NODE and not inferred.
-	# EL ESCRITOR ARRANCA ANTES DE ARMAR, y las tres armas van EN PARALELO. Las dos
-	# cosas son la misma cuenta y la trajo la cuarta vuelta del lector: la ventana
-	# medida va de `t_arma` al corte y su cota es VENTANA_MAX, cinco segundos. Contra
-	# esa cota, la tercera vuelta metio DOS gastos nuevos dentro de la ventana sin
-	# tocar la cota: el fsync de directorio en la siembra del testigo, y la espera de
-	# hasta EN_VUELO_ESPERA_MAX cuartos de segundo -tres segundos- a que el escritor
-	# en vuelo devolviera su primer ack. Con las tres armas EN SERIE, tres sesiones
-	# ssh nuevas contra Azure, mas tres segundos de espera, el presupuesto se pasaba
-	# de cinco antes de que el corte se disparara. Y pasarse no falla ruidosamente:
-	# `ventana_dentro` da falso y P2.cut.bytes sale NOT RUN, o sea que la lectura
-	# central de esta fase -si el corte fue seco- se anula sobre una flota sana.
+	# THE WRITER STARTS BEFORE ARMING, and the three arms go IN PARALLEL. The two
+	# things are the same calculation and the reader's fourth pass brought it: the
+	# window measured goes from `t_arma` to the cut and its bound is VENTANA_MAX,
+	# five seconds. Against that bound, the third pass put TWO new costs inside the
+	# window without touching the bound: the directory fsync in the witness seeding,
+	# and the wait of up to EN_VUELO_ESPERA_MAX quarter seconds -three seconds- for
+	# the in-flight writer to return its first ack. With the three arms IN SERIES,
+	# three new ssh sessions against Azure, plus three seconds of waiting, the budget
+	# went over five before the cut fired. And going over does not fail loudly:
+	# `ventana_dentro` gives false and P2.cut.bytes comes out NOT RUN, that is, the
+	# central reading of this phase -whether the cut was dry- is voided on a healthy fleet.
 	#
-	# LA CUENTA DESPUES: el escritor arranca fuera de la ventana y para cuando las
-	# armas vuelven ya tiene ack, con lo que el bucle de espera sale en su primera
-	# vuelta y cuesta cero. Las armas pasan de tres viajes ssh en serie a uno en
-	# paralelo. Queda un viaje de armar mas el abanico del corte, que ya iba en
-	# paralelo desde antes. Es la misma correccion que se le hizo a los cortes el
-	# 7 de septiembre y que a las armas no se le hizo entonces.
+	# THE CALCULATION AFTERWARDS: the writer starts outside the window and by the
+	# time the arms return it already has an ack, so the wait loop exits on its
+	# first pass and costs zero. The arms go from three ssh trips in series to one
+	# in parallel. One arming trip remains plus the cut fan-out, which already went
+	# in parallel since before. It is the same correction that was made to the cuts
+	# on 7 September and that was not made to the arms then.
 	#
-	# Y EL RELOJ SE SELLA ANTES DE LAS ARMAS Y NO DESPUES, que es lo conservador: la
-	# semilla mas vieja es la que mas tiempo lleva expuesta a que el escritor de
-	# fondo la baje al plato por su cuenta, y la cota tiene que cubrir a esa.
+	# AND THE CLOCK IS SEALED BEFORE THE ARMS AND NOT AFTER, which is the
+	# conservative choice: the oldest seed has been exposed longest to the background
+	# writer bringing it down to the platter on its own, and the bound must cover it.
 	note "starting the in-flight writer against host 1; the manifest closes at the last ack received before the cut"
 	escritor_en_vuelo &
 	PID_EN_VUELO=$!
@@ -2194,18 +2194,18 @@ phase_cut_fierro() {
 	declare -a TESTIGO_ARMADO=()
 	local armados=0 pids_arma="" rc_arma
 	for n in "${NODE_IDS[@]}"; do
-		# EL `if` VA DENTRO DE LA SUBCAPA Y NO ES ESTILO: es la exencion de errexit,
-		# y la primera version de este arreglo la perdio. El bucle de antes decia
-		# `if testigo_arma "$n"; then`, y una llamada dentro de la condicion de un
-		# `if` esta EXENTA de `set -e`. Al paralelizar se escribio
-		# `( testigo_arma "$n"; echo $? > ... ) &`, donde la llamada ya no esta en
-		# ninguna condicion: con un arma que falla, errexit mata la subcapa ANTES del
-		# `echo`, el fichero de rc no se escribe nunca, `wait` devuelve distinto de
-		# cero y errexit se lleva el gate entero. O sea que el arreglo cambiaba
-		# "se anota que el nodo 2 no armo y se sigue" por "la corrida de fierro muere
-		# sin decir por que", que es peor que el defecto que venia a arreglar. Se midio
-		# con un guion de cuatro lineas antes de dejarlo puesto, y la fila 17id lo
-		# ejercita con un arma que falla de verdad.
+		# THE `if` GOES INSIDE THE SUBSHELL AND IT IS NOT STYLE: it is the errexit
+		# exemption, and the first version of this fix lost it. The loop before said
+		# `if testigo_arma "$n"; then`, and a call inside the condition of an `if` is
+		# EXEMPT from `set -e`. When parallelising it was written as
+		# `( testigo_arma "$n"; echo $? > ... ) &`, where the call is no longer in any
+		# condition: with an arm that fails, errexit kills the subshell BEFORE the
+		# `echo`, the rc file is never written, `wait` returns something other than
+		# zero and errexit takes the whole gate down. That is, the fix changed
+		# "it is noted that node 2 did not arm and it goes on" into "the iron run dies
+		# without saying why", which is worse than the defect it came to fix. It was
+		# measured with a four line script before leaving it in place, and row 17id
+		# exercises it with an arm that really fails.
 		# AND THE REDIRECT GOES ON THE ECHO AND NOT ON THE COMPOUND, which was the second
 		# defect this line carried and was measured before it was fixed, with row 17if:
 		# a redirect written after the `fi` covers the whole compound, so the condition
@@ -2232,11 +2232,11 @@ phase_cut_fierro() {
 		fi
 	done
 	if [ "${armados}" -eq 0 ]; then
-		# EL ESCRITOR YA ESTA VIVO EN ESTE CAMINO, que antes no lo estaba: se para y
-		# lo que dejo enviado se pliega, porque un id enviado y ausente del manifiesto
-		# es lo que verifylog llama fantasma y contamina el oraculo de la corrida
-		# entera. Salir por aqui sin plegar seria dejar el brazo nuevo envenenando el
-		# camino que existe para abortar limpio.
+		# THE WRITER IS ALREADY ALIVE ON THIS PATH, which it was not before: it is
+		# stopped and what it left sent is folded, because an id sent and absent from
+		# the manifest is what verifylog calls a ghost and it contaminates the oracle
+		# of the whole run. Leaving here without folding would be leaving the new arm
+		# poisoning the path that exists to abort cleanly.
 		kill "${PID_EN_VUELO}" 2>/dev/null || true
 		wait "${PID_EN_VUELO}" 2>/dev/null || true
 		pliega_en_vuelo_sin_ack
@@ -2255,37 +2255,37 @@ phase_cut_fierro() {
 	# records none on every healthy run and the oracle of the cut turns
 	# decorative. Firing the three at once takes the cut side down to one round
 	# trip, and what it actually cost is printed so the bound stops being a guess.
-	# EL ESCRITOR EN VUELO ARRANCA AQUI, justo antes del corte y despues de armar los
-	# testigos, y esa posicion es la decision entera. La propiedad es "ack implica
-	# durable", y sin escrituras en vuelo la mitad del ack no se ejercita nunca: el
-	# mutante solo pierde algo si el corte cae ENTRE el ack y la barrera. Con la
-	# carga cerrada antes del corte esa ventana no existe.
+	# THE IN-FLIGHT WRITER STARTS HERE, right before the cut and after arming the
+	# witnesses, and that position is the whole decision. The property is "ack
+	# implies durable", and without writes in flight the ack half is never
+	# exercised: the mutant only loses something if the cut falls BETWEEN the ack
+	# and the barrier. With the workload closed before the cut that window does not exist.
 	#
-	# CORRE EN SEGUNDO PLANO Y EN ESTA MAQUINA. En segundo plano porque el corte
-	# tiene que caer MIENTRAS escribe, no despues; y en esta maquina porque es donde
-	# vive el testigo, y un testigo dentro del conjunto cortado no es un testigo.
-	# Se para solo, por su cota y por sus fallos seguidos, que es como se entera de
-	# que la conexion murio.
-	# EL ESCRITOR ARRANCA Y SE LE ESPERA SU PRIMER ACK ANTES DE CORTAR, con cota. La
-	# version anterior lo arrancaba y cortaba en el mismo instante, y un lector midio
-	# que el caso ESPERADO era cero acks: el corte es UN viaje ssh, y el primer ack
-	# necesita ssh mas arranque de binario mas handshake TLS mutuo, que la seccion
-	# 10.7 cifra en segundos, y no en decimas, en localhost SIN ssh. Las tres morian antes de que el
-	# primero volviera, `P2.cut.envuelo` salia `none`, y como esta en la lista de
-	# fierro la corrida entera cerraba NOT A SUCCESS por una causa que es el
-	# instrumento y no la propiedad.
+	# IT RUNS IN THE BACKGROUND AND ON THIS MACHINE. In the background because the
+	# cut has to fall WHILE it writes, not after; and on this machine because it is
+	# where the witness lives, and a witness inside the cut set is not a witness.
+	# It stops on its own, by its bound and by its consecutive failures, which is
+	# how it learns that the connection died.
+	# THE WRITER STARTS AND ITS FIRST ACK IS WAITED FOR BEFORE CUTTING, with a
+	# bound. The previous version started it and cut at the same instant, and a
+	# reader measured that the EXPECTED case was zero acks: the cut is ONE ssh
+	# trip, and the first ack needs ssh plus binary startup plus mutual TLS
+	# handshake, which section 10.7 puts in seconds, not in tenths, on localhost
+	# WITHOUT ssh. The three died before the first came back, `P2.cut.envuelo`
+	# came out `none`, and since it is in the iron list the whole run closed NOT A
+	# SUCCESS for a cause that is the instrument and not the property.
 	#
-	# LA COTA ES CORTA A PROPOSITO, y lo que decide su valor es la otra cota: la
-	# ventana entre armar el testigo y cortar tiene que caber en VENTANA_MAX. Esperar
-	# aqui GASTA esa ventana, asi que se espera lo justo para tener UNA escritura
-	# ackeada con edad casi cero, que es toda la poblacion que este brazo necesita.
-	# Si no llega ni una, se corta igual y el veredicto lo dice: no cortar seria
-	# perder la sesion por no poder medir la mitad del ack.
+	# THE BOUND IS SHORT ON PURPOSE, and what decides its value is the other
+	# bound: the window between arming the witness and cutting has to fit in
+	# VENTANA_MAX. Waiting here SPENDS that window, so it waits just enough to
+	# have ONE acked write with age almost zero, which is all the population this
+	# arm needs. If not even one arrives, it cuts anyway and the verdict says so:
+	# not cutting would be losing the session for not being able to measure the ack half.
 	#
-	# Y EL ARRANQUE YA NO ESTA AQUI, sino ARRIBA, antes de armar. Estuvo aqui hasta
-	# la cuarta vuelta, y ahi esta espera caia ENTERA dentro de la ventana en vez de
-	# solaparse con las armas. Lo que queda aqui es la espera, que ahora sale en su
-	# primera vuelta porque el primer ack suele haber vuelto ya mientras se armaba.
+	# AND THE STARTUP IS NO LONGER HERE, but ABOVE, before arming. It was here until
+	# the fourth pass, and there this wait fell ENTIRELY inside the window instead of
+	# overlapping with the arms. What remains here is the wait, which now exits on
+	# its first pass because the first ack has usually already come back while arming.
 	local espera_ack=0
 	while [ "${espera_ack}" -lt "${EN_VUELO_ESPERA_MAX}" ]; do
 		grep -q '^ack ' "${OUT_LOCAL}/en-vuelo.txt" 2>/dev/null && break
@@ -2304,14 +2304,14 @@ phase_cut_fierro() {
 		corta_en "$n" &
 		pids_corte="${pids_corte} $!"
 	done
-	# SE ESPERA A LOS CORTES Y NO A TODO, y esta linea era un `wait` desnudo hasta
-	# que el escritor en vuelo entro detras. Un `wait` sin argumentos espera a TODOS
-	# los trabajos de fondo, o sea que habria esperado tambien a que el escritor se
-	# rindiera, unos treinta segundos despues, y `t_corte` se habria tomado ahi. La
-	# ventana entre armar el testigo y cortar es la COTA que decide si el resultado
-	# de la barrera significa algo: falsearla por treinta segundos, contra una cota
-	# de cinco, habria puesto `ventana_dentro` en falso y con ella los veredictos en
-	# `none` sin que nada dijera por que.
+	# IT WAITS FOR THE CUTS AND NOT FOR EVERYTHING, and this line was a bare `wait`
+	# until the in-flight writer came in behind it. A `wait` with no arguments
+	# waits for ALL the background jobs, that is, it would also have waited for the
+	# writer to give up, some thirty seconds later, and `t_corte` would have been
+	# taken there. The window between arming the witness and cutting is the BOUND
+	# that decides whether the barrier's result means anything: faking it by thirty
+	# seconds, against a bound of five, would have set `ventana_dentro` false and
+	# with it the verdicts to `none` without anything saying why.
 	# shellcheck disable=SC2086
 	wait ${pids_corte}
 	t_corte="$(ahora)"
@@ -2329,34 +2329,34 @@ phase_cut_fierro() {
 	done
 
 	# --- the oracle: the boot id CHANGED on all THREE ---
-	# Y AHORA SI SE RECOGE EL ESCRITOR EN VUELO, que para entonces ya se ha rendido
-	# solo: sus tres fallos seguidos llegan en cuanto las tres dejan de contestar. Se
-	# espera aqui, con la ventana ya medida, para leer su frontera antes de decidir
-	# nada sobre lo que sobrevivio.
+	# AND NOW THE IN-FLIGHT WRITER IS COLLECTED, which by then has already given up
+	# on its own: its three consecutive failures arrive as soon as the three stop
+	# answering. It is waited for here, with the window already measured, to read
+	# its boundary before deciding anything about what survived.
 	wait "${PID_EN_VUELO}" 2>/dev/null || true
 	PID_EN_VUELO=""
 	pliega_en_vuelo_sin_ack
 	if [ -s "${OUT_LOCAL}/en-vuelo-frontera.txt" ]; then
 		while IFS= read -r linea_frontera; do
-			note "en vuelo: ${linea_frontera}"
+			note "in flight: ${linea_frontera}"
 		done < "${OUT_LOCAL}/en-vuelo-frontera.txt"
 	else
 		fail "P2.cut.fired: the in-flight writer left no boundary file, so this run cannot say which acks it had received when the power went"
 	fi
 
-	# P2.cut.envuelo: EL VEREDICTO QUE FALTABA, y sin el todo este brazo era un
-	# instrumento sin lectura. Lo trajo un lector externo en su segunda vuelta y su
-	# pregunta era exacta: que pasa si el escritor en vuelo no consigue ackear NADA.
-	# La respuesta era NADA: la unica guarda miraba que el fichero de frontera
-	# EXISTIERA, y ese fichero se escribe siempre, tambien con `acks: 0`.
+	# P2.cut.envuelo: THE VERDICT THAT WAS MISSING, and without it this whole arm
+	# was an instrument with no reading. An external reader brought it on their
+	# second pass and their question was exact: what happens if the in-flight writer
+	# does not manage to ack ANYTHING. The answer was NOTHING: the only guard checked
+	# that the boundary file EXISTED, and that file is always written, also with `acks: 0`.
 	#
-	# POR QUE IMPORTA, y es toda la razon de este brazo. La propiedad es "ack implica
-	# durable", y la mitad del ack solo se ejercita si el corte cae ENTRE un ack y su
-	# barrera. Con cero acks en vuelo, la corrida mide lo mismo que media antes del
-	# arreglo: si lo ackeado por la carga sobrevivio, y eso puede ser cierto por el
-	# temporizador del diario, que en esta flota vuelca solo a los treinta segundos.
-	# Cero acks en vuelo NO es un fallo del motor, asi que no es un rojo: es que la
-	# corrida no llego a hacer la pregunta, y eso se dice con `none`.
+	# WHY IT MATTERS, and it is the whole reason for this arm. The property is "ack
+	# implies durable", and the ack half is only exercised if the cut falls BETWEEN
+	# an ack and its barrier. With zero acks in flight, the run measures the same as
+	# it measured before the fix: whether what the workload acked survived, and that
+	# can be true because of the journal timer, which on this fleet flushes only at
+	# thirty seconds. Zero acks in flight is NOT an engine failure, so it is not a
+	# red: it is that the run did not get to ask the question, and that is said with `none`.
 	local vueltas=0
 	for n in "${NODE_IDS[@]}"; do
 		id_despues="$(boot_id_de "$n")" || { fail "P2.cut.fired: node ${n} boot id could not be read after the cut"; continue; }
@@ -2373,9 +2373,9 @@ phase_cut_fierro() {
 	[ "${CHECK_FAILED}" -eq 0 ] && pass "P2.cut.fired: the THREE rebooted, by boot id, ${vueltas} of ${#NODE_IDS[@]}"
 	end_check P2.cut.fired
 
-	# EL VEREDICTO EN VUELO VA DETRAS DEL end_check DE ESTA FASE, nunca dentro: abre
-	# su propio bloque con su propio begin_check, y compartirlo era borrar los FAIL
-	# de P2.cut.fired.
+	# THE IN-FLIGHT VERDICT GOES BEHIND THIS PHASE'S end_check, never inside: it opens
+	# its own block with its own begin_check, and sharing it was erasing the FAILs
+	# of P2.cut.fired.
 	veredicto_en_vuelo
 
 	# --- P2.cut.bytes, over the canary and never over the barrier ---
@@ -2510,7 +2510,7 @@ lineas_listening_en() {
 	printf '%s' "${v}"
 }
 
-# espera_vuelta_listening <n> <segundos> <cuenta anterior> <instante de partida>:
+# espera_vuelta_listening <n> <seconds> <previous count> <starting instant>:
 # waits for that host to announce it is listening MORE times than it had AND for
 # its pid file to name a live process. Clause 24: the bound is enforced here and
 # what gets printed is the elapsed time since the shared starting instant, not
@@ -2575,21 +2575,21 @@ phase_recover_lecturas() {
 	# The live set is every id put and not later deleted, in manifest order.
 	/usr/bin/python3 - "${MANIFEST}" > "${OUT_LOCAL}/live-ids.txt" <<'PY'
 import sys
-# EL ESTADO DE LA LINEA DECIDE, y hasta el 9 de septiembre de 2026 este bucle no lo
-# miraba. Lo trajo un lector externo en su segunda vuelta y era BLOQUEANTE: el
-# escritor en vuelo anota `uncertain` los envios que no volvieron con ack, y esas
-# lineas entraban aqui como si fueran ackeadas. `P2.recover.acked` las exigia
-# presentes, no podian estarlo porque se enviaron contra tres maquinas ya muertas,
-# y la corrida salia ROJA diciendo que el motor perdio una escritura ackeada. Bajo
-# la seccion 10.12 eso es un rojo de PROPIEDAD y no se re-corre NUNCA: la unica
-# corrida autorizada se habria quemado publicando la conclusion invertida.
+# THE STATE OF THE LINE DECIDES, and until 2026-09-09 this loop did not look
+# at it. An external reader brought it on the second pass and it was BLOCKING:
+# the in-flight writer records the sends that did not come back with an ack as
+# `uncertain`, and those lines entered here as if acked. `P2.recover.acked`
+# demanded them present; they could not be, because they were sent against
+# three machines already dead, and the run came out RED saying the engine lost
+# an acked write. Under section 10.12 that is a PROPERTY red and is NEVER re-run:
+# the only authorised run would have burned publishing the inverted conclusion.
 #
-# Y ES EXACTAMENTE LA CLASE QUE EL ARREGLO ANTERIOR CERRO POR OTRA PUERTA. El
-# manifiesto tiene DOS consumidores y solo uno sabia de los estados: verifylog.go
-# separa `confirmed` de `ambiguous` desde que se escribio; este python no.
+# AND IT IS EXACTLY THE CLASS THE EARLIER FIX CLOSED THROUGH ANOTHER DOOR. The
+# manifest has TWO consumers and only one knew about the states: verifylog.go
+# separates `confirmed` from `ambiguous` since it was written; this python does not.
 #
-# UNA LINEA SIN MARCADOR ES CONFIRMED, que es lo que deja parsear un manifiesto
-# anterior a los estados sin cambiarlo, y es la misma regla que verifylog.go aplica.
+# A LINE WITHOUT A MARKER IS CONFIRMED, which is what lets a manifest from
+# before the states be parsed without changing it, and the same rule verifylog.go applies.
 CONFIRMADO, INCIERTO = 'confirmed', 'uncertain'
 vivos = []
 for renglon in open(sys.argv[1], encoding='utf-8'):
@@ -2775,12 +2775,12 @@ phase_red() {
 	begin_check
 	local mutante="${MUT_ROOT}/naylampd-mutante"
 	mkdir -p "${MUT_ROOT}/arbol"
-	# LA MARCA LLEVA EL PID, y hasta el 7 de septiembre de 2026 era un fichero
-	# VACIO. Sin pid dentro no hay con que decidir si el arbol es de una corrida
-	# viva o de una muerta, asi que un arbol huerfano de una corrida matada se
-	# quedaba para siempre: uno de 9784 KiB del 6 de septiembre seguia ahi al
-	# cerrar el dia siguiente. Es la misma forma que el marcador RUNNING de este
-	# fichero, y por la misma razon.
+	# THE MARK CARRIES THE PID, and until 2026-09-07 it was an EMPTY file. With
+	# no pid inside there is no way to decide whether the tree is from a
+	# live run or a dead one, so an orphan tree from a killed run stayed
+	# forever: one of 9784 KiB from 2026-09-06 was still there when the next day
+	# closed. It is the same shape as the RUNNING marker of this file, and for
+	# the same reason.
 	printf 'pid: %s\nrun: %s\nscript: gate/p2.sh\n' "$$" "${NOMBRE_CORRIDA}" > "${MUT_MARCA}"
 	# Only the files git tracks, with their CURRENT content, so gate/out and .git
 	# are excluded by construction rather than by a list that could go stale.
@@ -2954,23 +2954,23 @@ phase_hygiene_fierro() {
 	for n in "${NODE_IDS[@]}"; do
 		ask_on "$n" 'if [ -f naylamp/naylampd-mutante.pid ]; then pid=$(cat naylamp/naylampd-mutante.pid); kill -TERM "$pid" 2>/dev/null || true; sleep 1; kill -9 "$pid" 2>/dev/null || true; fi; true' >/dev/null 2>&1 || true
 	done
-	# EL rc SE CAPTURA DENTRO DE LA SUSTITUCION Y NO CON UN `$?` DETRAS, y esta linea
-	# es una correccion del 8 de septiembre de 2026 que se lleva por delante toda la
-	# fase. `ask_on` tiene TRES salidas, 0 si, 1 no, 2 ilegible, y aqui la respuesta
-	# NORMAL es 1: el paso de arriba acaba de matar esos daemons, asi que ninguno
-	# esta vivo. Escrita como orden desnuda seguida de `rc_a=$?`, ese 1 es un fallo
-	# a los ojos de `set -e` y **mataba el guion en la primera vuelta del bucle**,
-	# antes de asignar `rc_a` siquiera. Todo lo que hay debajo era codigo muerto en
-	# fierro: los pasos 2, 3 y 4, el barrido del sello, la linea de PASS y el propio
-	# `end_check`, con lo que P2.hygiene salia `none` y la corrida cerraba diciendo
-	# que aborto. Reproducido en el bash 3.2 de esta maquina con una funcion que
-	# devuelve 1: el bucle muere en la vuelta uno sin imprimir nada.
+	# THE rc IS CAPTURED INSIDE THE SUBSTITUTION AND NOT WITH A `$?` AFTER IT, and
+	# this line is a correction of 2026-09-08 that takes down the whole phase.
+	# `ask_on` has THREE exits, 0 yes, 1 no, 2 unreadable, and here the NORMAL answer
+	# is 1: the step above has just killed those daemons, so none is alive. Written as
+	# a bare command followed by `rc_a=$?`, that 1 is a failure in the eyes of
+	# `set -e` and **killed the script on the first pass of the loop**, before even
+	# assigning `rc_a`. Everything below was dead code on iron: steps 2, 3 and 4,
+	# the seal sweep, the PASS line and `end_check` itself, with which P2.hygiene
+	# came out `none` and the run closed saying it aborted. Reproduced on this
+	# machine's bash 3.2 with a function that returns 1: the loop dies on pass one
+	# without printing anything.
 	#
-	# LA FORMA ES LA QUE ESTE MISMO FICHERO YA USA BIEN mas arriba, en el censo de
-	# hosts vivos: la sustitucion corre en un subshell y lo que se lee es lo que
-	# `echo $?` imprime, no el estado de la orden. De los ocho `ask_on` de este
-	# guion, seis estaban ya en forma segura (dentro de un `if`, con `|| true`, o
-	# como ultima orden de su funcion) y este era el unico desnudo.
+	# THE SHAPE IS THE ONE THIS SAME FILE ALREADY USES WELL further up, in the census
+	# of live hosts: the substitution runs in a subshell and what is read is what
+	# `echo $?` prints, not the status of the command. Of the eight `ask_on` in this
+	# script, six were already in safe form (inside an `if`, with `|| true`, or as the
+	# last command of its function) and this was the only bare one.
 	for n in "${NODE_IDS[@]}"; do
 		rc_a="$(ask_on "$n" 'pid=$(cat naylamp/naylampd-mutante.pid 2>/dev/null); [ -n "${pid}" ] && kill -0 "${pid}"'; echo $?)"
 		case "${rc_a}" in
@@ -3117,25 +3117,25 @@ phase_red_fierro() {
 	# --- one acked write on the mutant fleet, then the cut, window measured ---
 	for v in $(seq 1 40); do
 		set +e
-		# EL CLIENTE DEL MUTANTE CORRE EN EL HOST 1 Y NO EN ESTE PORTATIL, y hasta
-		# 2026-09-09 corria aqui. Es EXACTAMENTE el defecto que la seccion 10.16 del
-		# diseno declara cerrado para `client_op`, y a `client_op` si se le aplico:
-		# va por `run_on 1`. A este no. Lo trajo un lector externo del diseno.
+		# THE MUTANT'S CLIENT RUNS ON HOST 1 AND NOT ON THIS LAPTOP, and until
+		# 2026-09-09 it ran here. It is EXACTLY the defect that section 10.16 of the
+		# design declares closed for `client_op`, and `client_op` did get it: it goes
+		# via `run_on 1`. Not this one. An external reader of the design brought it.
 		#
-		# LO QUE COSTABA, y es todo el brazo rojo. `"${BIN}"` es el binario DARWIN;
-		# `${PRIV[1]}` es una direccion privada de la flota que esta maquina no
-		# tiene, asi que el `-listen` no puede atarse; y los certificados que
-		# nombraba son los locales y no los del host. Los cuarenta intentos fallaban
-		# los cuarenta, `P2.red.barrier` salia roja diciendo que la flota mutante
-		# nunca ackeo, y `P2.red.fires` quedaba NOT RUN. Y eso ocurre DESPUES de
-		# haber parado la flota sana y despues de los dos cortes: la sesion se
-		# cerraba con los verdes del brazo positivo y sin ningun control que los
-		# sostuviera. Sumado a que el brazo positivo no podia ponerse rojo, la
-		# corrida entera no tenia un solo camino por el que la propiedad fallara.
+		# WHAT IT COST, and it is the whole red arm. `"${BIN}"` is the DARWIN binary;
+		# `${PRIV[1]}` is a private address of the fleet that this machine does not
+		# have, so the `-listen` cannot bind; and the certificates that
+		# it named are the local ones and not the host's. The forty attempts failed
+		# all forty, `P2.red.barrier` came out red saying that the mutant fleet
+		# never acked, and `P2.red.fires` was left NOT RUN. And that happens AFTER
+		# having stopped the sane fleet and after the two cuts: the session
+		# closed with the green verdicts of the positive arm and no control to hold
+		# them up. In addition to the positive arm being unable to turn red, the whole
+		# run had not a single path by which the property could fail.
 		out="$(run_on 1 "cd naylamp && NAYLAMP_TLS_CERT=certs/node-${CLIENT_ID}.pem NAYLAMP_TLS_KEY=certs/node-${CLIENT_ID}-key.pem NAYLAMP_TLS_CA=certs/ca.pem ./bin/naylampd client -listen ${PRIV[1]}:${MUT_CLIENT_PORT_FIERRO} -group '${mgroup}' -dim ${DIM} -op put -id 7 -vec '$(vec_for 7)' ; echo __RC__=\$?" 2>&1)"
-		# EL ESTADO ES LA ULTIMA LINEA Y TIENE QUE SER LA LINEA ENTERA, que es la
-		# misma guarda que `client_op` lleva y por la misma razon: un canal de estado
-		# que cualquier carga util puede falsificar no es un canal de estado.
+		# THE STATUS IS THE LAST LINE AND IT HAS TO BE THE WHOLE LINE, which is the
+		# same guard `client_op` carries and for the same reason: a status channel
+		# that any payload can forge is not a status channel.
 		case "$(printf '%s' "${out}" | tail -1)" in
 			__RC__=0) ok=1 ;;
 		esac
@@ -3161,13 +3161,13 @@ phase_red_fierro() {
 		corta_en "$n" &
 		pids_corte_rojo="${pids_corte_rojo} $!"
 	done
-	# SE ESPERA A LOS CORTES Y NO A TODO, igual que en phase_cut_fierro y por la
-	# misma razon. Aqui hoy no hay ningun trabajo de fondo pendiente, asi que el
-	# `wait` desnudo no muerde; se cambia igual porque es la FORMA que el arreglo de
-	# la otra fase acaba de declarar capaz de falsear una ventana en treinta segundos
-	# contra una cota de cinco, y esta ventana gobierna P2.red.barrier, que es el
-	# UNICO control de toda la sesion. Arreglar la instancia y dejar la clase es
-	# justo lo que este registro persigue con nombre propio. Lo trajo un lector.
+	# IT WAITS FOR THE CUTS AND NOT FOR EVERYTHING, as in phase_cut_fierro and for
+	# the same reason. Here today there is no background work pending, so the bare
+	# `wait` does not bite; it is changed anyway because it is the SHAPE that the
+	# fix of the other phase has just declared capable of faking a window in thirty
+	# seconds against a bound of five, and this window governs P2.red.barrier, the
+	# ONLY control of the whole session. Fixing the instance and leaving the class
+	# is exactly what this record pursues by name. A reader brought it.
 	# shellcheck disable=SC2086
 	wait ${pids_corte_rojo}
 	t_corte="$(ahora)"
@@ -3274,16 +3274,16 @@ phase_red_fierro() {
 	end_check P2.red.fires
 }
 
-# barre_mutantes_huerfanos: retira los arboles de mutante de corridas que ya no
-# existen, y conserva los de corridas VIVAS.
+# barre_mutantes_huerfanos: removes the mutant trees of runs that no longer
+# exist, and keeps those of LIVE runs.
 #
-# El predicado es el PROCESO y no la fecha: cada arbol lleva su marca con el pid
-# dentro, y solo se retira si ese pid ya no esta. La vida se pregunta dos veces,
-# `kill -0` y `ps`, porque `kill -0` lee EPERM como muerto y un proceso vivo de
-# otro usuario se llevaria su arbol por delante con un mensaje tranquilizador;
-# ese defecto ya se pago en la guarda de `make clean` el 7 de septiembre. Una
-# marca sin pid legible NO se retira: se anuncia, porque es de antes de que la
-# marca lo llevara y no hay con que decidir.
+# The predicate is the PROCESS and not the date: each tree carries its marker with the pid
+# inside, and it is only removed if that pid is gone. Life is asked twice,
+# `kill -0` and `ps`, because `kill -0` reads EPERM as dead and a live process of
+# another user would sweep its tree away with a reassuring message;
+# that defect was already paid for in the `make clean` guard on 7 September. A
+# marker without a readable pid is NOT removed: it is announced, because it is from
+# before the marker carried it and there is no way to decide.
 barre_mutantes_huerfanos() {
 	local base="${TMPDIR:-/tmp}" d marca pid retirados=0 dudosos=0
 	for d in "${base}"/naylamp-p2-mut-*; do
@@ -3313,7 +3313,7 @@ barre_mutantes_huerfanos() {
 	return 0
 }
 
-# mut_barre <senal o vacio>: walks this run's mutant pid list, counts the ones
+# mut_barre <senal or empty>: walks this run's mutant pid list, counts the ones
 # that are alive AND ours, and signals them when a signal is given. It prints the
 # count so the caller can use it as the predicate. The identity test is the
 # command line, and liveness is asked twice because `kill -0` reports EPERM as
@@ -3402,20 +3402,20 @@ phase_hygiene() {
 	if [ -d "${FLEET}" ]; then
 		fail "P2.hygiene: the fleet directory survived its own removal"
 	fi
-	# Y EL BARRIDO DE SELLOS TAMBIEN AQUI. En el ensayo seal_artifact devuelve en su
-	# primera linea, asi que lo unico que corre es el barrido, y eso es deliberado:
-	# el barrido es lo que convierte un artefacto de fierro sin sello en una linea
-	# roja, y el ensayo es lo que mas veces pasa por delante de gate/out.
+	# AND THE SEAL SWEEP HERE TOO. In the rehearsal seal_artifact returns on its
+	# first line, so the only thing that runs is the sweep, and that is deliberate:
+	# the sweep is what turns an iron artifact without a seal into a red
+	# line, and the rehearsal is what most often passes in front of gate/out.
 	veredicto_del_sello
-	# EL VERDE CUELGA DE CHECK_FAILED, y hasta este cambio colgaba de un contador
-	# propio, `left`, que solo subia en los sitios que cuentan nodos. Los dos decian
-	# lo mismo mientras cada sitio que lo subia llamaba tambien a fail, que era el
-	# caso; el barrido de sellos de arriba rompe esa igualdad, porque falla sin
-	# tocar ningun nodo. Con la condicion vieja, una corrida con un artefacto de
-	# fierro sin sello habria impreso su linea de PASS justo encima de su propio
-	# veredicto rojo. El contador se ha ido entero en vez de quedarse asignado y sin
-	# leer: fail ya lleva la cuenta que decide, y una segunda que nadie lee es la
-	# clase de adorno que este fichero le quita a otros.
+	# THE GREEN HANGS ON CHECK_FAILED, and until this change it hung on a counter
+	# of its own, `left`, which only went up in the places that count nodes. Both said
+	# the same as long as every place that raised it also called fail, which was the
+	# case; the seal sweep above breaks that equality, because it fails without
+	# touching any node. With the old condition, a run with an iron artifact
+	# without a seal would have printed its PASS line right above its own
+	# red verdict. The counter is gone entirely instead of staying assigned and
+	# unread: fail already keeps the count that decides, and a second one nobody
+	# reads is the kind of ornament this file takes away from others.
 	[ "${CHECK_FAILED}" -eq 0 ] && pass "P2.hygiene: no node left running, the fleet directory is gone, and no p2 iron artifact is left unsealed"
 	end_check P2.hygiene
 }
@@ -3467,56 +3467,56 @@ limpia_flota() {
 # can never come out zero.
 al_salir() {
 	local rc=$?
-	# `set +e` EN LA TRAMPA, y entra el 8 de septiembre de 2026 con el sello. No es
-	# relajar la guardia: es que una trampa que se muere a mitad es peor que una que
-	# sigue. Sin esta linea, `completa_el_sello` puede matar la salida: su
-	# `esperada="$(grep -m1 '^expected:' ...)"` es una ASIGNACION cuya sustitucion
-	# falla si el sello no lleva esa linea, y bajo `set -e` eso mata al shell DENTRO
-	# de la trampa, o sea que se saltan `retira_running` y el bloque de veredictos y
-	# la corrida se cierra sin decir nada. `cleanup` de gate/p1.sh lleva este `set +e`
-	# desde su primera version y por esta misma razon; esta trampa no lo llevaba
-	# porque hasta hoy ninguna de sus lineas podia fallar.
+	# `set +e` IN THE TRAP, and it comes in on 2026-09-08 with the seal. It is not
+	# relaxing the guard: it is that a trap that dies halfway is worse than one that
+	# goes on. Without this line, `completa_el_sello` can kill the exit: its
+	# `esperada="$(grep -m1 '^expected:' ...)"` is an ASSIGNMENT whose substitution
+	# fails if the seal does not carry that line, and under `set -e` that kills the
+	# shell INSIDE the trap, meaning that `retira_running` and the verdict block
+	# are skipped and the run closes without saying anything. gate/p1.sh's `cleanup`
+	# has carried this `set +e` since its first version and for this same reason;
+	# this trap did not carry it because until today none of its lines could fail.
 	#
-	# LO QUE NO LO VIGILA, dicho: ninguna fila de banco. gate/p2-guard-test.sh corre
-	# cada copia con `set -e` puesto y llegaria hasta aqui, pero el sello NO se
-	# escribe en el ensayo, asi que la rama no se alcanza desde alli; y
-	# gate/p2-iron-test.sh sourcea este fichero bajo su propio `set -uo pipefail`,
-	# sin `-e`, o sea que reproduce la version indulgente. Va escrito en vez de
-	# fingir que una fila lo cubre.
+	# WHAT DOES NOT WATCH IT, said: no bench row. gate/p2-guard-test.sh runs
+	# each copy with `set -e` in place and would get as far as here, but the seal is NOT
+	# written in the rehearsal, so the branch is not reached from there; and
+	# gate/p2-iron-test.sh sources this file under its own `set -uo pipefail`,
+	# without `-e`, so it reproduces the indulgent version. It is written down instead of
+	# pretending that a row covers it.
 	set +e
 	limpia_flota
-	# EL SELLO DE RESPALDO, y es un respaldo y no el sitio al que el sello
-	# pertenece. phase_hygiene_fierro sella primero, con la corrida viva, para que
-	# la corrida pueda comprobar su propio sello y ponerse roja. Esto recoge las
-	# corridas que nunca llegan a la higiene: todos los subcomandos menos all y red,
-	# mas cualquier aborto. Sellar tambien aqui es por lo que una corrida que muere a
-	# mitad de fase conserva lo que alcanzo a escribir.
+	# THE FALLBACK SEAL, and it is a fallback and not the place the seal
+	# belongs to. phase_hygiene_fierro seals first, with the run alive, so that
+	# the run can check its own seal and turn red. This picks up the
+	# runs that never reach the hygiene: all subcommands except all and red,
+	# plus any abort. Sealing here too is why a run that dies in the middle of
+	# a phase keeps what it managed to write.
 	#
-	# Y VA DESPUES DE limpia_flota A PROPOSITO, con la razon corregida por un lector:
-	# esa funcion COPIA los logs de los nodos dentro del artefacto, no los mueve, y
-	# lo que la ordena antes no es el valor de esos logos como cita. Es la prueba del
-	# VACIO: seal_artifact se niega a sellar un artefacto cuyo unico fichero sea el
-	# marcador, asi que una corrida que murio antes de escribir nada propio solo
-	# tiene algo que sellar DESPUES de que los logs esten dentro. En los caminos
-	# `all` y `red` esto no decide nada, porque el sello ya lo escribio
-	# phase_hygiene_fierro; decide en los que nunca llegan a la higiene, que son
-	# justo los que este respaldo existe para recoger.
+	# AND IT GOES AFTER limpia_flota ON PURPOSE, with the reason corrected by a reader:
+	# that function COPIES the node logs into the artifact, it does not move them, and
+	# what orders it before is not those logs' value as a citation. It is the test of
+	# EMPTINESS: seal_artifact refuses to seal an artifact whose only file is the
+	# marker, so a run that died before writing anything of its own only
+	# has something to seal AFTER the logs are inside. On the paths
+	# `all` and `red` this decides nothing, because the seal was already written by
+	# phase_hygiene_fierro; it decides on those that never reach the hygiene, which are
+	# exactly the ones this fallback exists to pick up.
 	#
-	# EL MARCADOR SE RETIRA AL FINAL Y NO AL PRINCIPIO, que es la forma de p1.sh y
-	# su razon es la ventana: entre la retirada y el sello el artefacto no lleva
-	# ninguna de las dos guardas, ni marcador vivo ni sello, y un barrido que caiga
-	# ahi se lo lleva. Hoy esa ventana son tres llamadas; el dia que al_salir crezca,
-	# y en fierro crecera, deja de ser gratis.
-	# LO ENVIADO EN VUELO SE PLIEGA ANTES DE SELLAR, porque el manifiesto viaja
-	# dentro del artefacto: un id que se envio, se comprometio y no dejo linea seria
-	# un fantasma para siempre en la evidencia que se cita.
-	# EL ESCRITOR EN VUELO SE MATA ANTES DE PLEGAR Y DE SELLAR, y hasta hoy nadie lo
-	# mataba: `limpia_flota` solo conoce los pids de pids.txt, que escribe la rama del
-	# ensayo. Un aborto entre su arranque y su recogida dejaba un proceso anadiendo
-	# lineas al manifiesto DESPUES de que el sello se hubiera escrito con su linea de
-	# veredictos, y podia darle a un mismo id las dos lineas a la vez. Es el caro "sin
-	# via de aborto que deje un estado conocido" ascendido por este mismo brazo: antes
-	# de el, un aborto no dejaba ningun proceso de fondo vivo.
+	# THE MARKER IS REMOVED AT THE END AND NOT AT THE START, which is p1.sh's way and
+	# its reason is the window: between the removal and the seal the artifact carries
+	# neither of the two guards, neither a live marker nor a seal, and a sweep that falls
+	# there takes it away. Today that window is three calls; the day al_salir grows,
+	# and in iron it will grow, it stops being free.
+	# WHAT WAS SENT IN FLIGHT IS FOLDED BEFORE SEALING, because the manifest travels
+	# inside the artifact: an id that was sent, committed and left no line would be
+	# a ghost forever in the evidence that is cited.
+	# THE WRITER IN FLIGHT IS KILLED BEFORE FOLDING AND SEALING, and until today nobody
+	# killed it: `limpia_flota` only knows the pids in pids.txt, which the branch of
+	# the rehearsal writes. An abort between its start and its collection left a process appending
+	# lines to the manifest AFTER the seal had been written with its line of
+	# verdicts, and it could give one same id both lines at once. It is the expensive "no
+	# abort path that leaves a known state" promoted by this same arm: before
+	# it, an abort left no background process alive.
 	if [ -n "${PID_EN_VUELO:-}" ]; then
 		kill "${PID_EN_VUELO}" 2>/dev/null || true
 		wait "${PID_EN_VUELO}" 2>/dev/null || true
@@ -3525,13 +3525,13 @@ al_salir() {
 	seal_artifact
 	completa_el_sello
 	retira_running
-	# Y EL TECHO DE LOS ENSAYOS, AL FINAL DEL TODO Y NO ANTES. Va detras del sello y
-	# de la retirada del marcador por dos razones que se separan: el sello es lo que
-	# decide si el artefacto de ESTA corrida se queda, y barrer antes de sellar seria
-	# barrer con la pregunta a medio contestar; y el marcador es lo que dice a un
-	# `make clean` concurrente que aqui hay una corrida viva, asi que se retira
-	# cuando ya no queda nada que proteger. En fierro esta llamada devuelve en su
-	# primera linea.
+	# AND THE REHEARSAL CEILING, AT THE VERY END AND NOT BEFORE. It goes after the seal
+	# and the marker removal for two reasons that stand apart: the seal is what
+	# decides whether THIS run's artifact stays, and sweeping before sealing would be
+	# sweeping with the question half answered; and the marker is what tells a
+	# concurrent `make clean` that there is a live run here, so it is removed
+	# when there is nothing left to protect. In iron this call returns on its
+	# first line.
 	local retirados_ensayo
 	retirados_ensayo="$(barre_ensayos_viejos)"
 	if [ "${retirados_ensayo:-0}" -ne 0 ]; then
@@ -3610,11 +3610,11 @@ main() {
 	trap 'exit 130' INT
 	trap 'exit 143' TERM
 	banner
-	# LAS DOS COSAS QUE EL SELLO CITA DE LA INVOCACION, y se guardan JUNTO a
-	# RUN_STARTED y no antes: un sello solo se escribe cuando la corrida empezo, asi
-	# que estos dos datos no pueden existir en una invocacion que no llego a
-	# empezar. La hora es la del arranque en UTC y no `ahora`, que devuelve
-	# segundos epoch con tres decimales para restar tiempos y no para leerse.
+	# THE TWO THINGS THE SEAL CITES FROM THE INVOCATION, and they are saved NEXT TO
+	# RUN_STARTED and not before: a seal is only written when the run started, so
+	# these two pieces of data cannot exist in an invocation that did not come to
+	# start. The time is the start time in UTC and not `ahora`, which returns
+	# epoch seconds with three decimals to subtract times and not to be read.
 	SUBCOMANDO="${sub}"
 	ARRANCO_A="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 	RUN_STARTED=1

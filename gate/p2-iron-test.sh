@@ -799,9 +799,9 @@ done
 OUT_LOCAL="${OUT_DIR}/p2-local-20260208T000000Z-800"
 SALIDA_MARCADOR="$(barre_ensayos_viejos 2>&1 >/dev/null)"
 
-roja 17aa "si|1" "$([ -d "${OUT_DIR}/p2-local-20260101T000000Z-111" ] && echo si || echo no)|$(printf '%s' "${SALIDA_MARCADOR}" | grep -c 'su corrida sigue viva')" "un artefacto con un pid VIVO dentro sobrevive al techo y lo dice: el techo es una regla sobre lo que ya termino, y sin esta linea el barrido repetia por TERCERA vez el incidente que make clean tuvo dos veces"
-fila 17ab "no|1" "$([ -d "${OUT_DIR}/p2-local-20260101T000000Z-222" ] && echo si || echo no)|$(printf '%s' "${SALIDA_MARCADOR}" | grep -c 'una corrida que no termino')" "y el de un pid MUERTO si se retira, diciendolo: si un marcador huerfano protegiera, una corrida matada con -9 bloquearia el techo para siempre, que es como una defensa se acaba quitando por estorbar"
-roja 17ac "si|1" "$([ -d "${OUT_DIR}/p2-local-20260101T000000Z-333" ] && echo si || echo no)|$(printf '%s' "${SALIDA_MARCADOR}" | grep -c 'no se puede leer')" "un pid que no se puede LEER no es lo mismo que un pid muerto: son TRES respuestas y no dos, y la de en medio se conserva y se dice"
+roja 17aa "si|1" "$([ -d "${OUT_DIR}/p2-local-20260101T000000Z-111" ] && echo si || echo no)|$(printf '%s' "${SALIDA_MARCADOR}" | grep -c 'its run is still alive')" "un artefacto con un pid VIVO dentro sobrevive al techo y lo dice: el techo es una regla sobre lo que ya termino, y sin esta linea el barrido repetia por TERCERA vez el incidente que make clean tuvo dos veces"
+fila 17ab "no|1" "$([ -d "${OUT_DIR}/p2-local-20260101T000000Z-222" ] && echo si || echo no)|$(printf '%s' "${SALIDA_MARCADOR}" | grep -c 'an unfinished run')" "y el de un pid MUERTO si se retira, diciendolo: si un marcador huerfano protegiera, una corrida matada con -9 bloquearia el techo para siempre, que es como una defensa se acaba quitando por estorbar"
+roja 17ac "si|1" "$([ -d "${OUT_DIR}/p2-local-20260101T000000Z-333" ] && echo si || echo no)|$(printf '%s' "${SALIDA_MARCADOR}" | grep -c 'cannot be read')" "un pid que no se puede LEER no es lo mismo que un pid muerto: son TRES respuestas y no dos, y la de en medio se conserva y se dice"
 fila 17ad "no" "$([ -d "${OUT_DIR}/p2-local-20260101T000000Z-444" ] && echo si || echo no)" "y sin marcador ninguno el techo se lo lleva como siempre, que es el control sin el cual las tres de arriba pasarian con un techo que no borrase nunca"
 
 kill "${PID_VIVO}" 2>/dev/null || true
@@ -919,7 +919,7 @@ chmod +x "${BANCO}/casa/1/naylamp/bin/naylampd"
 escritor_en_vuelo
 fila 17ca "6|0" "$(grep -c ' confirmed$' "${MANIFEST}")|$(grep -c ' uncertain$' "${MANIFEST}")" "con la conexion viva, cada ack deja UNA linea confirmed en el manifiesto y ninguna uncertain: su ausencia del log sera un veredicto, que es exactamente la propiedad"
 fila 17cb "6|0" "$(grep -c '^ack ' "${OUT_LOCAL}/en-vuelo.txt")|$(grep -c '^sin-ack ' "${OUT_LOCAL}/en-vuelo.txt")" "y cada uno queda fechado en el crudo de la frontera, que es lo que dice en que INSTANTE se cerro el manifiesto"
-fila 17cc "1|1" "$(grep -c 'ultimo ack:' "${OUT_LOCAL}/en-vuelo-frontera.txt")|$(grep -c 'acks:' "${OUT_LOCAL}/en-vuelo-frontera.txt")" "y la frontera se escribe en el ARTEFACTO y no solo en la consola, porque es lo que se cita cuando la consola ya no esta"
+fila 17cc "1|1" "$(grep -c 'last ack:' "${OUT_LOCAL}/en-vuelo-frontera.txt")|$(grep -c '^acks:' "${OUT_LOCAL}/en-vuelo-frontera.txt")" "y la frontera se escribe en el ARTEFACTO y no solo en la consola, porque es lo que se cita cuando la consola ya no esta"
 
 # EL CORTE, visto desde el cliente: la conexion deja de dar acks a mitad.
 : > "${MANIFEST}"; rm -f -- "${OUT_LOCAL}/en-vuelo.txt"
@@ -1600,7 +1600,7 @@ fila 17ia "si|si|si|si|no" "$(printf '%s' "${SALIDA_CORTE}" | grep -q 'starting 
 # LA 17ib PREGUNTA DOS COSAS QUE PUEDEN SALIR MAL, y la primera version pregunto
 # una que no podia: comparaba el veredicto contra "distinto de none O igual a
 # none", que es verdad siempre. Una fila que no puede fallar no es una fila.
-roja 17ib "si|pass" "$(printf '%s' "${SALIDA_CORTE}" | grep -q 'en vuelo:' && echo si || echo no)|$(verdict_of P2.cut.envuelo)" "y en el mismo recorrido lee la frontera del escritor y REGISTRA el veredicto en vuelo: el ORDEN de esas seis llamadas es lo unico que el sitio decide, y sin esta fila un cambio en el orden solo se veria en la primera corrida de fierro. La segunda columna exige PASS y no una alternancia: en este montaje el escritor ackea cuatro veces medidas, asi que none seria un defecto y no una rama legitima"
+roja 17ib "si|pass" "$(printf '%s' "${SALIDA_CORTE}" | grep -q 'in flight:' && echo si || echo no)|$(verdict_of P2.cut.envuelo)" "y en el mismo recorrido lee la frontera del escritor y REGISTRA el veredicto en vuelo: el ORDEN de esas seis llamadas es lo unico que el sitio decide, y sin esta fila un cambio en el orden solo se veria en la primera corrida de fierro. La segunda columna exige PASS y no una alternancia: en este montaje el escritor ackea cuatro veces medidas, asi que none seria un defecto y no una rama legitima"
 
 # ---- 17ic: EL PRESUPUESTO DE LA VENTANA, medido por la ESTRUCTURA -------------
 #

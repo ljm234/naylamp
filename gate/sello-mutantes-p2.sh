@@ -221,9 +221,9 @@ control
 
 mutante M1 '
 	seal_artifact
-	# LA CONDICION PREGUNTA SI HABIA ALGO QUE SELLAR.' '
+	# THE CONDITION ASKS WHETHER THERE WAS SOMETHING TO SEAL.' '
 	# MUTANTE M1: sellar DESPUES de barrer
-	# LA CONDICION PREGUNTA SI HABIA ALGO QUE SELLAR.' 'sellar DESPUES de barrer, no antes'
+	# THE CONDITION ASKS WHETHER THERE WAS SOMETHING TO SEAL.' 'sellar DESPUES de barrer, no antes'
 
 mutante M2 '			[ -n "$(ls -A "${d}" 2>/dev/null | grep -vx RUNNING)" ] || continue' \
 '			[ -n "$(ls -A "${d}" 2>/dev/null)" ] || continue' 'el barrido cuenta el marcador RUNNING como contenido'
@@ -364,7 +364,7 @@ mitad M22b '		case "${nombre}" in
 				rm -rf -- "${OUT_DIR}/${nombre}"
 				retirados=$((retirados + 1)) ;;
 			*)
-				echo "gate: NO retiro ${d}: no es un artefacto de ensayo de este gate" >&2 ;;
+				echo "gate: NOT removing ${d}: not a rehearsal artifact of this gate" >&2 ;;
 		esac' '		rm -rf -- "${OUT_DIR}/${nombre}"
 		retirados=$((retirados + 1))' \
 'SEGUNDA MITAD: se quita el case que refusa lo que no es un nombre de ensayo'
@@ -372,38 +372,38 @@ mitad M22b '		case "${nombre}" in
 mutante M22c '	for nombre in $(cd "${OUT_DIR}" 2>/dev/null && ls -dt p2-local-[0-9]*Z-[0-9]* 2>/dev/null); do
 		d="${OUT_DIR}/${nombre}"
 		[ -d "${d}" ] || continue
-		# EL DE ESTA CORRIDA NUNCA, y se excluye POR NOMBRE y no por confiar en que
-		# sea el mas reciente. El banco se apoya en que el suyo es el mas nuevo; eso
-		# es cierto hasta el dia que dos corridas se solapan, y entonces una borra el
-		# artefacto vivo de la otra. Una exclusion explicita no tiene ese dia.
+		# THIS RUN'"'"'S OWN NEVER, and it is excluded BY NAME and not by trusting that
+		# it is the most recent. The bench relies on its own being the newest; that
+		# is true until the day two runs overlap, and then one deletes the other'"'"'s
+		# live artifact. An explicit exclusion does not have that day.
 		[ "${nombre}" = "${propio}" ] && continue
 		n=$((n + 1))
 		[ "${n}" -le "${CONSERVA_ENSAYOS}" ] && continue
-		# EL MARCADOR MANDA SOBRE EL TECHO, y esta es la linea que faltaba. Un
-		# artefacto cuya corrida sigue VIVA no se retira por viejo: el techo es una
-		# regla sobre lo que ya termino. Y el que lleva un marcador cuyo proceso murio
-		# se retira, pero diciendolo, porque sus restos son informacion. La cuenta del
-		# techo NO se le devuelve al vivo: ocupa su sitio en la ventana igual que
-		# cualquier otro, y lo unico que cambia es que no se borra.
+		# THE MARKER TAKES PRECEDENCE OVER THE CAP, and this is the missing line. An
+		# artifact whose run is still LIVE is not removed for being old: the cap is a
+		# rule about what has already finished. And the one carrying a marker whose
+		# process died is removed, but saying so, because its remains are information.
+		# The cap'"'"'s count is NOT given back to the live one: it takes its place in the
+		# window just like any other, and the only change is that it is not deleted.
 		case "$(marcador_de "${d}")" in
 			vivo)
-				echo "gate: NO retiro ${d}: su corrida sigue viva, con marcador y pid vivo dentro" >&2
+				echo "gate: NOT removing ${d}: its run is still alive, marker and live pid inside" >&2
 				continue ;;
 			ilegible)
-				echo "gate: NO retiro ${d}: lleva un marcador con un pid que no se puede leer, y eso no es lo mismo que estar muerto" >&2
+				echo "gate: NOT removing ${d}: it carries a marker whose pid cannot be read, and that is not the same as being dead" >&2
 				continue ;;
 			muerto)
-				echo "gate: retiro ${d} por el techo: lleva el marcador de una corrida que no termino" >&2 ;;
+				echo "gate: removing ${d} under the cap: it carries the marker of an unfinished run" >&2 ;;
 		esac
-		# Clausula 23: la ruta se compone de OUT_DIR mas un nombre que se acaba de
-		# comprobar contra la forma exacta por la que este guion borra, y lo que no
-		# sea esa forma se dice en voz alta en vez de borrarse.
+		# Clause 23: the path is made of OUT_DIR plus a name that has just been
+		# checked against the exact form by which this script deletes, and what is not
+		# that form is said out loud instead of being deleted.
 		case "${nombre}" in
 			p2-local-[0-9]*Z-[0-9]*)
 				rm -rf -- "${OUT_DIR}/${nombre}"
 				retirados=$((retirados + 1)) ;;
 			*)
-				echo "gate: NO retiro ${d}: no es un artefacto de ensayo de este gate" >&2 ;;
+				echo "gate: NOT removing ${d}: not a rehearsal artifact of this gate" >&2 ;;
 		esac
 	done' '	for nombre in $(cd "${OUT_DIR}" 2>/dev/null && ls -dt p2-[0-9a-z]*Z-[0-9]* 2>/dev/null); do
 		d="${OUT_DIR}/${nombre}"
@@ -424,18 +424,18 @@ mutante M23 '		[ -d "${OUT_DIR}/p2-local-${id}" ] && continue' '		:' \
 # de las cuatro decisiones y la fila que lo caza va al lado.
 mutante M24 '		case "$(marcador_de "${d}")" in
 			vivo)
-				echo "gate: NO retiro ${d}: su corrida sigue viva, con marcador y pid vivo dentro" >&2
+				echo "gate: NOT removing ${d}: its run is still alive, marker and live pid inside" >&2
 				continue ;;
 			ilegible)
-				echo "gate: NO retiro ${d}: lleva un marcador con un pid que no se puede leer, y eso no es lo mismo que estar muerto" >&2
+				echo "gate: NOT removing ${d}: it carries a marker whose pid cannot be read, and that is not the same as being dead" >&2
 				continue ;;
 			muerto)
-				echo "gate: retiro ${d} por el techo: lleva el marcador de una corrida que no termino" >&2 ;;
+				echo "gate: removing ${d} under the cap: it carries the marker of an unfinished run" >&2 ;;
 		esac' '		:' \
 'el techo vuelve a borrar por antiguedad sin mirar el marcador: el incidente por TERCERA vez'
 
 mutante M25 '			ilegible)
-				echo "gate: NO retiro ${d}: lleva un marcador con un pid que no se puede leer, y eso no es lo mismo que estar muerto" >&2
+				echo "gate: NOT removing ${d}: it carries a marker whose pid cannot be read, and that is not the same as being dead" >&2
 				continue ;;' '			ilegible) ;;' \
 'un pid ilegible se trata como muerto: dos respuestas donde hay tres'
 
@@ -547,9 +547,9 @@ mutante M44 '	# shellcheck disable=SC2086
 # vigila ya tres capas de arreglos sobre arreglos.
 mutante M45 '	end_check P2.cut.fired
 
-	# EL VEREDICTO EN VUELO VA DETRAS DEL end_check DE ESTA FASE, nunca dentro: abre
-	# su propio bloque con su propio begin_check, y compartirlo era borrar los FAIL
-	# de P2.cut.fired.
+	# THE IN-FLIGHT VERDICT GOES BEHIND THIS PHASE'"'"'S end_check, never inside: it opens
+	# its own block with its own begin_check, and sharing it was erasing the FAILs
+	# of P2.cut.fired.
 	veredicto_en_vuelo' '	veredicto_en_vuelo
 	end_check P2.cut.fired' \
 'veredicto_en_vuelo vuelve DENTRO del bloque de P2.cut.fired y su begin_check borra los FAIL de la fase'
