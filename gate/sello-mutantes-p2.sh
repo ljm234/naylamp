@@ -505,7 +505,7 @@ mutante M34 '	if "${GATE_DIR}/deploy.sh" >/dev/null 2>&1; then' '	if true; then'
 mutante M35 '	if "${GATE_DIR}/cluster.sh" start >/dev/null 2>&1; then' '	if true; then' \
 'la mitad caliente deja de levantar la flota' p2-preflight.sh
 
-mutante M36 '	paso "naylamp/data, naylamp/logs y naylamp/data-mutante VACIOS en los tres, verificado y no supuesto"' \
+mutante M36 '	paso "naylamp/data, naylamp/logs and naylamp/data-mutante EMPTY on the three, checked and not assumed"' \
 '	paso "naylamp/data sin mirar"' \
 'la mitad caliente deja de exigir el estado de partida de los hosts' p2-preflight.sh
 
@@ -560,7 +560,7 @@ mutante M46 '			'"'"'find naylamp/data naylamp/logs naylamp/data-mutante -mindep
 		case "${antes}" in' \
 'la precondicion vuelve a contar con ls -A, que da tres sobre tres directorios vacios' p2-preflight.sh
 
-mutante M47 '		ok "la flota eligio lider, y lo escribio el host ${quien} con ${LITERAL_LIDER}; se pregunto a los tres porque solo el que GANA deja esa linea"' \
+mutante M47 '		ok "the fleet elected a leader, and host ${quien} wrote it with ${LITERAL_LIDER}; the three were asked because only the one that WINS leaves that line"' \
 '		ok "la flota eligio lider, leido del host 1"' \
 'el mensaje del lider deja de decir a cual de los tres se le leyo' p2-preflight.sh
 
