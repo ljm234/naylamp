@@ -1,127 +1,127 @@
 #!/usr/bin/env bash
-# Barrido de mutantes sobre el sello de gate/p2.sh (DEFER-098).
+# Mutation sweep over the seal of gate/p2.sh (DEFER-098).
 #
-# QUE MIDE. Cada mutante rebobina UNA decision del sello y se corre el banco
-# gate/p2-iron-test.sh contra el arbol mutado. Lo que se publica es que filas
-# CAEN: un mutante que no tumba ninguna fila es una decision que el banco no
-# vigila, y esa es toda la pregunta.
+# WHAT IT MEASURES. Each mutant rewinds ONE decision of the seal and the bench
+# gate/p2-iron-test.sh is run against the mutated tree. What it publishes is which rows
+# FALL: a mutant that knocks down no row is a decision the bench does not
+# watch, and that is the whole question.
 #
-# EL ARBOL MUTADO ES UNA COPIA Y NO EL DE TRABAJO. Se copia gate/ SIN gate/out,
-# que son 183 MiB de artefactos, y el banco crea el suyo dentro de la copia.
+# THE MUTATED TREE IS A COPY AND NOT THE WORKING ONE. gate/ is copied WITHOUT gate/out,
+# which is 183 MiB of artifacts, and the bench creates its own inside the copy.
 #
-# VIVE EN EL ARBOL Y NO EN EL WORKSPACE, y la primera version estaba al reves.
-# El argumento para dejarlo fuera era que esto no es una guarda sino el
-# instrumento que MIDE una guarda, y eso sigue siendo cierto; lo que no se sostuvo
-# es la conclusion. Un fichero nuevo en el workspace pone en rojo la regla dura de
-# DEFER-079, que pide una copia anterior de todo lo que se toca y no sabe separar
-# un fichero nuevo de uno viejo que nadie copio; su propio comentario lo dice. Y
-# el argumento de fondo es mejor que el de forma: la frase "los mutantes muerden" no vale nada si quien la lee no puede volver a derivarla. Aqui puede,
-# contra el mismo arbol, con una orden.
+# IT LIVES IN THE TREE AND NOT IN THE WORKSPACE, and the first version had it the other way.
+# The argument for keeping it out was that this is not a guard but the
+# instrument that MEASURES a guard, and that is still true; what did not hold
+# is the conclusion. A new file in the workspace trips the hard rule of
+# DEFER-079, which asks for an earlier copy of everything touched and cannot tell
+# a new file from an old one nobody copied; its own comment says so. And
+# the argument of substance is better than the one of form: the sentence "the mutants bite" is worth nothing if whoever reads it cannot derive it again. Here it can,
+# against the same tree, with one command.
 #
-# NO ES UN PASO DE CI, y esto se decide midiendo y no por costumbre. LO QUE CUESTA
-# LO IMPRIME EL PROPIO BARRIDO en su ultima linea, y por eso no hay ninguna cifra
-# escrita aqui: un numero de reloj guardado en un comentario envejece en cuanto se
-# anade un mutante o le crece una fila al banco, y a este le han pasado las dos
-# cosas en un dia. Cabria en un flujo de sobra. Lo que no cabe es su FORMA: cada
-# mutante casa una CADENA EXACTA de gate/p2.sh y se para si no la encuentra UNA
-# sola vez, que es lo que lo hace honesto a mano y venenoso en un flujo. Cualquier
-# edicion legitima de esas lineas volveria roja la rama con un mensaje sobre el
-# barrido y no sobre el cambio, y un CI que se pone rojo por trabajar se apaga. Se
-# corre a mano cuando se toca el sello, que es justo cuando su respuesta importa.
+# IT IS NOT A CI STEP, and this is decided by measuring and not by habit. WHAT IT COSTS
+# IS PRINTED BY THE SWEEP ITSELF on its last line, which is why there is no figure
+# written here: a clock figure kept in a comment goes stale as soon as
+# a mutant is added or the bench grows a row, and both have happened to this one
+# in a single day. It would fit in a pipeline easily. What does not fit is its SHAPE: each
+# mutant matches an EXACT STRING of gate/p2.sh and stops if it does not find it
+# exactly once, which is what makes it honest by hand and poisonous in a pipeline. Any
+# legitimate edit of those lines would turn the branch red with a message about the
+# sweep and not about the change, and a CI that goes red for working gets switched off. It
+# is run by hand when the seal is touched, which is exactly when its answer matters.
 #
-# Uso:
-#   bash gate/sello-mutantes-p2.sh <ruta del repositorio> <directorio padre>
+# Usage:
+#   bash gate/sello-mutantes-p2.sh <repository path> <parent directory>
 set -uo pipefail
 
-# EL BORRADO NO TOMA SU RUTA DE UN ARGUMENTO, y la primera version de este guion si:
-# hacia `rm -rf -- "$2"` sobre lo que le pasaran. Eso es la clausula 23 rota en el
-# sitio mas caro, porque la salida de esa clausula es que una ruta que puede hacer
-# dano se escriba literal o se VALIDE antes de la orden. Aqui se hace lo segundo y
-# ademas se le quita el filo: el segundo argumento es un directorio PADRE que tiene
-# que existir ya, y el taller es un hijo suyo con un nombre que este guion elige y
-# que lleva su pid dentro. Lo que se borra es siempre esa ruta construida por el
-# guion, nunca la que le den, y se comprueba que lo es antes de borrarla.
+# THE DELETE DOES NOT TAKE ITS PATH FROM AN ARGUMENT, and the first version of this script did:
+# it did `rm -rf -- "$2"` on whatever it was handed. That is clause 23 broken in the
+# most expensive place, because the way out of that clause is that a path that can do
+# harm is written literally or VALIDATED before the command. Here the second is done and
+# on top of that it is blunted: the second argument is a PARENT directory that has
+# to exist already, and the workshop is a child of it with a name this script chooses and
+# that carries its pid inside. What is deleted is always that path built by the
+# script, never the one it is given, and it is checked to be so before deleting it.
 #
-# Y SE NIEGA EN VOZ ALTA SIN ARGUMENTOS en vez de morir con un `$1: unbound
-# variable`, que es lo que hacia. Un guion que se rompe con el error crudo del shell
-# no dice que hacer, y su estado de salida se confunde con el de una medida.
+# AND IT REFUSES OUT LOUD WITHOUT ARGUMENTS instead of dying with a `$1: unbound
+# variable`, which is what it did. A script that breaks with the shell's raw error
+# does not say what to do, and its exit status is confused with that of a measurement.
 if [ "$#" -lt 2 ]; then
 	cat >&2 <<'USO'
-uso: bash gate/sello-mutantes-p2.sh <ruta del repositorio> <directorio padre para el taller>
+usage: bash gate/sello-mutantes-p2.sh <repository path> <parent directory for the workshop>
 
-  El taller se crea DENTRO del padre, con un nombre propio y el pid dentro, y es
-  lo unico que este guion borra. El padre tiene que existir ya y no se toca.
+  The workshop is created INSIDE the parent, with a name of its own and the pid inside, and it is
+  the only thing this script deletes. The parent has to exist already and is not touched.
 
-  Sale 0 si el control queda en cero y ningun mutante sale mudo, 1 si no, y 2 si
-  la comprobacion no se pudo hacer, que no es ni pase ni fallo.
+  It exits 0 if the control stays at zero and no mutant comes out silent, 1 if not, and 2 if
+  the check could not be made, which is neither a pass nor a failure.
 USO
 	exit 2
 fi
 REPO="$1"
 PADRE="$2"
 [ -d "${REPO}/gate" ] && [ -f "${REPO}/go.work" ] || {
-	echo "sello-mutantes: ${REPO} no parece la raiz de este repositorio" >&2; exit 2; }
+	echo "sello-mutantes: ${REPO} does not look like the root of this repository" >&2; exit 2; }
 [ -d "${PADRE}" ] || {
-	echo "sello-mutantes: ${PADRE} no existe, y este guion no crea el directorio padre" >&2; exit 2; }
+	echo "sello-mutantes: ${PADRE} does not exist, and this script does not create the parent directory" >&2; exit 2; }
 TALLER="${PADRE}/naylamp-sello-mutantes-$$"
 case "${TALLER}" in
 	"${PADRE}/naylamp-sello-mutantes-"[0-9]*) ;;
-	*) echo "sello-mutantes: el taller ${TALLER} no tiene la forma por la que este guion borra" >&2; exit 2 ;;
+	*) echo "sello-mutantes: the workshop ${TALLER} does not have the shape this script deletes by" >&2; exit 2 ;;
 esac
 rm -rf -- "${PADRE}/naylamp-sello-mutantes-$$"; mkdir -p "${TALLER}/gate/out"
 for f in "${REPO}"/gate/*.sh "${REPO}"/gate/*.txt; do cp "${f}" "${TALLER}/gate/"; done
 cp "${REPO}/go.work" "${TALLER}/" 2>/dev/null || true
-# Y LAS FUENTES DEL MOTOR, que hasta el 9 de septiembre de 2026 no venian. El
-# taller llevaba `gate/` y nada mas, y eso basto mientras el banco solo se miraba a
-# si mismo. Dejo de bastar en cuanto entro una fila que CASTEA un literal contra el
-# objeto que lo produce: la 17db saca `LITERAL_LIDER` de `caliente()` y lo busca en
-# `engine/`, y en un taller sin `engine/` esa columna sale `no` SIEMPRE. El sintoma
-# fue inmediato y feo: `17db` aparecia en la lista de filas caidas de TODOS los
-# mutantes, incluidos los que no tocan nada suyo, o sea que el barrido estaba
-# midiendo un banco corriendo en un arbol roto y llamandolo mordisco. Se copian
-# solo los `.go`, que son 144 ficheros y 1.3 MB; no se compila nada aqui.
+# AND THE ENGINE SOURCES, which until 2026-09-09 did not come along. The
+# workshop carried `gate/` and nothing else, and that was enough while the bench only looked at
+# itself. It stopped being enough as soon as a row entered that CASTS a literal against the
+# object that produces it: row 17db pulls `LITERAL_LIDER` out of `caliente()` and looks for it in
+# `engine/`, and in a workshop without `engine/` that column comes out `no` ALWAYS. The symptom
+# was immediate and ugly: `17db` appeared in the falling-row list of EVERY
+# mutant, including the ones that touch nothing of its own, which means the sweep was
+# measuring a bench running in a broken tree and calling it a bite. Only the
+# `.go` files are copied, 144 files and 1.3 MB; nothing is compiled here.
 (cd "${REPO}" && find engine -name '*.go' -print0) | while IFS= read -r -d '' g; do
 	mkdir -p "${TALLER}/$(dirname "${g}")"
 	cp "${REPO}/${g}" "${TALLER}/${g}"
 done
 
-# LOS IDS TIENEN QUE SER UNICOS, Y SE COMPRUEBA ANTES DE GASTAR DIECIOCHO MINUTOS.
-# El 9 de septiembre de 2026 se anadieron cuatro mutantes eligiendo `M51`, `M52` y
-# `M53`, que ya existian -dos como mutantes y uno como MITAD-. Nada fallo: el
-# barrido corrio los ocho y publico su informe con TRES PARES DE LINEAS HOMONIMAS,
-# cada par diciendo cosas distintas y sin forma de saber cual era cual. Un informe
-# asi no es re-derivable, que es lo unico que este guion produce. La guarda es
-# ESTATICA y va antes de copiar nada, porque el fallo se conoce leyendo el fichero
-# y hacerlo esperar al final costaria la corrida entera para decir lo mismo.
+# THE IDS HAVE TO BE UNIQUE, AND IT IS CHECKED BEFORE SPENDING EIGHTEEN MINUTES.
+# On 2026-09-09 four mutants were added choosing `M51`, `M52` and
+# `M53`, which already existed -two as mutants and one as a HALF-. Nothing failed: the
+# sweep ran all eight and published its report with THREE PAIRS OF HOMONYMOUS LINES,
+# each pair saying different things and with no way to know which was which. A report
+# like that is not re-derivable, which is the only thing this script produces. The guard is
+# STATIC and runs before copying anything, because the failure is known by reading the file
+# and making it wait until the end would cost the whole run to say the same thing.
 IDS_REPES="$(grep -oE '^(mutante|mitad) M[0-9a-z]+' "$0" | awk '{print $2}' | sort | uniq -d | tr '\n' ' ')"
 if [ -n "${IDS_REPES%% }" ] && [ -n "${IDS_REPES}" ]; then
-	echo "sello-mutantes: hay ids de mutante repetidos y el informe no se podria leer: ${IDS_REPES}" >&2
-	echo "sello-mutantes: cada mutante o mitad lleva un id propio; el mayor en uso se ve con grep -oE '^(mutante|mitad) M[0-9]+' sobre este fichero" >&2
+	echo "sello-mutantes: there are repeated mutant ids and the report could not be read: ${IDS_REPES}" >&2
+	echo "sello-mutantes: each mutant or half carries an id of its own; the highest in use is seen with grep -oE '^(mutante|mitad) M[0-9]+' over this file" >&2
 	exit 2
 fi
 
 T_INICIO="$(/usr/bin/python3 -c 'import time; print("%.3f" % time.time())' 2>/dev/null || echo 0)"
-echo "BARRIDO DE MUTANTES: el sello de gate/p2.sh contra gate/p2-iron-test.sh"
-echo "fecha: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-echo "maquina: $(sysctl -n hw.model 2>/dev/null || uname -m), $(uname -sr)"
-echo "arbol: $(cd "${REPO}" && git rev-parse --short HEAD), $(cd "${REPO}" && git status --porcelain | wc -l | tr -d ' ') entradas sin commitear"
-echo "taller: ${TALLER}"
+echo "MUTATION SWEEP: the seal of gate/p2.sh against gate/p2-iron-test.sh"
+echo "date: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+echo "machine: $(sysctl -n hw.model 2>/dev/null || uname -m), $(uname -sr)"
+echo "tree: $(cd "${REPO}" && git rev-parse --short HEAD), $(cd "${REPO}" && git status --porcelain | wc -l | tr -d ' ') uncommitted entries"
+echo "workshop: ${TALLER}"
 echo
 
 CONTROL=0; MUTANTES=0; MUDOS=0; MITADES=0; MITADES_MAL=0
 corre() {
-	# NINGUNA RUTA DE ESTA MAQUINA AQUI, y la primera version llevaba una: el
-	# directorio del toolchain de quien lo escribio, pegado al PATH. Un guion
-	# versionado con la ruta de una maquina dentro es un guion que solo corre en esa
-	# maquina y no lo dice. Medido: gate/p2-iron-test.sh no invoca go ni una vez, asi
-	# que el PATH heredado basta; y si algun dia lo invocara, fallar diciendo "go: no
-	# such file" es mejor que correr con el toolchain equivocado en silencio.
+	# NO PATH FROM THIS MACHINE IN HERE, and the first version carried one: the
+	# toolchain directory of whoever wrote it, glued to the PATH. A script
+	# committed with a machine's path inside is a script that only runs on that
+	# machine and does not say so. Measured: gate/p2-iron-test.sh does not invoke go once, so
+	# the inherited PATH is enough; and if it ever did, failing by saying "go: no
+	# such file" is better than running with the wrong toolchain in silence.
 	bash "${TALLER}/gate/p2-iron-test.sh" 2>/dev/null
 }
 control() {
-	# EL CONTROL RESTAURA TODOS LOS GUIONES y no solo p2.sh, desde que el barrido
-	# puede mutar mas de uno: si no, el ultimo mutante del preflight se quedaria
-	# puesto y el control mediria un arbol que no es el del repositorio.
+	# THE CONTROL RESTORES EVERY SCRIPT and not only p2.sh, since the sweep
+	# can mutate more than one: otherwise the last mutant of the preflight would stay
+	# mounted and the control would measure a tree that is not the repository's.
 	for f in "${REPO}"/gate/*.sh; do cp "${f}" "${TALLER}/gate/"; done
 	cp "${REPO}/gate/p2.sh" "${TALLER}/gate/p2.sh"
 	local n salida
@@ -129,38 +129,38 @@ control() {
 	n="$(printf '%s' "${salida}" | grep -cE '^ROW .* FAILING ' || true)"
 	CONTROL="${n}"
 	if ! printf '%s' "${salida}" | grep -q '^RESULTADO: '; then
-		echo "CONTROL   sin mutar: el banco ABORTA. Sin control verde este barrido no dice nada" >&2
+		echo "CONTROL   unmutated: the bench ABORTS. Without a green control this sweep says nothing" >&2
 		CONTROL=-1
 		return
 	fi
-	printf 'CONTROL   sin mutar: %s filas en FALLA, y el banco llega a su resumen\n' "${n}"
+	printf 'CONTROL   unmutated: %s rows failing, and the bench reaches its summary\n' "${n}"
 	echo
 }
-# LA MUTACION SE APLICA EN UN SOLO SITIO, y antes vivia copiada dentro de `mutante`.
-# Al entrar `mitad` habria hecho falta una segunda copia del mismo heredoc, y dos
-# copias de un predicado son dos sitios donde corregirlo: la clase que este registro
-# persigue con nombre propio. Se saca a funcion y las dos la llaman.
+# THE MUTATION IS APPLIED IN ONE PLACE, and before it lived copied inside `mutante`.
+# When `mitad` entered, a second copy of the same heredoc would have been needed, and two
+# copies of a predicate are two places to fix it: the class this record
+# pursues by name. It is moved out to a function and both call it.
 aplica_mutacion() {
 	/usr/bin/python3 - "$1" "$2" "$3" <<'FINDELPYTHON'
 import sys
 p, viejo, nuevo = sys.argv[1], sys.argv[2], sys.argv[3]
 s = open(p, encoding='utf-8').read()
 if s.count(viejo) != 1:
-    sys.stderr.write('la mutacion no muerde donde este barrido cree: %d apariciones\n' % s.count(viejo))
+    sys.stderr.write('the mutation does not bite where this sweep believes: %d occurrences\n' % s.count(viejo))
     raise SystemExit(3)
 open(p, 'w', encoding='utf-8').write(s.replace(viejo, nuevo))
 FINDELPYTHON
 }
 
-# UN TERCER DESENLACE, y entra el 8 de septiembre de 2026 porque los dos que habia
-# no bastaban para decir la verdad. Una propiedad puede estar defendida por DOS
-# guardas independientes, y entonces un mutante que quita SOLO UNA sale mudo sin que
-# eso signifique que nadie la vigila: significa que la otra la para. Contarlo como
-# FALLA es la clausula 15 otra vez, un instrumento que contesta lo contrario de lo
-# que pasa. `mitad` declara ese caso: se ESPERA mudo, y lo que si es un hallazgo es
-# que MUERDA, porque entonces la defensa no era doble y la prosa que lo dice esta
-# mal. La mitad que rompe la propiedad de verdad, quitando las dos, va aparte y como
-# mutante ordinario.
+# A THIRD OUTCOME, and it enters on 2026-09-08 because the two that were there were not
+# enough to tell the truth. A property can be defended by TWO
+# independent guards, and then a mutant that removes ONLY ONE comes out silent without
+# that meaning nobody watches it: it means the other one stops it. Counting it as
+# FAILING is clause 15 again, an instrument that answers the opposite of
+# what happens. `mitad` declares that case: it is EXPECTED silent, and what is a finding is
+# that it BITES, because then the defence was not double and the prose that says so is
+# wrong. The half that really breaks the property, removing both, goes separately and as an
+# ordinary mutant.
 mitad() {
 	local etiqueta="$1" viejo="$2" nuevo="$3" glosa="$4" salida caidas
 	local objeto="${5:-p2.sh}"
@@ -169,38 +169,38 @@ mitad() {
 	for f in "${REPO}"/gate/*.sh; do cp "${f}" "${TALLER}/gate/"; done
 	cp "${REPO}/gate/${objeto}" "${TALLER}/gate/${objeto}"
 	if ! aplica_mutacion "${TALLER}/gate/${objeto}" "${viejo}" "${nuevo}"; then
-		printf '%-5s FALLO DE MONTAJE: la mutacion no se pudo aplicar   %s\n' "${etiqueta}" "${glosa}"
+		printf '%-5s MOUNT FAILURE: the mutation could not be applied   %s\n' "${etiqueta}" "${glosa}"
 		MITADES_MAL=$((MITADES_MAL + 1))
 		return
 	fi
 	salida="$(corre)"
 	caidas="$(printf '%s' "${salida}" | grep -E '^ROW .* FAILING ' | awk '{print $2}' | tr '\n' ' ')"
 	if ! printf '%s' "${salida}" | grep -q '^RESULTADO: '; then
-		printf '%-5s INESPERADO  el banco ABORTA con media guarda quitada   %s\n' "${etiqueta}" "${glosa}"
+		printf '%-5s UNEXPECTED  the bench ABORTS with half a guard removed   %s\n' "${etiqueta}" "${glosa}"
 		MITADES_MAL=$((MITADES_MAL + 1))
 	elif [ -z "${caidas}" ]; then
-		printf '%-5s MITAD  mudo COMO SE ESPERA: la otra guarda sola lo para   %s\n' "${etiqueta}" "${glosa}"
+		printf '%-5s HALF  silent AS EXPECTED: the other guard alone stops it   %s\n' "${etiqueta}" "${glosa}"
 	else
-		printf '%-5s INESPERADO  MUERDE, caen: %-14s la defensa NO era doble   %s\n' "${etiqueta}" "${caidas}" "${glosa}"
+		printf '%-5s UNEXPECTED  BITES, fall: %-14s the defence was NOT double   %s\n' "${etiqueta}" "${caidas}" "${glosa}"
 		MITADES_MAL=$((MITADES_MAL + 1))
 	fi
 }
 
 mutante() {
 	local etiqueta="$1" viejo="$2" nuevo="$3" caidas
-	# EL QUINTO ARGUMENTO ES EL FICHERO, y por defecto es gate/p2.sh, que es donde
-	# vive casi todo lo que este barrido mide. Entra el 9 de septiembre de 2026 con
-	# los cinco bloqueantes del fierro: dos de ellos, el despliegue y el estado de
-	# partida de los hosts, viven en gate/p2-preflight.sh, y un barrido que solo sabe
-	# mutar un fichero no puede decir nada de sus filas. Se RESTAURA el fichero
-	# mutado al terminar cada mutante, para que uno no se lleve al siguiente por
-	# delante.
+	# THE FIFTH ARGUMENT IS THE FILE, and by default it is gate/p2.sh, which is where
+	# almost everything this sweep measures lives. It enters on 2026-09-09 with
+	# the five iron blockers: two of them, the deployment and the starting
+	# state of the hosts, live in gate/p2-preflight.sh, and a sweep that only knows how
+	# to mutate one file can say nothing about their rows. The mutated file is RESTORED
+	# when each mutant finishes, so that one does not take the next one
+	# down with it.
 	local objeto="${5:-p2.sh}"
 	MUTANTES=$((MUTANTES + 1))
 	for f in "${REPO}"/gate/*.sh; do cp "${f}" "${TALLER}/gate/"; done
 	cp "${REPO}/gate/${objeto}" "${TALLER}/gate/${objeto}"
 	if ! aplica_mutacion "${TALLER}/gate/${objeto}" "${viejo}" "${nuevo}"; then
-		printf '%-5s FALLO DE MONTAJE: la mutacion no se pudo aplicar   %s\n' "${etiqueta}" "$4"
+		printf '%-5s MOUNT FAILURE: the mutation could not be applied   %s\n' "${etiqueta}" "$4"
 		MUDOS=$((MUDOS + 1))
 		return
 	fi
@@ -208,12 +208,12 @@ mutante() {
 	salida="$(corre)"
 	caidas="$(printf '%s' "${salida}" | grep -E '^ROW .* FAILING ' | awk '{print $2}' | tr '\n' ' ')"
 	if ! printf '%s' "${salida}" | grep -q '^RESULTADO: '; then
-		printf '%-5s MUERDE  el banco ABORTA y no llega a su resumen   %s\n' "${etiqueta}" "$4"
+		printf '%-5s BITES  the bench ABORTS and does not reach its summary   %s\n' "${etiqueta}" "$4"
 	elif [ -z "${caidas}" ]; then
-		printf '%-5s MUDO  NINGUNA FILA CAE   <-- la decision no la vigila nadie   %s\n' "${etiqueta}" "$4"
+		printf '%-5s SILENT  NO ROW FALLS   <-- nobody watches that decision   %s\n' "${etiqueta}" "$4"
 		MUDOS=$((MUDOS + 1))
 	else
-		printf '%-5s MUERDE  caen: %-18s %s\n' "${etiqueta}" "${caidas}" "$4"
+		printf '%-5s BITES  fall: %-18s %s\n' "${etiqueta}" "${caidas}" "$4"
 	fi
 }
 
@@ -222,36 +222,36 @@ control
 mutante M1 '
 	seal_artifact
 	# THE CONDITION ASKS WHETHER THERE WAS SOMETHING TO SEAL.' '
-	# MUTANTE M1: sellar DESPUES de barrer
-	# THE CONDITION ASKS WHETHER THERE WAS SOMETHING TO SEAL.' 'sellar DESPUES de barrer, no antes'
+	# MUTANT M1: seal AFTER sweeping
+	# THE CONDITION ASKS WHETHER THERE WAS SOMETHING TO SEAL.' 'sealing AFTER sweeping, not before'
 
 mutante M2 '			[ -n "$(ls -A "${d}" 2>/dev/null | grep -vx RUNNING)" ] || continue' \
-'			[ -n "$(ls -A "${d}" 2>/dev/null)" ] || continue' 'el barrido cuenta el marcador RUNNING como contenido'
+'			[ -n "$(ls -A "${d}" 2>/dev/null)" ] || continue' 'the sweep counts the RUNNING marker as content'
 
-mutante M3 "					printf 'closed:      %s\n' \"\${marca}\" ;;" '					;;' 'el sello se termina SIN linea closed'
+mutante M3 "					printf 'closed:      %s\n' \"\${marca}\" ;;" '					;;' 'the seal is finished WITHOUT a closed line'
 
-mutante M4 "					printf 'verdicts:    %s\n' \"\${VERDICTS# }\"" "					printf '%s\n' \"\${linea}\"" 'el sello se termina sin reescribir los veredictos'
+mutante M4 "					printf 'verdicts:    %s\n' \"\${VERDICTS# }\"" "					printf '%s\n' \"\${linea}\"" 'the seal is finished without rewriting the verdicts'
 
 mutante M5 '	[ -n "$(ls -A "${OUT_LOCAL}" 2>/dev/null | grep -vx RUNNING)" ] || return 0
-	if [ -e "${OUT_LOCAL}/SEALED" ]; then' '	if [ -e "${OUT_LOCAL}/SEALED" ]; then' 'seal_artifact sella tambien un artefacto vacio'
+	if [ -e "${OUT_LOCAL}/SEALED" ]; then' '	if [ -e "${OUT_LOCAL}/SEALED" ]; then' 'seal_artifact seals an empty artifact too'
 
 mutante M6 '	elif [ "$(grep -m1 '"'"'^expected:'"'"' "${OUT_DIR}/p2-${RUN_ID}/SEALED.a-medias" 2>/dev/null)" = "${esperada}" ] \
 		&& [ "$(grep -c '"'"''"'"' "${OUT_DIR}/p2-${RUN_ID}/SEALED.a-medias" 2>/dev/null)" -ge "$(grep -c '"'"''"'"' "${OUT_DIR}/p2-${RUN_ID}/SEALED" 2>/dev/null)" ]; then' \
-'	elif true; then' 'se quita ENTERA la condicion que decide si la reescritura se publica'
+'	elif true; then' 'the whole condition that decides whether the rewrite is published is removed'
 
 mutante M6b '		&& [ "$(grep -c '"'"''"'"' "${OUT_DIR}/p2-${RUN_ID}/SEALED.a-medias" 2>/dev/null)" -ge "$(grep -c '"'"''"'"' "${OUT_DIR}/p2-${RUN_ID}/SEALED" 2>/dev/null)" ]; then' \
-'		; then' 'solo la mitad del RECUENTO de lineas de esa condicion'
+'		; then' 'only the line COUNT half of that condition'
 
 mutante M7 '		[ "${SELLO_ESCRITO_AQUI}" -eq 1 ] && return 0
 		echo "gate: ${OUT_LOCAL}/SEALED exists and THIS run did not write it, so nothing here is touched and no seal is completed" >&2
-		return 0' '		return 0' 'se quita la rama que confiesa un sello que esta corrida no escribio'
+		return 0' '		return 0' 'the branch that confesses a seal this run did not write is removed'
 
 mutante M8 '	case "${OUT_LOCAL}" in
 		"${OUT_DIR}/p2-${RUN_ID}") ;;
 		*)
 			echo "gate: the seal was written but NOT completed: ${OUT_LOCAL} is not p2-${RUN_ID}" >&2
 			return 0 ;;
-	esac' '	:' 'completa_el_sello acepta cualquier nombre de artefacto'
+	esac' '	:' 'completa_el_sello accepts any artifact name'
 
 mutante M9 '		rm -f -- "${OUT_DIR}/p2-${RUN_ID}/SEALED.a-medias"
 		echo "gate: the seal could not be completed; it keeps the verdicts the hygiene phase wrote" >&2
@@ -259,105 +259,105 @@ mutante M9 '		rm -f -- "${OUT_DIR}/p2-${RUN_ID}/SEALED.a-medias"
 '		rm -f -- "${OUT_DIR}/p2-${RUN_ID}/SEALED"
 		echo "gate: the seal could not be completed; it keeps the verdicts the hygiene phase wrote" >&2
 		echo "gate: the rewrite did not match the seal it came from, so nothing was moved on top of it" >&2' \
-'la rama del rechazo BORRA el sello en vez del fichero de al lado'
+'the rejection branch DELETES the seal instead of the file beside it'
 
 mutante M10 '	elif [ "${vistas}" -eq 0 ]; then
 		rm -f -- "${OUT_DIR}/p2-${RUN_ID}/SEALED.a-medias"
 		echo "gate: the seal has no verdicts line, so it was left exactly as it was and carries no closed line" >&2' \
 '	elif false; then
-		:' 'se quita la anti-vacuidad del sello sin linea verdicts'
+		:' 'the anti-vacuity of a seal with no verdicts line is removed'
 
 mutante M11 '	[ "${SELLO_ESCRITO_AQUI}" -eq 1 ] || return 0
 	[ -f "${OUT_LOCAL}/SEALED" ] || return 0' '	[ -f "${OUT_LOCAL}/SEALED" ] || return 0' \
-'completa_el_sello sin la bandera de la clausula 30'
+'completa_el_sello without the clause 30 flag'
 
-# M12 ENTRA POR UN LECTOR, y su hallazgo era este: de las tres filas de rechazo,
-# la 17p no la respaldaba ningun mutante, asi que estaba escrita por prevision y
-# la prosa decia lo contrario. Este mutante la respalda: quita la rama que
-# distingue "no se pudo escribir al lado" de las demas negativas, con lo que un
-# directorio sin permiso cae en la rama de abajo y la funcion confiesa la causa
-# equivocada.
+# M12 ENTERS THROUGH A READER, and its finding was this: of the three rejection rows,
+# row 17p was backed by no mutant, so it was written by anticipation and
+# the prose said the opposite. This mutant backs it: it removes the branch that
+# tells "nothing could be written beside it" apart from the other negatives, so that a
+# directory without permission falls into the branch below and the function confesses the wrong
+# cause.
 mutante M12 '	if [ ! -s "${OUT_DIR}/p2-${RUN_ID}/SEALED.a-medias" ]; then
 		rm -f -- "${OUT_DIR}/p2-${RUN_ID}/SEALED.a-medias"
 		echo "gate: the seal could not be completed; it keeps the verdicts the hygiene phase wrote" >&2
 		echo "gate: nothing could be written beside it, so that seal now looks like one from a run that did not reach its end, and there is no way to say otherwise from inside a directory that cannot be written" >&2
 	elif [ "${vistas}" -eq 0 ]; then' '	if [ "${vistas}" -eq 0 ]; then' \
-'se quita la rama que separa "no se pudo escribir al lado" de las demas negativas'
+'the branch that separates "nothing could be written beside it" from the other negatives is removed'
 
-# M18 REBOBINA EL DEFECTO MAS GRAVE QUE ESTA PASADA ENCONTRO, y no lo encontro un
-# banco: lo encontro un lector leyendo el guion. El `ask_on` desnudo seguido de
-# `rc_a=$?` mataba phase_hygiene_fierro en la primera vuelta bajo `set -e`, con lo
-# que el barrido del sello nunca corria en fierro. Solo la fila 17r puede verlo,
-# porque es la unica que corre la fase entera en vez de llamar a las funciones del
-# sello una a una.
+# M18 REWINDS THE GRAVEST DEFECT THIS PASS FOUND, and a bench did not find it:
+# a reader reading the script found it. The bare `ask_on` followed by
+# `rc_a=$?` killed phase_hygiene_fierro on the first round under `set -e`, so
+# the seal sweep never ran on iron. Only row 17r can see it,
+# because it is the only one that runs the whole phase instead of calling the seal's
+# functions one by one.
 mutante M18 '		rc_a="$(ask_on "$n" '"'"'pid=$(cat naylamp/naylampd-mutante.pid 2>/dev/null); [ -n "${pid}" ] && kill -0 "${pid}"'"'"'; echo $?)"' \
 '		ask_on "$n" '"'"'pid=$(cat naylamp/naylampd-mutante.pid 2>/dev/null); [ -n "${pid}" ] && kill -0 "${pid}"'"'"'
 		rc_a=$?' \
-'el ask_on del primer bucle de la higiene de fierro vuelve a ser una orden desnuda'
+'the ask_on of the first loop of the iron hygiene is a bare command again'
 
-# M13 Y M14 CIERRAN LAS DOS ULTIMAS FILAS QUE NINGUN MUTANTE TOCABA de las que si
-# son alcanzables. Las que quedan sin mutante detras van dichas en la cabecera del
-# banco y son, todas, la mitad DESCRIPTIVA de un par: 17c y 17d son el "despues" y
-# el "antes" de 17b y 17e, 17h afirma la ausencia de restos en el camino feliz,
-# donde no hay resto que dejar, y 17f mide la identidad byte a byte de `expected:`,
-# que no es alcanzable desde fuera de la funcion y se declara por escrito.
+# M13 AND M14 CLOSE THE LAST TWO ROWS NO MUTANT TOUCHED of those that are
+# reachable. The ones left with no mutant behind them are said in the header of the
+# bench and are all the DESCRIPTIVE half of a pair: 17c and 17d are the "after" and
+# the "before" of 17b and 17e, 17h asserts the absence of remains on the happy path,
+# where nothing is left behind, and 17f measures the byte by byte identity of `expected:`,
+# which is not reachable from outside the function and is declared in writing.
 mutante M13 '		fail "P2.hygiene: p2 iron artifacts under gate/out with no SEALED file, which make clean will refuse to sweep:${sin}"' \
 '		note "P2.hygiene: p2 iron artifacts under gate/out with no SEALED file:${sin}"' \
-'el barrido NOMBRA los artefactos sin sello pero deja de poner roja la fase'
+'the sweep NAMES the unsealed artifacts but stops turning the phase red'
 
 mutante M14 '	if [ "${ES_FIERRO}" -eq 1 ] && [ ! -e "${OUT_LOCAL}/SEALED" ] \
 		&& [ -d "${OUT_LOCAL}" ] && [ -n "$(ls -A "${OUT_LOCAL}" 2>/dev/null | grep -vx RUNNING)" ]; then' \
 '	if [ "${ES_FIERRO}" -eq 1 ]; then' \
-'la linea de "esta corrida no sello" salta sin preguntar si hay sello ni si habia algo que sellar'
+'the "this run did not seal" line fires without asking whether there is a seal or whether there was anything to seal'
 
-# M15 A M17 ENTRAN POR EL MISMO LECTOR QUE MIDIO LAS DECISIONES MUDAS: tres guardas
-# escritas que ninguna fila tumbaba. Cada una tiene ahora su fila y su mutante.
+# M15 TO M17 ENTER THROUGH THE SAME READER THAT MEASURED THE SILENT DECISIONS: three guards
+# written that no row knocked down. Each one now has its row and its mutant.
 mutante M15 '	if [ "${ES_FIERRO}" -eq 1 ] && [ ! -e "${OUT_LOCAL}/SEALED" ] \
 		&& [ -d "${OUT_LOCAL}" ] && [ -n "$(ls -A "${OUT_LOCAL}" 2>/dev/null | grep -vx RUNNING)" ]; then
 		fail "P2.hygiene: this run wrote an artifact and did not seal it, so make clean will refuse to sweep gate/out until somebody seals it by hand"
 	fi' '	:' \
-'se quita ENTERA la unica guarda que habla de la corrida en curso'
+'the only guard that speaks of the run in progress is removed WHOLE'
 
 mutante M16 '		while IFS= read -r linea || [ -n "${linea}" ]; do' '		while IFS= read -r linea; do' \
-'la reescritura pierde la ultima linea cuando no termina en salto'
+'the rewrite loses the last line when it does not end in a newline'
 
 mutante M17 '	if [ ! -s "${OUT_LOCAL}/SEALED" ]; then
 		rm -f -- "${OUT_LOCAL}/SEALED"
 		echo "gate: the seal could NOT be written at ${OUT_LOCAL}/SEALED, so this run'"'"'s artifact is unsealed and make clean will refuse to sweep gate/out" >&2
 		return 0
 	fi' '	:' \
-'seal_artifact anuncia el sello sin comprobar que llego a escribirse'
+'seal_artifact announces the seal without checking that it was written'
 
-# M19 A M23: EL TECHO DE LOS ARTEFACTOS DE ENSAYO, que entra el 8 de septiembre de
-# 2026 con la decision de quien encarga. Cada uno rebobina una mitad distinta y la
-# fila que lo caza va escrita al lado.
+# M19 TO M23: THE CAP ON REHEARSAL ARTIFACTS, which enters on
+# 2026-09-08 with the decision of whoever commissions it. Each one rewinds a different half and the
+# row that catches it is written beside it.
 mutante M19 '		[ "${nombre}" = "${propio}" ] && continue' '		:' \
-'el techo puede llevarse el artefacto de la corrida EN CURSO'
+'the cap can take away the artifact of the run IN PROGRESS'
 
 mutante M20 '		[ "${n}" -le "${CONSERVA_ENSAYOS}" ] && continue' '		[ "${n}" -le 0 ] && continue' \
-'el techo baja a cero y se lleva todo lo que no sea de esta corrida'
+'the cap drops to zero and takes away everything that is not from this run'
 
 mutante M21 '	[ "${ES_FIERRO}" -eq 1 ] && { printf '"'"'0'"'"'; return 0; }' '	:' \
-'el barrido del ensayo tambien corre en una corrida de fierro'
+'the rehearsal sweep runs on an iron run too'
 
-# M22 TIENE QUE QUITAR LAS DOS GUARDAS A LA VEZ, y las dos versiones anteriores
-# quitaban una cada una y salieron MUDAS las dos. Eso no era un agujero: la
-# propiedad "el techo nunca toca un artefacto de fierro" la defienden DOS guardas
-# INDEPENDIENTES, el patron del `ls` que decide que se mira y el `case` que decide
-# que se borra, y con cualquiera de las dos en pie el fierro sobrevive. Ensanchar el
-# patron sola deja el `case` refusando con su aviso; quitar el `case` sola deja el
-# patron sin traer un solo nombre de fierro al bucle. **Que un mutante salga mudo
-# porque OTRA guarda lo para no es lo mismo que salir mudo porque nadie mira**, y la
-# unica forma de separar las dos cosas es un mutante que las quite juntas. Este las
-# quita, y la fila 17x cae. Las dos versiones mudas van nombradas aqui en vez de
-# borradas, porque la conclusion util es que esa propiedad tiene defensa doble y eso
-# solo se sabe habiendolo medido.
+# M22 HAS TO REMOVE BOTH GUARDS AT ONCE, and the two earlier versions
+# removed one each and both came out SILENT. That was not a hole: the
+# property "the cap never touches an iron artifact" is defended by TWO
+# INDEPENDENT guards, the `ls` pattern that decides what is looked at and the `case` that decides
+# what is deleted, and with either of the two standing iron survives. Widening the
+# pattern alone leaves the `case` refusing with its warning; removing the `case` alone leaves the
+# pattern bringing not one iron name into the loop. **A mutant coming out silent
+# because ANOTHER guard stops it is not the same as coming out silent because nobody looks**, and the
+# only way to separate the two things is a mutant that removes them together. This one
+# removes them, and row 17x falls. The two silent versions are named here instead of
+# deleted, because the useful conclusion is that this property has a double defence and that
+# is only known by having measured it.
 mitad M22 '	for nombre in $(cd "${OUT_DIR}" 2>/dev/null && ls -dt p2-local-[0-9]*Z-[0-9]* 2>/dev/null); do
 		d="${OUT_DIR}/${nombre}"
 		[ -d "${d}" ] || continue' '	for nombre in $(cd "${OUT_DIR}" 2>/dev/null && ls -dt p2-[0-9a-z]*Z-[0-9]* 2>/dev/null); do
 		d="${OUT_DIR}/${nombre}"
 		[ -d "${d}" ] || continue' \
-'PRIMERA MITAD: el patron del techo se ensancha y trae los artefactos de FIERRO al bucle'
+'FIRST HALF: the cap pattern is widened and brings the IRON artifacts into the loop'
 
 mitad M22b '		case "${nombre}" in
 			p2-local-[0-9]*Z-[0-9]*)
@@ -367,7 +367,7 @@ mitad M22b '		case "${nombre}" in
 				echo "gate: NOT removing ${d}: not a rehearsal artifact of this gate" >&2 ;;
 		esac' '		rm -rf -- "${OUT_DIR}/${nombre}"
 		retirados=$((retirados + 1))' \
-'SEGUNDA MITAD: se quita el case que refusa lo que no es un nombre de ensayo'
+'SECOND HALF: the case that refuses what is not a rehearsal name is removed'
 
 mutante M22c '	for nombre in $(cd "${OUT_DIR}" 2>/dev/null && ls -dt p2-local-[0-9]*Z-[0-9]* 2>/dev/null); do
 		d="${OUT_DIR}/${nombre}"
@@ -414,14 +414,14 @@ mutante M22c '	for nombre in $(cd "${OUT_DIR}" 2>/dev/null && ls -dt p2-local-[0
 		rm -rf -- "${OUT_DIR}/${nombre}"
 		retirados=$((retirados + 1))
 	done' \
-'LAS DOS A LA VEZ: el techo mira todo lo que empiece por p2- y borra sin comprobar la forma ni el marcador'
+'BOTH AT ONCE: the cap looks at everything starting with p2- and deletes without checking the shape or the marker'
 
 mutante M23 '		[ -d "${OUT_DIR}/p2-local-${id}" ] && continue' '		:' \
-'la flota se retira aunque su artefacto siga ahi'
+'the fleet is retired even though its artifact is still there'
 
-# M24 A M27: EL MARCADOR SOBRE EL TECHO, que entra el 9 de septiembre de 2026
-# despues de medir que el techo se llevaba una corrida viva. Cada uno rebobina una
-# de las cuatro decisiones y la fila que lo caza va al lado.
+# M24 TO M27: THE MARKER OVER THE CAP, which enters on 2026-09-09
+# after measuring that the cap was taking away a live run. Each one rewinds one
+# of the four decisions and the row that catches it is written beside it.
 mutante M24 '		case "$(marcador_de "${d}")" in
 			vivo)
 				echo "gate: NOT removing ${d}: its run is still alive, marker and live pid inside" >&2
@@ -432,50 +432,50 @@ mutante M24 '		case "$(marcador_de "${d}")" in
 			muerto)
 				echo "gate: removing ${d} under the cap: it carries the marker of an unfinished run" >&2 ;;
 		esac' '		:' \
-'el techo vuelve a borrar por antiguedad sin mirar el marcador: el incidente por TERCERA vez'
+'the cap deletes by age again without looking at the marker: the incident for the THIRD time'
 
 mutante M25 '			ilegible)
 				echo "gate: NOT removing ${d}: it carries a marker whose pid cannot be read, and that is not the same as being dead" >&2
 				continue ;;' '			ilegible) ;;' \
-'un pid ilegible se trata como muerto: dos respuestas donde hay tres'
+'an unreadable pid is treated as dead: two answers where there are three'
 
 mutante M26 '	if kill -0 "${pid}" 2>/dev/null || ps -p "${pid}" >/dev/null 2>&1; then
 		printf '"'"'vivo'"'"'
 	else
 		printf '"'"'muerto'"'"'
 	fi' '	printf '"'"'muerto'"'"'' \
-'marcador_de dice MUERTO siempre, o sea que ningun marcador protege'
+'marcador_de says DEAD always, which means no marker protects'
 
 mutante M27 '	[ -f "${d}/RUNNING" ] || { printf '"'"'sin-marcador'"'"'; return 0; }' '	[ -f "${d}/RUNNING" ] && { printf '"'"'vivo'"'"'; return 0; }' \
-'el predicado pasa a ser el FICHERO y no el proceso: un marcador huerfano bloquea el techo para siempre'
+'the predicate becomes the FILE and not the process: an orphan marker blocks the cap forever'
 
-# M28 A M37: LOS CINCO BLOQUEANTES DEL FIERRO, cada uno rebobinado a la forma que
-# tenia cuando un lector externo los encontro. Dos de ellos viven en
-# gate/p2-preflight.sh, que es por lo que este barrido aprendio a mutar mas de un
-# fichero.
+# M28 TO M37: THE FIVE IRON BLOCKERS, each rewound to the shape it
+# had when an external reader found them. Two of them live in
+# gate/p2-preflight.sh, which is why this sweep learned to mutate more than one
+# file.
 mutante M28 '	if [ "${ES_FIERRO}" -eq 1 ]; then
 		banner_fierro
 	else
 		banner_ensayo
 	fi' '	banner_ensayo' \
-'el banner pierde su rama de fierro: el artefacto vuelve a declararse un ensayo de loopback'
+'the banner loses its iron branch: the artifact declares itself a loopback rehearsal again'
 
 mutante M29 '		if [ "${ES_FIERRO}" -eq 1 ]; then
 			echo "gate: all IRON checks passed (${EXPECTED})"
 		else
 			echo "gate: all rehearsal checks passed (${EXPECTED})"
 		fi' '		echo "gate: all rehearsal checks passed (${EXPECTED})"' \
-'la ULTIMA linea del log vuelve a decir rehearsal en una corrida de fierro'
+'the LAST line of the log says rehearsal again on an iron run'
 
 mutante M30 '		out="$(run_on 1 "cd naylamp && NAYLAMP_TLS_CERT=certs/node-${CLIENT_ID}.pem NAYLAMP_TLS_KEY=certs/node-${CLIENT_ID}-key.pem NAYLAMP_TLS_CA=certs/ca.pem ./bin/naylampd client -listen ${PRIV[1]}:${MUT_CLIENT_PORT_FIERRO} -group '"'"'${mgroup}'"'"' -dim ${DIM} -op put -id 7 -vec '"'"'$(vec_for 7)'"'"' ; echo __RC__=\$?" 2>&1)"' \
 '		out="$("${BIN}" client -listen "${PRIV[1]}:${MUT_CLIENT_PORT_FIERRO}" -group "${mgroup}" -dim "${DIM}" -op put -id 7 -vec "$(vec_for 7)" </dev/null 2>&1)"' \
-'el cliente del mutante vuelve a correr en este portatil, contra una direccion que esta maquina no tiene'
+'the mutant client runs on this laptop again, against an address this machine does not have'
 
-# M31 REBOBINA EL DEFECTO Y NO ROMPE EL FICHERO, que es lo que hacia la primera
-# version: cortaba el heredoc de python por la mitad y dejaba las comillas sin
-# casar, asi que el banco moria de sintaxis. Eso cuenta como deteccion en este
-# barrido, y esta bien que cuente, pero no es lo que se queria medir: un mutante
-# tiene que dejar un guion que CORRE y hace lo de antes, no uno que no arranca.
+# M31 REWINDS THE DEFECT AND DOES NOT BREAK THE FILE, which is what the first
+# version did: it cut the python heredoc in half and left the quotes
+# unmatched, so the bench died of syntax. That counts as detection in this
+# sweep, and it is fine that it counts, but it is not what this was meant to measure: a mutant
+# has to leave a script that RUNS and does what it did before, not one that does not start.
 mutante M31 '	ask_on "${n}" "python3 -c \"
 import os
 d = os.path.dirname('"'"'${TESTIGO_REMOTO}'"'"') or '"'"'.'"'"'
@@ -487,64 +487,64 @@ h = os.open(d, os.O_RDONLY)
 os.fsync(h)
 os.close(h)
 \""' '	ask_on "${n}" "head -c ${TESTIGO_SEMILLA} /dev/zero > ${TESTIGO_REMOTO} && sync"' \
-'el testigo vuelve al sync GLOBAL: el instrumento anulando lo que mide'
+'the witness goes back to the GLOBAL sync: the instrument annulling what it measures'
 
 mutante M32 '		if committed "${out}"; then
 			echo "put ${id} ${vec} confirmed" >> "${MANIFEST}"' '		echo "put ${id} ${vec} uncertain" >> "${MANIFEST}"
 		if committed "${out}"; then
 			echo "put ${id} ${vec} confirmed" >> "${MANIFEST}"' \
-'el escritor en vuelo anota uncertain ANTES de enviar: todos los ids quedan ambiguos, tambien los que volvieron con su ack'
+'the in-flight writer notes uncertain BEFORE sending: every id becomes ambiguous, including the ones that came back with their ack'
 
 mutante M33 '			seguidos=$(( seguidos + 1 ))
 			[ "${seguidos}" -ge "${EN_VUELO_FALLOS_SEGUIDOS}" ] && break' '			seguidos=$(( seguidos + 1 ))' \
-'el escritor en vuelo pierde su cota de fallos seguidos y sigue contra tres maquinas que ya no contestan'
+'the in-flight writer loses its bound of consecutive failures and goes on against three machines that no longer answer'
 
 mutante M34 '	if "${GATE_DIR}/deploy.sh" >/dev/null 2>&1; then' '	if true; then' \
-'la mitad caliente deja de desplegar el binario y los certificados' p2-preflight.sh
+'the hot half stops deploying the binary and the certificates' p2-preflight.sh
 
 mutante M35 '	if "${GATE_DIR}/cluster.sh" start >/dev/null 2>&1; then' '	if true; then' \
-'la mitad caliente deja de levantar la flota' p2-preflight.sh
+'the hot half stops raising the fleet' p2-preflight.sh
 
 mutante M36 '	paso "naylamp/data, naylamp/logs and naylamp/data-mutante EMPTY on the three, checked and not assumed"' \
-'	paso "naylamp/data sin mirar"' \
-'la mitad caliente deja de exigir el estado de partida de los hosts' p2-preflight.sh
+'	paso "naylamp/data not looked at"' \
+'the hot half stops demanding the starting state of the hosts' p2-preflight.sh
 
 mutante M37 '			'"'"'sudo -n test -w /proc/sysrq-trigger'"'"' >/dev/null 2>&1; then' \
 '			'"'"'true'"'"' >/dev/null 2>&1; then' \
-'el sudo del corte deja de ejercitarse antes del corte' p2-preflight.sh
+'the sudo of the cut stops being exercised before the cut' p2-preflight.sh
 
-# M38 A M44: LO QUE LA SEGUNDA VUELTA DEL LECTOR EXTERNO DESTAPO. Dos de estos
-# rebobinan defectos que introdujo el arreglo anterior, o sea que este barrido
-# vigila ahora tambien lo que la casa se rompio a si misma al arreglar.
+# M38 TO M44: WHAT THE SECOND ROUND OF THE EXTERNAL READER UNCOVERED. Two of these
+# rewind defects the previous fix introduced, which means this sweep
+# now also watches what the house broke while fixing itself.
 mutante M38 '    if estado == INCIERTO:
         continue' '    pass' \
-'el conjunto vivo vuelve a no mirar el estado: las lineas uncertain se exigen presentes y la corrida sale roja diciendo que el motor perdio una escritura ackeada'
+'the live set stops looking at the state again: the uncertain lines are demanded present and the run comes out red saying the engine lost an acked write'
 
 mutante M39 'ID_EN_VUELO_DESDE=100' 'ID_EN_VUELO_DESDE=500' \
-'el rango en vuelo vuelve al 500: el id 512 da el vector CERO y treinta ids colisionan con los de la carga'
+'the in-flight range goes back to 500: id 512 gives the ZERO vector and thirty ids collide with those of the workload'
 
 mutante M40 '	choques="$(comprueba_rango_en_vuelo)"
 	if [ "${choques}" != "0 0" ]; then' '	choques="0 0"
 	if false; then' \
-'la guarda del rango deja de correrse antes de escribir'
+'the range guard stops running before writing'
 
 mutante M41 '		printf '"'"'%s %s\n'"'"' "${id}" "${vec}" >> "${OUT_LOCAL}/en-vuelo-enviados.txt"' '		:' \
-'lo enviado deja de anotarse antes de enviarlo: una muerte entre el ack y su linea deja un id comprometido fuera del manifiesto'
+'what was sent stops being noted before sending it: a death between the ack and its line leaves a committed id out of the manifest'
 
 mutante M42 '		grep -q "^put ${id} ${vec} confirmed\$" "${MANIFEST}" 2>/dev/null && continue
 		grep -q "^put ${id} ${vec} uncertain\$" "${MANIFEST}" 2>/dev/null && continue' '		grep -q "^put ${id} ${vec} confirmed\$" "${MANIFEST}" 2>/dev/null && continue' \
-'el pliegue deja de ser idempotente y duplica lineas al llamarse dos veces'
+'the fold stops being idempotent and duplicates lines when called twice'
 
 mutante M43 '	if [ "${acks_en_vuelo}" -gt 0 ]; then' '	if true; then' \
-'P2.cut.envuelo pasa a verde sin que haya habido un solo ack en vuelo'
+'P2.cut.envuelo turns green without there having been a single in-flight ack'
 
 mutante M44 '	# shellcheck disable=SC2086
 	wait ${pids_corte_rojo}' '	wait' \
-'phase_red_fierro vuelve a esperar con un wait desnudo detras de su corte'
+'phase_red_fierro waits again with a bare wait behind its cut'
 
-# M45 A M49: LA TERCERA VUELTA DEL LECTOR EXTERNO. La primera de estas rebobina un
-# defecto que introdujo el arreglo de la SEGUNDA vuelta, o sea que este barrido
-# vigila ya tres capas de arreglos sobre arreglos.
+# M45 TO M49: THE THIRD ROUND OF THE EXTERNAL READER. The first of these rewinds a
+# defect introduced by the fix of the SECOND round, which means this sweep
+# now watches three layers of fixes over fixes.
 mutante M45 '	end_check P2.cut.fired
 
 	# THE IN-FLIGHT VERDICT GOES BEHIND THIS PHASE'"'"'S end_check, never inside: it opens
@@ -552,88 +552,88 @@ mutante M45 '	end_check P2.cut.fired
 	# of P2.cut.fired.
 	veredicto_en_vuelo' '	veredicto_en_vuelo
 	end_check P2.cut.fired' \
-'veredicto_en_vuelo vuelve DENTRO del bloque de P2.cut.fired y su begin_check borra los FAIL de la fase'
+'veredicto_en_vuelo goes back INSIDE the P2.cut.fired block and its begin_check erases the FAILs of the phase'
 
 mutante M46 '			'"'"'find naylamp/data naylamp/logs naylamp/data-mutante -mindepth 1 2>/dev/null | grep -c . ; echo __FIN__'"'"' 2>/dev/null || true)"
 		case "${antes}" in' \
 '			'"'"'ls -A naylamp/data naylamp/logs naylamp/data-mutante 2>/dev/null | grep -c . ; echo __FIN__'"'"' 2>/dev/null || true)"
 		case "${antes}" in' \
-'la precondicion vuelve a contar con ls -A, que da tres sobre tres directorios vacios' p2-preflight.sh
+'the precondition counts with ls -A again, which gives three over three empty directories' p2-preflight.sh
 
 mutante M47 '		ok "the fleet elected a leader, and host ${quien} wrote it with ${LITERAL_LIDER}; the three were asked because only the one that WINS leaves that line"' \
-'		ok "la flota eligio lider, leido del host 1"' \
-'el mensaje del lider deja de decir a cual de los tres se le leyo' p2-preflight.sh
+'		ok "the fleet elected a leader, read from host 1"' \
+'the leader message stops saying which of the three was read' p2-preflight.sh
 
-# M50 A M53: LA CUARTA CAPA. Los tres primeros rebobinan lo que la tercera vuelta
-# del lector encontro; el ultimo rebobina la guarda de la clase.
-mutante M50 '	veredicto_en_vuelo' '	# el veredicto se va de aqui' \
-'la fase deja de llamar al veredicto en vuelo: P2.cut.envuelo no se registra y la lista de fierro lo echa en falta'
+# M50 TO M53: THE FOURTH LAYER. The first three rewind what the third round
+# of the reader found; the last one rewinds the guard of the class.
+mutante M50 '	veredicto_en_vuelo' '	# the verdict goes away from here' \
+'the phase stops calling the in-flight verdict: P2.cut.envuelo is not registered and the iron list misses it'
 
 mutante M51 '	if grep -q '"'"'^ack '"'"' "${OUT_LOCAL}/en-vuelo.txt" 2>/dev/null; then
 		note "the in-flight writer has at least one acknowledged write; cutting now, so its age at the cut is as close to zero as this gate can put it"' \
 '	if false; then
 		note "the in-flight writer has at least one acknowledged write; cutting now, so its age at the cut is as close to zero as this gate can put it"' \
-'el corte deja de esperar al primer ack del escritor en vuelo'
+'the cut stops waiting for the first ack of the in-flight writer'
 
 mutante M52 '	if [ -n "${PID_EN_VUELO:-}" ]; then
 		kill "${PID_EN_VUELO}" 2>/dev/null || true
 		wait "${PID_EN_VUELO}" 2>/dev/null || true
 	fi' '	:' \
-'la trampa deja de matar al escritor en vuelo, que sobrevive al aborto escribiendo detras del sello'
+'the trap stops killing the in-flight writer, which survives the abort writing behind the seal'
 
-# M53 SE ESPERA MUDO Y SU RAZON VIVE EN OTRO FICHERO, que es lo que ata los dos
-# instrumentos. Su sitio, `escribe_running` dentro de `phase_build`, esta DECLARADO
-# en gate/sitio-test.sh con esta razon escrita: ejercer phase_build seria
-# cruza-compilar y desplegar binarios dentro de un banco que existe para no
-# encender nada. O sea que no es que nadie mire: es que mirar ahi cuesta mas de lo
-# que ese banco puede gastar, y esta dicho donde se lee.
+# M53 IS EXPECTED SILENT AND ITS REASON LIVES IN ANOTHER FILE, which is what ties the two
+# instruments together. Its place, `escribe_running` inside `phase_build`, is DECLARED
+# in gate/sitio-test.sh with this reason written: exercising phase_build would be
+# cross-compiling and deploying binaries inside a bench that exists so as not to
+# power on anything. So it is not that nobody looks: it is that looking there costs more than
+# that bench can spend, and it is said where it is read.
 mitad M53 '	escribe_running
 	if [ "${ES_FIERRO}" -eq 1 ]; then' '	if [ "${ES_FIERRO}" -eq 1 ]; then' \
-'phase_build deja de escribir el marcador RUNNING: su sitio esta DECLARADO exento en gate/sitio-test.sh'
+'phase_build stops writing the RUNNING marker: its place is DECLARED exempt in gate/sitio-test.sh'
 
 echo
-# LA LINEA DE RESULTADO EN LA FORMA DE LA CASA, `RESULTADO: <n> filas, <n> en
-# FALLA`, y no en una propia. Una fila de este barrido es UN MUTANTE, y una FALLA
-# es un mutante MUDO: una decision que ninguna fila del banco vigila. Se escribe
-# asi porque las cifras de un mensaje de commit se re-derivan del crudo con
-# gate/msg-cifras.sh, y ese paso lee el total por esta forma exacta; una linea de
-# resumen con forma propia le daba un total de cero y el paso rechazaba el
-# mensaje por una cifra que el crudo si tiene y decia de otra manera.
-echo "y el CONTROL sin mutar dio ${CONTROL} filas en FALLA sobre el banco entero"
+# THE RESULT LINE IN THE HOUSE SHAPE, `RESULTADO: <n> rows, <n> failing`, and not in
+# one of its own. A row of this sweep is ONE MUTANT, and a failing row is a SILENT
+# mutant: a decision no row of the bench watches. It is written
+# this way because the figures of a commit message are re-derived from the raw with
+# gate/msg-cifras.sh, and that step reads the total by this exact shape; a summary
+# line with a shape of its own gave it a total of zero and the step refused the
+# message over a figure the raw does carry, only written another way.
+echo "and the unmutated CONTROL gave ${CONTROL} rows failing over the whole bench"
 if [ "${MITADES}" -ne 0 ]; then
-	echo "${MITADES} de esos son MITADES de una defensa doble: se esperan mudos, y ${MITADES_MAL} salieron de otra forma"
+	echo "${MITADES} of those are HALVES of a double defence: they are expected silent, and ${MITADES_MAL} came out otherwise"
 fi
-# ---- LOS CUATRO QUE LA CUARTA VUELTA DEJO SIN RESPALDO ------------------------
+# ---- THE FOUR THE FOURTH ROUND LEFT UNBACKED -----------------------------------
 #
-# EL CENSO LOS ENCONTRO Y NO YO. Tras cerrar la cuarta vuelta se cruzo la lista de
-# filas que algun mutante hace caer contra las filas nuevas, y CUATRO no aparecian:
-# 17db, 17ic, 17ib y 17ie. Y los IDS SE ELIGIERON MAL la primera vez: M51, M52 y
-# M53 ya existian, dos como mutantes y uno como MITAD, asi que el informe salio
-# con tres pares de lineas homonimas y sin forma de saber cual era cual. Van como
-# M54, M55 y M56, detras del mayor que habia. Una fila sin mutante detras es una fila que nadie ha
-# visto ponerse roja, o sea una afirmacion sin comprobar. Y el cruce cobro en el
-# acto: la 17ic salia verde por su PROPIA PROSA, porque el comentario que explica
-# el arreglo CITA la forma rota y el grep casaba la cita en vez del codigo.
+# THE CENSUS FOUND THEM AND NOT I. After closing the fourth round the list of
+# rows some mutant knocks down was crossed against the new rows, and FOUR did not appear:
+# 17db, 17ic, 17ib and 17ie. And the IDS WERE CHOSEN BADLY the first time: M51, M52 and
+# M53 already existed, two as mutants and one as a HALF, so the report came out
+# with three pairs of homonymous lines and no way to know which was which. They go as
+# M54, M55 and M56, behind the highest there was. A row with no mutant behind it is a row nobody has
+# seen turn red, which is an unchecked assertion. And the crossing paid off at
+# once: row 17ic came out green because of its OWN PROSE, because the comment that explains
+# the fix CITES the broken shape and the grep matched the citation instead of the code.
 
 mutante M47b "	local LITERAL_LIDER='role=leader'" \
 "	local LITERAL_LIDER='became leader'" \
-'el literal del lider vuelve a la frase que el motor NO escribe' p2-preflight.sh
+'the leader literal goes back to the phrase the engine does NOT write' p2-preflight.sh
 
 mutante M54 '		( if testigo_arma "$n"; then echo 0; else echo 1; fi > "${OUT_LOCAL}/arma-rc-${n}" ) &' \
 '		( testigo_arma "$n"; echo $? > "${OUT_LOCAL}/arma-rc-${n}" ) &' \
-'el armado paralelo pierde la exencion de errexit: con un arma que falla, la subcapa muere antes de escribir su rc'
+'the parallel arming loses its errexit exemption: with one arm failing, the subshell dies before writing its rc'
 
 mutante M55 '	wait ${pids_arma}' \
 '	:' \
-'las armas se lanzan al fondo y NO se las junta: se corta antes de que las semillas esten puestas'
+'the arms are launched in the background and NOT waited for: the cut comes before the seeds are in place'
 
 mutante M56 '	if [ "${acks_en_vuelo}" -gt 0 ]; then' \
 '	if [ "${acks_en_vuelo}" -gt 999 ]; then' \
-'el veredicto en vuelo no llega nunca a pass, aunque haya acks'
+'the in-flight verdict never reaches pass, even with acks'
 
 T_FIN="$(/usr/bin/python3 -c 'import time; print("%.3f" % time.time())' 2>/dev/null || echo 0)"
-/usr/bin/python3 -c "print('reloj: %.1f s de punta a punta, %s corridas del banco, la del control incluida' % (${T_FIN} - ${T_INICIO}, ${MUTANTES} + 1))" 2>/dev/null || true
-echo "RESULTADO: ${MUTANTES} filas, $((MUDOS + MITADES_MAL)) en FALLA"
+/usr/bin/python3 -c "print('clock: %.1f s end to end, %s bench runs, the control run included' % (${T_FIN} - ${T_INICIO}, ${MUTANTES} + 1))" 2>/dev/null || true
+echo "RESULTADO: ${MUTANTES} rows, $((MUDOS + MITADES_MAL)) failing"
 rm -rf -- "${PADRE}/naylamp-sello-mutantes-$$"
 [ "${MUDOS}" -eq 0 ] && [ "${MITADES_MAL}" -eq 0 ] && [ "${CONTROL}" -eq 0 ] || exit 1
 exit 0
