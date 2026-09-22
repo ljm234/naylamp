@@ -776,14 +776,14 @@ corte_completo() { [ "$1" -eq "$2" ]; }
 # window was narrow". It is that there was an ack with no durable majority behind it.
 faithful_suficiente() { [ "$1" -ge "$(mayoria_de "$2")" ]; }
 
-# identidad_confirmada <sha vivo> <sha sano>: whether the live binary is NOT the
+# identidad_confirmada <live sha> <sane sha>: whether the live binary is NOT the
 # sane one. By content, so a mutant deployed over the sane path is still caught.
 identidad_confirmada() { [ -n "$1" ] && [ "$1" != "$2" ]; }
 
-# ventana_dentro <segundos>: whether the measured window is inside VENTANA_MAX.
+# ventana_dentro <seconds>: whether the measured window is inside VENTANA_MAX.
 ventana_dentro() { [ "$(/usr/bin/python3 -c "print(1 if $1 > ${VENTANA_MAX} else 0)")" = 0 ]; }
 
-# testigo_veredicto <tamano> <semilla> <cola>: what a canary's size means. Four
+# testigo_veredicto <size> <seed> <tail>: what a canary's size means. Four
 # outcomes, and the fourth is the one that would be the finding of the session.
 testigo_veredicto() {
 	local d="$1" sem="$2" col="$3"
@@ -899,7 +899,7 @@ corta_en() {
 	run_on "${n}" 'sudo -n sh -c "echo b > /proc/sysrq-trigger"' >/dev/null 2>&1 || true
 }
 
-# espera_vuelta <n> <segundos> <instante del corte>: waits for a host to answer
+# espera_vuelta <n> <seconds> <cut instant>: waits for a host to answer
 # ssh again, with a BOUND, and returns 1 when the bound is spent. Clause 24: a
 # wait carries a bound, and the bound is enforced by this loop and not by
 # `timeout`, which does not exist on this machine and whose absence once produced
@@ -926,7 +926,7 @@ espera_vuelta() {
 	return 1
 }
 
-# espera_caida <n> <segundos> <instante del corte>: waits for a host to STOP
+# espera_caida <n> <seconds> <cut instant>: waits for a host to STOP
 # answering ssh, with a bound.
 #
 # THIS PIECE COST 10.13 A RUN AND ITS ABSENCE INVERTS THE RESULT, which is why it
@@ -3313,7 +3313,7 @@ barre_mutantes_huerfanos() {
 	return 0
 }
 
-# mut_barre <senal or empty>: walks this run's mutant pid list, counts the ones
+# mut_barre <signal or empty>: walks this run's mutant pid list, counts the ones
 # that are alive AND ours, and signals them when a signal is given. It prints the
 # count so the caller can use it as the predicate. The identity test is the
 # command line, and liveness is asked twice because `kill -0` reports EPERM as
