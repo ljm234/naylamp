@@ -13,56 +13,56 @@
 # documentation address unless NAYLAMP_RED_ARM is set, so a real gate that found
 # this stub in front of the real ssh would die at its first probe.
 #
-# The workspace is gate/out/banco-iron-p2, a literal path, rebuilt from zero every
+# The workspace is gate/out/banco-iron-p2, a literal path, rebuilt from scratch every
 # run and removed when the rows are green. It is swept by make clean either way,
 # and that is true because of the name: see the block beside the definition.
 set -uo pipefail
 
-# QUIEN ES ESTE BANCO, dicho en su PRIMERA linea de salida y en una forma que no
-# es prosa. Entra el 8 de septiembre de 2026. El barrido que revisa el archivo de
-# corridas/ clasificaba cada captura buscando por el CUERPO el texto de alguna de
-# sus filas, y eso tiene dos agujeros medidos: el texto de una fila se reescribe,
-# y entonces las capturas de ese banco dejan de existir para el barrido sin que
-# nadie lo note; y un informe ESCRITO que cita unas filas se cuenta como corrida,
-# que es como cuatro analisis del archivo acabaron contados como capturas. Una
-# cita vive siempre por el medio de un fichero, nunca en su primera linea, asi que
-# esta linea distingue una corrida de una cita a una corrida.
+# WHO THIS BENCH IS, said on its FIRST line of output and in a form that is not
+# prose. It comes in on 2026-09-08. The sweep that reviews the archive of
+# corridas/ classified each capture by looking in the BODY for the text of some of
+# its rows, and that has two measured holes: the text of a row gets rewritten,
+# and then the captures of that bench stop existing for the sweep with nobody
+# noticing; and a WRITTEN report that cites a few rows is counted as a run,
+# which is how four analyses of the archive ended up counted as captures. A
+# citation always lives in the middle of a file, never on its first line, so
+# this line tells a run apart from a citation of a run.
 echo "BANCO: p2-iron-test"
 
 . "$(dirname "$0")/entorno.sh"
 
 GATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# EL TALLER NO SE LLAMA p2-ALGO, y el nombre viejo, gate/out/p2-iron-test, era un
-# defecto medido por un lector. La guarda de `make clean` refuse por FORMA,
-# `p[0-9]-* ! p[0-9]-local-*`, asi que aquel nombre casaba: mientras el banco
-# corria, un `make clean` en otra terminal se negaba, y un banco matado dejaba un
-# directorio que la guarda protege y que nada puede sellar. La cabecera de este
-# fichero decia "It is swept by make clean either way", que era FALSO con ese
-# nombre y es cierto con este. El dia que este banco entra en CI, o sea hoy, eso
-# deja de ser una molestia de esta maquina.
+# THE WORKSHOP IS NOT CALLED p2-SOMETHING, and the old name, gate/out/p2-iron-test, was a
+# defect measured by a reader. The `make clean` guard refuses by SHAPE,
+# `p[0-9]-* ! p[0-9]-local-*`, so that name matched it: while the bench
+# was running, a `make clean` in another terminal refused, and a killed bench left a
+# directory that the guard protects and that nothing can seal. The header of this
+# file said "It is swept by make clean either way", which was FALSE with that
+# name and is true with this one. From the day this bench goes into CI, which is today,
+# that stops being a nuisance confined to this machine.
 BANCO="${GATE_DIR}/out/banco-iron-p2"
 
 FALLAS=0
 ROJAS=0
 FILAS=0
-# LA BANDERA DE TERMINACION, y entra el 8 de septiembre de 2026 con este banco: el
-# dia que pasa a correr en CI. Una trampa EXIT se come el estado de salida cuando
-# el guion muere a mitad, asi que un banco abortado se lee como un paso verde. Este
-# tenia la trampa y no la bandera, o sea justo la mitad que hace falta para que el
-# fallo sea silencioso.
+# THE COMPLETION FLAG, and it comes in on 2026-09-08 with this bench: the
+# day it starts running in CI. An EXIT trap swallows the exit status when
+# the script dies halfway, so an aborted bench reads as a green step. This one
+# had the trap and not the flag, that is, exactly the half that is needed for the
+# failure to be silent.
 #
-# LA CUENTA VA RE-DERIVADA Y NO RECITADA, porque la primera version de este
-# comentario decia "los otros tres bancos" y "un cuarto sitio", y las dos cifras
-# eran falsas; las cazo un lector contando. En gate/ hay OCHO bancos y SIETE ya
-# llevaban la bandera: este era el unico sin ella. Y en ci.yml ya corren CUATRO
-# pasos de banco, no tres, asi que este es el QUINTO. La orden que lo re-deriva es
-# `grep -c "ABORTADO antes del resumen" gate/*-test.sh` fichero a fichero, y
-# `grep 'run: ./gate/' .github/workflows/ci.yml` para los pasos.
+# THE COUNT IS RE-DERIVED AND NOT RECITED, because the first version of this
+# comment said "the other three benches" and "a fourth place", and both figures
+# were false; a reader caught them by counting. On 2026-09-08 gate/ held EIGHT benches and SEVEN already
+# carried the flag: this was the only one without it. And in ci.yml FOUR bench
+# steps already ran, not three, so this is the FIFTH. The command that re-derives it is
+# `grep -c "ABORTADO antes del resumen" gate/*-test.sh` file by file, and
+# `grep 'run: ./gate/' .github/workflows/ci.yml` for the steps.
 COMPLETO=0
-# UNA FILA PUEDE NO APLICAR EN ESTA MAQUINA, y entonces no se cuenta como fila.
-# Es la misma forma que gate/sello-test.sh: contarla como OK seria publicar un pase
-# que nadie corrio, y contarla como FALLA pondria roja a CI por la ausencia de algo
-# que ese entorno no puede dar. Se declara, se cuenta aparte y se dice el motivo.
+# A ROW MAY NOT APPLY ON THIS MACHINE, and then it is not counted as a row.
+# It is the same shape as gate/sello-test.sh: counting it as OK would publish a pass
+# that nobody ran, and counting it as FAILING would turn CI red for the absence of something
+# that the environment cannot give. It is declared, counted separately, and its reason is printed.
 OMITIDAS=0
 no_aplica() {
 	OMITIDAS=$((OMITIDAS + 1))
@@ -84,46 +84,46 @@ roja() {
 	fila "${id}" "${quiero}" "${tengo}" "RED ${porque}"
 }
 
-# EL NOMBRE DE ESTA FUNCION NO ES CASUAL Y LA TRAMPA SE REGISTRA DESPUES DE
-# CARGAR p2.sh. La primera version la llamo al_salir, que es exactamente el
-# nombre que gate/p2.sh da a la suya, asi que al cargarlo la definicion de p2.sh
-# PISABA la de este banco y la trampa acababa llamando a la de p2.sh: el banco no
-# se barria, su directorio quedaba en gate/out, y el artefacto con nombre de
-# fierro que las filas 13 a 17 crean quedaba tambien, donde `make clean` se niega
-# a tocarlo por no llevar sello. Cuatro de ellos quedaron antes de que la
-# limpieza medida del cierre los encontrara. Un banco que ensucia lo que el gate
-# protege es peor que uno que falla.
+# THE NAME OF THIS FUNCTION IS NOT ACCIDENTAL AND THE TRAP IS REGISTERED AFTER
+# SOURCING p2.sh. The first version called it al_salir, which is exactly the
+# name that gate/p2.sh gives to its own, so on sourcing it the definition from p2.sh
+# OVERWROTE this bench's own and the trap ended up calling the one from p2.sh: the bench was not
+# swept, its directory stayed in gate/out, and the artifact with an iron
+# name that rows 15 to 17 create stayed as well, where `make clean` refuses
+# to touch it for carrying no seal. Four of them stayed until the
+# measured cleanup at the close found them. A bench that dirties what the gate
+# protects is worse than one that fails.
 barre_el_banco() {
 	local rc=$?
 	set +e
-	# El artefacto con nombre de fierro que este banco crea se retira SIEMPRE, con
-	# su ruta literal y el run id dentro, falle o no: si se quedara, `make clean`
-	# se negaria a barrer gate/out entero hasta que alguien lo sellara a mano.
-	# LA TRAMPA MIRA ARTEFACTO_REAL Y NO OUT_LOCAL, y esto es una correccion del 8 de
-	# septiembre de 2026 que trajo un lector matando el banco a proposito. Las filas
-	# del sello MUEVEN OUT_LOCAL, OUT_DIR y RUN_ID a talleres de mentira para montar
-	# sus casos, y los devuelven a mano al terminar. Un `exit` dentro de una de esas
-	# ventanas dejaba a la trampa comparando la ruta de mentira contra la de verdad:
-	# la guarda no casaba, se imprimia "NO retiro" nombrando la ruta EQUIVOCADA, y el
-	# artefacto de fierro de verdad se quedaba en gate/out con su SEALED dentro y sin
-	# linea `closed:`. O sea un artefacto FABRICADO que se lee como una corrida de
-	# fierro matada, y que `make clean` no barre nunca por llevar sello. Medido: el
-	# banco muerto a mitad del bloque 17n-17q dejaba
+	# The artifact with an iron name that this bench creates is ALWAYS removed, with
+	# its literal path and the run id inside, whether it fails or not: if it stayed, `make clean`
+	# would refuse to sweep gate/out whole until somebody sealed it by hand.
+	# THE TRAP LOOKS AT ARTEFACTO_REAL AND NOT AT OUT_LOCAL, and this is a correction of
+	# 2026-09-08 that a reader brought in by killing the bench on purpose. The rows
+	# of the seal MOVE OUT_LOCAL, OUT_DIR and RUN_ID to fake workshops to set up
+	# their cases, and put them back by hand when they finish. An `exit` inside one of those
+	# windows left the trap comparing the fake path against the real one:
+	# the guard did not match, "NO retiro" was printed naming the WRONG path, and the
+	# real iron artifact stayed in gate/out with its SEALED inside and with no
+	# `closed:` line. That is, a FABRICATED artifact that reads as a killed iron
+	# run, and that `make clean` never sweeps for carrying a seal. Measured: the
+	# bench killed halfway through the block 17n-17q left
 	# gate/out/p2-<run id>/{RUNNING,hygiene.log,SEALED}.
 	#
-	# ARTEFACTO_REAL se fija UNA vez, justo despues de cargar p2.sh, y ninguna fila
-	# lo toca. La guarda de forma se queda, porque lo que justifica un `rm -rf` no es
-	# de donde salio la variable sino que la ruta se haya comprobado antes de usarla.
+	# ARTEFACTO_REAL is set ONCE, right after sourcing p2.sh, and no row
+	# touches it. The shape guard stays, because what justifies an `rm -rf` is not
+	# where the variable came from but that the path has been checked before it is used.
 	if [ -n "${ARTEFACTO_REAL:-}" ] && [ "${ARTEFACTO_REAL}" = "${GATE_DIR}/out/$(basename "${ARTEFACTO_REAL}")" ] \
 		&& [ "$(basename "${ARTEFACTO_REAL}" | cut -c1-3)" = "p2-" ]; then
 		rm -rf -- "${GATE_DIR}/out/$(basename "${ARTEFACTO_REAL}")"
 	elif [ -n "${ARTEFACTO_REAL:-}" ]; then
 		echo "p2-iron-test: NO retiro ${ARTEFACTO_REAL}: no es la ruta que este banco sabe borrar" >&2
 	fi
-	# Y LOS TALLERES DE MENTIRA VIVEN DENTRO DEL BANCO, asi que se van con el; pero
-	# antes hay que devolver el permiso de escritura, porque la fila 17p pone un
-	# directorio en modo 500 y un banco muerto entre el chmod y su vuelta deja un
-	# arbol que ni `rm -rf` ni `make clean` pueden retirar. Medido por un lector.
+	# AND THE FAKE WORKSHOPS LIVE INSIDE THE BENCH, so they go away with it; but
+	# first the write permission has to be given back, because row 17p puts a
+	# directory in mode 500 and a bench killed between that chmod and its reversal leaves a
+	# tree that neither `rm -rf` nor `make clean` can remove. Measured by a reader.
 	[ -d "${BANCO}" ] && chmod -R u+w "${BANCO}" 2>/dev/null
 	if [ "${COMPLETO}" -ne 1 ]; then
 		echo "p2-iron-test: ABORTADO antes del resumen; lo impreso arriba NO es un resultado" >&2
@@ -143,12 +143,12 @@ mkdir -p "${BANCO}/bin" "${BANCO}/casa" "${BANCO}/estado"
 : > "${BANCO}/llave"
 chmod 600 "${BANCO}/llave"
 
-# ---- el stub de ssh y scp -----------------------------------------------------
+# ---- the ssh and scp stub -----------------------------------------------------
 #
-# Cada host de mentira tiene su propia casa. El stub traduce la direccion a la
-# casa y corre la orden ahi dentro, de verdad. Un host marcado "muerto" no
-# contesta y sale con 255, que es lo que hace ssh cuando el transporte cae, y es
-# el caso que separa NO de NO-SE-PUDO-LEER.
+# Each fake host has its own home. The stub translates the address to the
+# home and runs the command inside it, for real. A host marked "muerto" does not
+# answer and exits 255, which is what ssh does when the transport drops, and it is
+# the case that tells NO apart from UNREADABLE.
 cat > "${BANCO}/bin/ssh" <<'SSHFIN'
 #!/usr/bin/env bash
 if [ "${NAYLAMP_RED_ARM:-}" != 1 ]; then
@@ -173,19 +173,19 @@ esac
 casa="${BANCO_CASA}/${n}"
 [ -f "${BANCO_ESTADO}/${n}.muerto" ] && exit 255
 cd "${casa}" || exit 255
-# Las rutas absolutas del kernel se reescriben a la casa de mentira: es la unica
-# forma de que las primitivas se prueben TAL COMO ESTAN ESCRITAS, leyendo
-# /proc/sys/kernel/..., en vez de con una version del guion adaptada al banco.
+# The absolute kernel paths are rewritten to the fake home: it is the only
+# way for the primitives to be exercised AS THEY ARE WRITTEN, reading
+# /proc/sys/kernel/..., instead of with a version of the script adapted to the bench.
 orden="$*"
 orden="${orden//\/proc\//${casa}/proc/}"
-# UN NODO PUEDE FALLAR SOLO AL ARMAR, y hace falta poder pedirlo. La siembra del
-# testigo y su armado son dos viajes distintos y el gate los trata distinto: sin
-# siembra la fase se va antes de nada, y sin armado se anota el nodo y se sigue.
-# Para ejercer el segundo camino hay que negar el armado DEJANDO pasar la siembra,
-# y por eso no vale con romper el fichero: eso rompe la siembra primero. El armado
-# es el unico viaje que hace un `>>` sobre el testigo; la siembra usa python con
-# O_TRUNC. Se casa esa forma y no una longitud, que cambiaria el dia que alguien
-# mueva TESTIGO_COLA.
+# A NODE CAN FAIL AT ARMING ALONE, and it has to be possible to ask for it. The seeding of the
+# canary and its arming are two different trips and the gate treats them differently: without
+# seeding the phase leaves before doing anything, and without arming the node is noted and the phase goes on.
+# To exercise the second path the arming has to be denied LETTING the seeding through,
+# and that is why breaking the file will not do: that breaks the seeding first. The arming
+# is the only trip that makes a `>>` on the canary; the seeding uses python with
+# O_TRUNC. That shape is matched and not a length, which would change the day somebody
+# moves TESTIGO_COLA.
 if [ -f "${BANCO_ESTADO}/${n}.no-arma" ]; then
 	case "${orden}" in *">> naylamp/testigo-corte.bin"*) exit 1 ;; esac
 fi
@@ -229,8 +229,8 @@ chmod +x "${BANCO}/bin/scp"
 
 for n in 1 2 3; do
 	mkdir -p "${BANCO}/casa/${n}/naylamp/data" "${BANCO}/casa/${n}/naylamp/logs" "${BANCO}/casa/${n}/naylamp/bin"
-	# Las dos lecturas del kernel van por su ruta ABSOLUTA, asi que la casa de
-	# mentira las monta bajo su propio prefijo y el stub reescribe /proc dentro.
+	# The two kernel readings go by their ABSOLUTE path, so the fake
+	# home keeps them under its own prefix and the stub rewrites /proc to point there.
 	mkdir -p "${BANCO}/casa/${n}/proc/sys/kernel/random"
 	printf '176\n' > "${BANCO}/casa/${n}/proc/sys/kernel/sysrq"
 	printf 'aaaa-bbbb-cccc-000%s\n' "${n}" > "${BANCO}/casa/${n}/proc/sys/kernel/random/boot_id"
@@ -256,29 +256,29 @@ echo
 
 # shellcheck source=p2.sh
 source "${GATE_DIR}/p2.sh" >/dev/null 2>&1
-# Solo AHORA, con p2.sh ya cargado y sus nombres en su sitio, se arma la trampa.
-# El artefacto de fierro de ESTA corrida, capturado antes de que ninguna fila
-# pueda mover OUT_LOCAL. Es lo unico que la trampa borra bajo gate/out.
+# Only NOW, with p2.sh already loaded and its names in place, is the trap armed.
+# The iron artifact of THIS run, captured before any row
+# can move OUT_LOCAL. It is the only thing the trap deletes under gate/out.
 ARTEFACTO_REAL="${OUT_LOCAL}"
 trap barre_el_banco EXIT
 echo "-- cargado en modo fierro: ES_FIERRO=${ES_FIERRO}, artefacto $(basename "${ARTEFACTO_REAL}") --"
 echo
 
-# ---- 1 a 5: la lectura de sysrq, que no es una mascara plana -------------------
+# ---- 1 to 5: the sysrq reading, which is not a flat mask ----------------------
 fila 1  "si" "$(sysrq_permite_reinicio 176 && echo si || echo no)" "sysrq=176, el valor real de naylamp-1, permite el reinicio"
 fila 2  "si" "$(sysrq_permite_reinicio 1   && echo si || echo no)" "sysrq=1 habilita todas las funciones"
 roja 3  "no" "$(sysrq_permite_reinicio 0   && echo si || echo no)" "sysrq=0 NO permite: el corte seria un no-op y todo verde de abajo mentiria"
 roja 4  "no" "$(sysrq_permite_reinicio 16  && echo si || echo no)" "sysrq=16 es una mascara SIN el bit 128, y leerla como bitmask plano la daria por buena"
 roja 5  "no" "$(sysrq_permite_reinicio 'cat: /proc/sys/kernel/sysrq: Permission denied' && echo si || echo no)" "una respuesta que no es un numero NO es un permiso"
 
-# ---- 6 a 8: lineas_listening devuelve UNA linea, siempre ----------------------
+# ---- 6 to 8: lineas_listening returns ONE line, always ------------------------
 FLEET="${BANCO}/flota"; mkdir -p "${FLEET}"
 printf 'arranca\nnada aqui\n' > "${FLEET}/node1.log"
 printf 'arranca\nlistening on x\n' > "${FLEET}/node2.log"
-# El predicado es "el valor NO lleva un salto de linea dentro". Contar con wc -l
-# sobre una salida sin salto final da 0 y no 1, y la primera version de estas
-# filas lo escribio asi: un predicado que no mide lo que su texto dice, dentro
-# del banco escrito para cazar justo eso.
+# The predicate is "the value does NOT carry a newline inside". Counting with wc -l
+# over an output without a final newline gives 0 and not 1, and the first version of these
+# rows wrote it that way: a predicate that does not measure what its text says, inside
+# the bench written to catch exactly that.
 saltos_en() { printf '%s' "$1" | tr -cd '\n' | wc -c | tr -d ' '; }
 fila 6 "0" "$(saltos_en "$(lineas_listening 1)")" "log que existe SIN la linea: CERO saltos dentro del valor (el defecto metia uno)"
 fila 7 "0" "$(lineas_listening 1)" "y su valor es 0"
@@ -286,25 +286,25 @@ fila 8 "1" "$(lineas_listening 2)" "log con la linea: 1"
 fila 9 "0" "$(lineas_listening 9)" "log que no existe: 0"
 fila 10 "1" "$( set +e; [ "$(lineas_listening 1)" -gt 0 ] >/dev/null 2>&1; echo $? )" "la comparacion devuelve 1, que es FALSO; antes devolvia 2, que es un error de sintaxis disfrazado de falso"
 
-# ---- 11 y 12: entry_log_bytes tiene un tercer resultado, ILEGIBLE -------------
+# ---- 11 and 12: entry_log_bytes has a third outcome, UNREADABLE ---------------
 mkdir -p "${FLEET}/node1/data"
 head -c 100 /dev/zero > "${FLEET}/node1/data/raft-1.log"
 head -c 50  /dev/zero > "${FLEET}/node1/data/raft-2.log"
 fila 11 "150" "$(entry_log_bytes 1)" "suma los segmentos legibles"
-# El fichero ilegible se monta con un enlace simbolico CIRCULAR y no con chmod
-# 000: la primera version usaba chmod y las filas 12 y 33 salian verdes por la
-# razon equivocada, porque stat lee METADATOS y no contenido, asi que un fichero
-# sin permisos de lectura sigue dando su tamano. Un bucle de enlaces hace fallar
-# a stat de verdad, que es lo que estas filas quieren.
+# The unreadable file is set up with a CIRCULAR symbolic link and not with chmod
+# 000: the first version used chmod and rows 12 and 33 came out green for the
+# wrong reason, because stat reads METADATA and not content, so a file
+# without read permission still gives its size. A loop of links makes
+# stat fail for real, which is what these rows want.
 mkdir -p "${FLEET}/node2/data"
 ln -sf "raft-1.log" "${FLEET}/node2/data/raft-1.log"
 roja 12 "2" "$( entry_log_bytes 2 >/dev/null 2>&1; echo $? )" "un segmento que stat no puede leer devuelve 2, y no un total corto en silencio"
 
-# ---- 13 y 14: el artefacto de fierro se llama p2-, que es lo que make clean protege
+# ---- 13 and 14: the iron artifact is called p2-, which is what make clean protects
 fila 13 "p2" "$(basename "${OUT_LOCAL}" | cut -d- -f1)" "en fierro el artefacto es p2-<run id>, o sea el que la guarda del Makefile exige sellado"
 fila 14 "1" "$(printf '%s' "$(basename "${OUT_LOCAL}")" | grep -c '^p2-[0-9]')" "y NO p2-local-, que es el que make clean barre sin preguntar"
 
-# ---- 15 a 17: el marcador RUNNING conoce el nombre de fierro ------------------
+# ---- 15 to 17: the RUNNING marker knows the iron name -------------------------
 mkdir -p "${OUT_LOCAL}"
 escribe_running
 fila 15 "1" "$(grep -c "^run: $(basename "${OUT_LOCAL}")\$" "${OUT_LOCAL}/RUNNING")" "el marcador lleva dentro el nombre de fierro"
@@ -317,45 +317,45 @@ roja 17 "1" "$(retira_running 2>&1 | grep -c 'NOT removed')" "y con un tercer no
 OUT_LOCAL="${GUARDA_OUT}"
 rm -f -- "${OUT_LOCAL}/RUNNING"
 
-# ---- 17a a 17u: EL SELLO DEL ARTEFACTO DE FIERRO, DEFER-098 -------------------
+# ---- 17a to 17u: THE SEAL OF THE IRON ARTIFACT, DEFER-098 ---------------------
 #
-# POR QUE ESTAS FILAS VIVEN AQUI Y NO EN gate/p2-guard-test.sh. Aquel banco corre
-# el ENSAYO, y el ensayo no sella nunca: seal_artifact devuelve en su primera
-# linea con ES_FIERRO distinto de 1, que es deliberado, porque un p2-local- lo
-# barre un make clean cualquiera y un sello dentro seria la marca de evidencia
-# puesta sobre lo que no lo es. Un banco que no puede ver el objeto no lo prueba,
-# y este fichero ya lleva escrita esa leccion mas arriba. Aqui p2.sh esta cargado
-# en modo fierro, asi que el objeto existe: OUT_LOCAL es un p2-<run id> de verdad.
+# WHY THESE ROWS LIVE HERE AND NOT IN gate/p2-guard-test.sh. That bench runs
+# the REHEARSAL, and the rehearsal never seals: seal_artifact returns on its first
+# line with ES_FIERRO other than 1, which is deliberate, because a p2-local- is
+# swept by any make clean and a seal inside would be the evidence mark
+# put on what is not one. A bench that cannot see the object does not prove it,
+# and this file already carries that lesson written further up. Here p2.sh is loaded
+# in iron mode, so the object exists: OUT_LOCAL is a real p2-<run id>.
 #
-# Y SE DISPARAN POR LOS DOS LADOS, que es lo que este banco dice de si mismo en su
-# primera linea. Cada decision del sello se mide en su forma de hoy y en la forma
-# que tendria sin ella, porque una fila que solo pasa sobre la forma buena no
-# separa "la decision esta en el codigo" de "la decision esta en la prosa".
+# AND THEY FIRE FROM BOTH SIDES, which is what this bench says about itself on its
+# first line. Each decision of the seal is measured in today's shape and in the shape
+# it would have without it, because a row that only passes on the good shape does not
+# tell "the decision is in the code" apart from "the decision is in the prose".
 RUN_STARTED=1
 SUBCOMANDO=all
 ARRANCO_A="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 EXPECTED="P2.build P2.hygiene"
 VERDICTS=" P2.build=pass "
 
-# El barrido devuelve la cuenta de los que visito pegada a la lista de los que no
-# llevan sello, asi que la pregunta "me nombra a MI" se hace por el nombre y no
-# por la cuenta: otro p2-<run id> en gate/out moveria la cuenta y no dice nada
-# sobre este artefacto.
+# The sweep returns the count of those it visited glued to the list of those that do not
+# carry a seal, so the question "does it name ME" is asked by the name and not
+# by the count: another p2-<run id> in gate/out would move the count and say nothing
+# about this artifact.
 esta_en_el_barrido() {
 	case " $(artefactos_de_fierro_sin_sello) " in
 		*" $(basename "${OUT_LOCAL}") "*) printf 'si' ;;
 		*) printf 'no' ;;
 	esac
 }
-# Cuenta las palabras de una linea del sello. grep -c sale con 1 cuando cuenta
-# cero, que aqui es un valor y no un error, y por eso se lee el texto y nunca el
-# estado de salida.
+# Counts the words of one line of the seal. grep -c exits 1 when it counts
+# zero, which here is a value and not an error, and that is why the text is read and never the
+# exit status.
 palabras_de() { sed -n "s/^$1:  *//p" "${OUT_LOCAL}/SEALED" | tr ' ' '\n' | grep -c . ; }
 
-# EL ESTADO DE LA 17a SE MONTA AQUI Y NO SE HEREDA, y un lector midio lo que
-# costaba: la fila exige que el artefacto tenga SOLO el marcador dentro, y ese
-# estado lo dejaban las filas 15 a 17, no ella. Un fichero de mas en cualquier fila
-# anterior y la 17a se invierte sin que nadie lo note. Ahora lo rehace desde cero.
+# THE STATE OF ROW 17a IS SET UP HERE AND IS NOT INHERITED, and a reader measured what
+# it cost: the row demands that the artifact have ONLY the marker inside, and that
+# state was left by rows 15 to 17, not by it. One extra file in any row
+# before it and 17a flips with nobody noticing. Now it redoes it from scratch.
 rm -rf -- "${OUT_LOCAL}"
 mkdir -p "${OUT_LOCAL}"
 escribe_running
@@ -371,8 +371,8 @@ fila 17c "si|no" "$([ -e "${OUT_LOCAL}/SEALED" ] && echo si || echo no)|$(esta_e
 
 roja 17d "0|1|2" "$(grep -c '^closed:' "${OUT_LOCAL}/SEALED")|$(palabras_de verdicts)|$(palabras_de expected)" "el sello a medias no lleva closed y trae MENOS veredictos que esperados, que es la forma que una corrida matada y una completa compartian en gate/p1.sh hasta el 8 de septiembre de 2026"
 
-# La corrida llega a su final: la higiene emite el veredicto que faltaba y la
-# trampa termina el sello. Es la secuencia de al_salir, sin la trampa.
+# The run reaches its end: the hygiene emits the verdict that was missing and the
+# trap finishes the seal. It is the sequence of al_salir, without the trap.
 record_verdict P2.hygiene pass
 completa_el_sello
 fila 17e "1|2|2" "$(grep -c '^closed:' "${OUT_LOCAL}/SEALED")|$(palabras_de verdicts)|$(palabras_de expected)" "terminado, lleva UNA linea closed y tantos veredictos como esperados: una corrida completa y una matada dejan de tener la misma forma"
@@ -382,19 +382,19 @@ completa_el_sello
 fila 17g "1|1" "$(grep -c '^closed:' "${OUT_LOCAL}/SEALED")|$(grep -c '^verdicts:' "${OUT_LOCAL}/SEALED")" "dos pasadas dejan UNA sola closed y UNA sola verdicts: terminar un sello ya terminado no lo duplica"
 fila 17h "0" "$(ls -1 "${OUT_LOCAL}" | grep -c '^SEALED\.a-medias$')" "y no sobrevive ningun SEALED.a-medias dentro de un artefacto que el sello protege de make clean"
 
-# LA 17i TIENE DOS MITADES Y LA PRIMERA VERSION SOLO TENIA UNA, que es un hallazgo
-# de lector: medida solo por el eco, un p2.sh al que se le quitara la linea de la
-# bandera y se le dejara el eco gritaria "THIS run did not write it" en CADA segunda
-# llamada normal de la corrida, que es el caso corriente, y la fila seguia verde. La
-# mitad que faltaba es esa: con la bandera puesta, la segunda llamada es SILENCIOSA.
+# 17i HAS TWO HALVES AND THE FIRST VERSION HAD ONLY ONE, which is a finding
+# of a reader: measured only by the echo, a p2.sh with the flag line removed and
+# its echo left in place would shout "THIS run did not write it" on the second normal
+# call of EVERY run, which is the ordinary case, and the row stayed green. The
+# missing half is that one: with the flag set, the second call is SILENT.
 roja 17i "0|1|1" "$(seal_artifact 2>&1 | grep -c 'did not write it')|$( SELLO_ESCRITO_AQUI=0; seal_artifact 2>&1 | grep -c 'did not write it')|$(grep -c '^closed:' "${OUT_LOCAL}/SEALED")" "con la bandera puesta la segunda llamada de la corrida NO dice nada, y sin ella un sello que esta corrida no escribio se dice en voz alta y no se toca: la bandera de la clausula 30, y aqui basta una porque ningun subcomando de este guion adopta el id de otra corrida"
 
-# 17u: UN SELLO QUE NO SE PUDO ESCRIBIR NO SE ANUNCIA COMO ESCRITO, y esta fila
-#      entra con la guarda que la hace posible. Medido en el bash 3.2 de esta
-#      maquina: un grupo `{ ...; } > fichero` cuyo destino no se puede crear imprime
-#      su error, devuelve 1 y NO dispara `set -e`, asi que la bandera se ponia a 1 y
-#      la consola decia "sealed the artifact" sin que existiera fichero. La fila
-#      exige las tres cosas: no hay sello, la bandera sigue en cero, y se dice.
+# 17u: A SEAL THAT COULD NOT BE WRITTEN IS NOT ANNOUNCED AS WRITTEN, and this row
+#      comes in with the guard that makes it possible. Measured on this machine's bash 3.2, a
+#      `{ ...; } > file` group whose destination cannot be created prints
+#      its error, returns 1 and does NOT trigger `set -e`, so the flag went to 1 and
+#      the console said "sealed the artifact" with no file in existence. The row
+#      demands the three things: there is no seal, the flag is still at zero, and it is said.
 GUARDA_OUT="${OUT_LOCAL}"
 OUT_LOCAL="${BANCO}/artefacto-sin-permiso"
 rm -rf -- "${OUT_LOCAL}"; mkdir -p "${OUT_LOCAL}"
@@ -424,23 +424,23 @@ printf 'expected:    P2.build\nverdicts:    P2.build=pass\n' > "${OUT_LOCAL}/SEA
 roja 17j "1|0" "$(completa_el_sello 2>&1 | grep -c 'is not p2-')|$(grep -c '^closed:' "${OUT_LOCAL}/SEALED")" "y bajo un nombre que no es p2-<run id> se niega EN VOZ ALTA y no lo termina, en vez de escribir un closed dentro de un fichero que no sabe de quien es"
 OUT_LOCAL="${GUARDA_OUT}"
 
-# ---- 17k y 17l: EL ORDEN, medido por su efecto y no por su texto -------------
+# ---- 17k and 17l: THE ORDER, measured by its effect and not by its text ------
 #
-# Las filas de arriba llaman a seal_artifact y al barrido por separado, asi que
-# seguirian verdes con las dos lineas cambiadas de sitio dentro de
-# veredicto_del_sello. Estas dos llaman a la funcion entera, que es donde el orden
-# vive: sellar primero y barrer despues es lo que hace que el barrido incluya el
-# sello que la corrida acaba de escribir. Con las dos lineas al reves, el barrido
-# nombraria el artefacto y la 17k saldria roja.
+# The rows above call seal_artifact and the sweep separately, so they would
+# stay green with the two lines swapped inside
+# veredicto_del_sello. These two call the whole function, which is where the order
+# lives: sealing first and sweeping afterwards is what makes the sweep include the
+# seal the run has just written. With the two lines the other way round, the sweep
+# would name the artifact and 17k would come out red.
 rm -f -- "${OUT_LOCAL}/SEALED"
 SELLO_ESCRITO_AQUI=0
 CHECK_FAILED=0
 veredicto_del_sello
 fila 17k "sellado|verde" "$([ -e "${OUT_LOCAL}/SEALED" ] && echo sellado || echo sin-sello)|$([ "${CHECK_FAILED}" -eq 0 ] && echo verde || echo rojo)" "veredicto_del_sello sella y DESPUES barre: el artefacto sale sellado y la fase no se pone roja por el"
 
-# Y la otra mitad: una corrida que NO consigue sellarse. Se monta quitandole a
-# seal_artifact su precondicion, RUN_STARTED, y no editando el guion: el objeto
-# que esta fila mide es el barrido, no la razon por la que no hubo sello.
+# And the other half: a run that does NOT manage to seal itself. It is set up by taking
+# the precondition RUN_STARTED away from seal_artifact, and not by editing the script: the
+# object this row measures is the sweep, not the reason why there was no seal.
 rm -f -- "${OUT_LOCAL}/SEALED"
 SELLO_ESCRITO_AQUI=0
 CHECK_FAILED=0
@@ -450,51 +450,51 @@ roja 17l "sin-sello|rojo" "$([ -e "${OUT_LOCAL}/SEALED" ] && echo sellado || ech
 RUN_STARTED=1
 CHECK_FAILED=0
 
-# ---- 17m: y las DOS lineas rojas no dicen lo mismo, que es por lo que son dos -
+# ---- 17m: and the TWO red lines do not say the same thing, so there are two ---
 #
-# veredicto_del_sello puede ponerse roja por dos causas y tienen remedios
-# distintos: que ESTA corrida no consiguiera sellarse, que es un defecto del gate,
-# o que en gate/out haya quedado un artefacto de OTRA corrida sin sellar, que se
-# arregla sellandolo o barriendolo a mano. Sin esta fila la primera comprobacion
-# quedaria implicada por el barrido, porque el barrido tambien nombra el artefacto
-# de esta corrida, y una guarda que ninguna fila puede distinguir de otra es
-# decoracion. Aqui se separan: con lo propio sellado y algo ajeno sin sello, la
-# linea de "this run" NO sale y la del barrido SI.
+# veredicto_del_sello can turn red for two causes and they have different
+# remedies: that THIS run did not manage to seal itself, which is a defect of the gate,
+# or that under gate/out an artifact of ANOTHER run has been left unsealed, which is
+# fixed by sealing it or sweeping it by hand. Without this row the first check
+# would be implied by the sweep, because the sweep also names the artifact of
+# this run, and a guard that no row can tell apart from another is decoration.
+# Here they are told apart: with this run's own sealed and something foreign unsealed,
+# the "this run" line does NOT come out, and the sweep's DOES.
 #
-# EL ARTEFACTO AJENO NO SE CREA EN gate/out, y esa es la parte cara de esta fila.
-# Un p2-<run id> sin sello ahi arriba haria que `make clean` se negara para siempre
-# si este banco muriera antes de retirarlo, y barre_el_banco solo sabe borrar el
-# suyo. Se mueve OUT_DIR al taller del banco, que es lo que el barrido lee, asi
-# que el directorio de mentira nace y muere dentro de lo que la trampa ya barre.
+# THE FOREIGN ARTIFACT IS NOT CREATED under gate/out, and that is the expensive part
+# of this row. A p2-<run id> without a seal there would make `make clean` refuse
+# forever if this bench died before removing it, and barre_el_banco only knows how to
+# delete its own. OUT_DIR is moved to the bench's workshop, which is what the sweep
+# reads, so the fake directory is born and dies inside what the trap already sweeps.
 SELLO_ESCRITO_AQUI=0
 seal_artifact
 GUARDA_OUTDIR="${OUT_DIR}"
 OUT_DIR="${BANCO}/gate-out-de-mentira"
 mkdir -p "${OUT_DIR}/p2-20200101T000000Z-1"
 printf 'de otra corrida, y sin sello\n' > "${OUT_DIR}/p2-20200101T000000Z-1/manifest.txt"
-# LA SALIDA SE RECOGE EN UN FICHERO Y NO EN UNA SUSTITUCION, y la primera version
-# usaba `$( )`. Eso corre en un SUBSHELL, asi que el `fail` de dentro no llegaba a
-# CHECK_FAILED del padre y la linea que venia detras poniendolo a cero era un
-# no-op que se leia como si importara. Un lector lo midio. Con el fichero, el color
-# de la fase es legible y la fila puede exigirlo.
+# THE OUTPUT IS COLLECTED IN A FILE AND NOT IN A SUBSTITUTION, and the first version
+# used `$( )`. That runs in a SUBSHELL, so the `fail` inside did not reach the parent's
+# CHECK_FAILED and the line that came after it, setting it back to zero, was a
+# no-op that read as if it mattered. A reader measured it. With the file, the color
+# of the phase is readable and the row can demand it.
 CHECK_FAILED=0
 veredicto_del_sello 2> "${BANCO}/17m.err"
 OUT_DIR="${GUARDA_OUTDIR}"
 roja 17m "0|1|rojo" "$(grep -c 'this run wrote an artifact' "${BANCO}/17m.err")|$(grep -c 'p2-20200101T000000Z-1' "${BANCO}/17m.err")|$([ "${CHECK_FAILED}" -eq 0 ] && echo verde || echo rojo)" "con lo propio sellado y un artefacto AJENO sin sello, la linea de ESTA corrida no sale, el barrido nombra al ajeno y la fase se pone roja: es el barrido quien enrojece aqui, y por eso las dos guardas rojas no son la misma"
 CHECK_FAILED=0
 
-# ---- 17s: la guarda que NINGUN mutante tumbaba -------------------------------
+# ---- 17s: the guard that NO mutant knocked down ------------------------------
 #
-# LA TRAJO UN LECTOR MIDIENDO: borrando entera la linea que dice "this run wrote an
-# artifact and did not seal it", el banco seguia con 0 en FALLA. La 17l se pone
-# roja igual porque en su montaje el artefacto esta DENTRO de gate/out y lo nombra
-# el barrido; la 17m solo comprobaba que la linea NO sale. O sea que esa guarda
-# estaba escrita, era la unica que nombra a la corrida en curso, y no la vigilaba
-# nadie.
+# A READER BROUGHT IT BY MEASURING: deleting the line that says "this run wrote an
+# artifact and did not seal it" whole, the bench stayed at 0 failing. 17l turns
+# red anyway because in its setup the artifact is INSIDE gate/out and the
+# sweep names it; 17m only checked that the line does NOT come out. So that guard
+# was written, it was the only one that names the run in progress, and nobody watched
+# it.
 #
-# EL UNICO MONTAJE EN QUE SOLO ELLA PUEDE ENROJECER: OUT_DIR en un taller VACIO, y
-# el artefacto de la corrida FUERA de ese taller, con contenido y sin sello. Asi el
-# barrido no tiene nada que nombrar y lo que quede rojo es esa linea o nada.
+# THE ONLY SETUP IN WHICH ONLY IT CAN TURN RED: OUT_DIR in an EMPTY workshop, and
+# the run's artifact OUTSIDE that workshop, with content and without a seal. That way
+# the sweep has nothing to name and what stays red is that line or nothing.
 GUARDA_OUTDIR="${OUT_DIR}"; GUARDA_OUT="${OUT_LOCAL}"
 OUT_DIR="${BANCO}/taller-vacio"; mkdir -p "${OUT_DIR}"
 OUT_LOCAL="${BANCO}/artefacto-fuera-del-taller"
@@ -507,30 +507,30 @@ roja 17s "1|0|rojo" "$(grep -c 'this run wrote an artifact' "${BANCO}/17s.err")|
 OUT_DIR="${GUARDA_OUTDIR}"; OUT_LOCAL="${GUARDA_OUT}"
 CHECK_FAILED=0
 
-# ---- 17n a 17p: LAS TRES NEGATIVAS, y por que hacen falta ---------------------
+# ---- 17n to 17p: THE THREE NEGATIVES, and why they are needed -----------------
 #
-# LAS FILAS DE ARRIBA PASAN TODAS POR EL CAMINO FELIZ, y eso se midio en vez
-# de suponerse: quitando entera la condicion que decide si la reescritura se
-# publica, las que habia entonces seguian verdes. Es la misma medida que gate/sello-test.sh
-# tuvo que hacerse sobre p1.sh, y la conclusion es la misma: un banco que solo
-# recorre el camino bueno no prueba la guarda, prueba el camino. Estas tres
-# fuerzan una negativa por tres rutas distintas y las tres exigen lo mismo, que es
-# lo unico que hace util a la negativa: el sello sobrevive BYTE A BYTE, no queda
-# ningun resto al lado, y la funcion lo dice en voz alta.
+# THE ROWS ABOVE ALL TAKE THE HAPPY PATH, and that was measured rather
+# than assumed: removing the whole condition that decides whether the rewrite is
+# published, those that existed then stayed green. It is the same measurement that
+# gate/sello-test.sh had to make on p1.sh, and the conclusion is the same: a bench that
+# only walks the good path does not prove the guard, it proves the path. These three
+# force a negative by three different routes and all three demand the same thing,
+# which is the only thing that makes the negative useful: the seal survives BYTE FOR
+# BYTE, no leftover stays beside it, and the function says so out loud.
 #
-# EL TALLER SE MUEVE, y con el OUT_DIR y RUN_ID, porque completa_el_sello solo
-# actua sobre ${OUT_DIR}/p2-${RUN_ID} y estas filas necesitan sellos deliberadamente
-# rotos. Naciendo dentro del taller del banco, ninguno de ellos puede quedarse en
-# gate/out si esto muere a mitad.
+# THE WORKSHOP IS MOVED, and with it OUT_DIR and RUN_ID, because completa_el_sello only
+# acts on ${OUT_DIR}/p2-${RUN_ID} and these rows need seals that are deliberately
+# broken. Being born inside the bench's workshop, none of them can be left in
+# gate/out if this dies halfway.
 #
-# LO QUE ESTAS TRES NO ALCANZAN, declarado y no escondido: la mitad de la guarda
-# que compara `expected:` byte a byte NO es alcanzable desde fuera de la funcion.
-# El bucle copia verbatim toda linea que no sea verdicts: ni closed:, asi que
-# ninguna entrada valida puede hacer que esa linea salga distinta. Quien la mide es
-# gate/sello-test.sh, que EXTRAE la funcion de p1.sh y la muta; su gemela de aqui
-# esta cubierta por la otra mitad de la misma condicion, el recuento de lineas, que
-# la fila 17n si alcanza. El dia que esa mitad necesite su propia fila, el sitio es
-# un banco de extraccion y no una mutacion desde fuera.
+# WHAT THESE THREE DO NOT REACH, declared and not hidden: the half of the guard
+# that compares `expected:` byte for byte is NOT reachable from outside the function.
+# The loop copies verbatim every line that is neither `verdicts:` nor `closed:`, so
+# no valid input can make that line come out different. What measures it is
+# gate/sello-test.sh, which EXTRACTS the function from p1.sh and mutates it; its twin here
+# is covered by the other half of the same condition, the line count, which
+# row 17n does reach. The day that half needs a row of its own, the place is
+# an extraction bench and not a mutation from outside.
 GUARDA_OUTDIR="${OUT_DIR}"; GUARDA_RUNID="${RUN_ID}"; GUARDA_OUT="${OUT_LOCAL}"
 OUT_DIR="${BANCO}/sellos"
 RUN_ID="20260908T100000Z-1"
@@ -538,7 +538,7 @@ OUT_LOCAL="${OUT_DIR}/p2-${RUN_ID}"
 SELLO_ESCRITO_AQUI=1
 VERDICTS=" P2.build=pass P2.hygiene=pass "
 
-# siembra_sello <lineas closed que ya trae> [sin-verdicts]
+# siembra_sello <closed lines it already carries> [sin-verdicts]
 siembra_sello() {
 	rm -rf -- "${OUT_LOCAL}"
 	mkdir -p "${OUT_LOCAL}"
@@ -559,28 +559,28 @@ siembra_sello() {
 huella_del_sello() { md5 -q "${OUT_LOCAL}/SEALED" 2>/dev/null || md5sum "${OUT_LOCAL}/SEALED" | cut -d' ' -f1; }
 restos_al_lado() { ls -1 "${OUT_LOCAL}" 2>/dev/null | grep -c '^SEALED\.a-medias$' ; }
 
-# 17n: DOS closed dentro. La reescritura tira las dos y pone una, o sea que sale
-#      con UNA LINEA MENOS; el recuento la caza y no se publica nada.
+# 17n: TWO closed inside. The rewrite throws both away and puts one, so it comes out
+#      with ONE LINE FEWER; the count catches it and nothing is published.
 ANTES_17N="$(siembra_sello 2)"
 SALIDA_17N="$(completa_el_sello 2>&1)"
 roja 17n "${ANTES_17N}|0|1" "$(huella_del_sello)|$(restos_al_lado)|$(printf '%s' "${SALIDA_17N}" | grep -c 'did not match the seal it came from')" "una reescritura que PIERDE lineas con expected intacta la caza el recuento: el sello sale identico byte a byte, sin restos y con su aviso"
 
-# 17o: sin linea verdicts no hay nada que reescribir, y callarse dejaria el sello
-#      descrito como el de una corrida que no llego a su final.
+# 17o: without a verdicts line there is nothing to rewrite, and saying nothing would
+#      leave the seal described as one from a run that did not reach its end.
 ANTES_17O="$(siembra_sello 0 sin-verdicts)"
 SALIDA_17O="$(completa_el_sello 2>&1)"
 roja 17o "${ANTES_17O}|0|1" "$(huella_del_sello)|$(restos_al_lado)|$(printf '%s' "${SALIDA_17O}" | grep -c 'has no verdicts line')" "un sello sin linea de veredictos se deja EXACTAMENTE como esta y se dice, en vez de darse por terminado en silencio"
 
-# 17p: sin permiso de escritura al lado del sello no se puede escribir nada, ni
-#      siquiera una nota dentro del propio sello, y la confesion es lo unico que
-#      queda. Modo 500: leer y entrar si, crear no.
-# 17p PREGUNTA PRIMERO SI EL MODO 500 DENIEGA DE VERDAD, y esa mitad la trajo un
-# lector pensando en CI. Como root, y un job con `container:` corre como root, el
-# modo 500 NO deniega la escritura: la fila fallaria con una discrepancia de huella
-# y ninguna explicacion, o sea roja por el entorno y no por el objeto. Se sondea, y
-# si el sondeo escribe, la fila se declara NO APLICA en voz alta en vez de correr
-# una comprobacion que no puede fallar. El job de hoy corre como `runner`, asi que
-# hoy si aplica; el dia que eso cambie, se sabra por esta linea y no por un rojo.
+# 17p: with no write permission beside the seal nothing can be written, not
+#      even a note inside the seal itself, and the confession is the only thing
+#      left. Mode 500: read and enter yes, create no.
+# 17p ASKS FIRST WHETHER MODE 500 REALLY DENIES, and a reader brought that half while
+#      thinking about CI. Running as root, and a job with `container:` runs as root, the
+#      mode 500 does NOT deny writing: the row would fail with a fingerprint mismatch
+#      and no explanation, red for the environment and not for the object. It is probed, and
+#      if the probe writes, the row declares itself NOT APPLICABLE out loud instead of
+#      running a check that cannot turn red. Today's job runs as `runner`, so
+#      today it applies; the day that changes, this line will say so and not a red.
 ANTES_17P="$(siembra_sello 0)"
 chmod 500 "${OUT_LOCAL}"
 if ( : > "${OUT_LOCAL}/.sonda-17p" ) 2>/dev/null; then
@@ -593,27 +593,27 @@ else
 	roja 17p "${ANTES_17P}|0|1" "$(huella_del_sello)|$(restos_al_lado)|$(printf '%s' "${SALIDA_17P}" | grep -c 'nothing could be written beside it')" "sin permiso de escritura al lado, el sello sale intacto, sin restos, y la funcion confiesa que ese sello va a parecer el de una version que no terminaba sus sellos"
 fi
 
-# 17t: LA ULTIMA LINEA SIN SALTO. El bucle de completa_el_sello lleva un
-#      `|| [ -n "${linea}" ]` cuya ausencia no la vigilaba nadie, medido por un
-#      lector. Sin el, `read` devuelve falso en una ultima linea que no termina en
-#      salto y el bucle la TIRA; y el `closed:` que se anade compensa exactamente el
-#      uno que se pierde, asi que el recuento de lineas da el visto bueno y el sello
-#      se publica con una linea de menos. Hoy los sellos los escribe seal_artifact
-#      con `echo`, pero el Makefile invita a escribir uno a mano y la guarda que
-#      tendria que frenarlo es justo la que se deja enganar.
+# 17t: THE LAST LINE WITHOUT A NEWLINE. The loop of completa_el_sello carries a
+#      `|| [ -n "${linea}" ]` whose absence nobody watched, measured by a
+#      reader. Without it, `read` returns false on a last line that does not end in
+#      a newline and the loop THROWS IT AWAY; and the `closed:` added compensates
+#      exactly the one lost, so the line count gives its approval and the seal is
+#      published with one line missing. Today the seals are written by seal_artifact
+#      with `echo`, but the Makefile invites writing one by hand and the guard that
+#      should stop it is exactly the one that lets itself be fooled.
 rm -rf -- "${OUT_LOCAL}"; mkdir -p "${OUT_LOCAL}"
 printf 'Phase 2 iron gate artifact, sealed by gate/p2.sh.\nexpected:    P2.build P2.hygiene\nverdicts:    P2.build=pass\nla ultima linea, y va SIN salto' > "${OUT_LOCAL}/SEALED"
 completa_el_sello >/dev/null 2>&1
 roja 17t "1|1" "$(grep -c 'la ultima linea, y va SIN salto' "${OUT_LOCAL}/SEALED")|$(grep -c '^closed:' "${OUT_LOCAL}/SEALED")" "la ultima linea sin salto sobrevive a la reescritura: sin esa mitad de la condicion del bucle se pierde, y el closed que se anade tapa la perdida en el recuento"
 
-# 17q: LA BANDERA DE LA CLAUSULA 30, sola, y es la fila que mas pesa de las
-#      diecisiete. La 17i mide la mitad que vive en seal_artifact, que se NIEGA a
-#      escribir sobre un sello ajeno; esta mide la de completa_el_sello, que se
-#      niega a TERMINARLO. Hizo falta porque el barrido de mutantes lo midio: con
-#      esa guarda quitada entera, NINGUNA fila caia. Es la unica que separa
-#      terminar TU sello de ponerle un closed al de otra corrida, y en gate/p1.sh
-#      es exactamente la puerta por la que `p1.sh hygiene <run id>` habria
-#      machacado diecinueve veredictos con dos.
+# 17q: THE CLAUSE 30 FLAG, on its own, and it is the row that weighs the most of the
+#      first seventeen. 17i measures the half that lives in seal_artifact, which REFUSES to
+#      write over another run's seal; this one measures the half of completa_el_sello that
+#      refuses to FINISH IT. It was needed because the mutant sweep measured it: with
+#      that guard taken out whole, NO row fell. It is the only one that separates
+#      finishing YOUR seal from putting a closed on another run's, and in gate/p1.sh
+#      it is exactly the door through which `p1.sh hygiene <run id>` would have
+#      overwritten nineteen verdicts with two.
 ANTES_17Q="$(siembra_sello 0)"
 SELLO_ESCRITO_AQUI=0
 completa_el_sello
@@ -624,73 +624,73 @@ rm -rf -- "${BANCO}/sellos"
 OUT_DIR="${GUARDA_OUTDIR}"; RUN_ID="${GUARDA_RUNID}"; OUT_LOCAL="${GUARDA_OUT}"
 CHECK_FAILED=0
 
-# ---- 17r: LA FASE DE HIGIENE DE FIERRO LLEGA A SU FINAL BAJO set -e ----------
+# ---- 17r: THE IRON HYGIENE PHASE REACHES ITS END UNDER set -e ----------------
 #
-# LA FILA MAS CARA DE ESTE BLOQUE Y LA QUE MAS PESA, y la trajo un lector leyendo
-# el guion y no el banco. `ask_on` tiene TRES salidas, 0 si, 1 no, 2 ilegible, y en
-# el paso 1 de phase_hygiene_fierro la respuesta NORMAL es 1: el paso de arriba
-# acaba de matar esos daemons. Escrita como orden desnuda seguida de `rc_a=$?`, ese
-# 1 es un fallo a los ojos de `set -e`, que es el modo en que corre gate/p2.sh, y
-# MATABA LA FASE EN LA PRIMERA VUELTA DEL BUCLE. Todo lo que hay debajo era codigo
-# muerto en fierro: los pasos 2, 3 y 4, el barrido del sello que este bloque entero
-# existe para probar, la linea de PASS y el propio `end_check`. O sea que la frase
-# "el sello se escribe desde la higiene y antes del barrido" era FALSA en el camino
-# de fierro, y ninguna de las filas de arriba podia verlo, porque todas
-# llaman a las funciones del sello DIRECTAMENTE.
+# THE MOST EXPENSIVE ROW OF THIS BLOCK AND THE ONE THAT WEIGHS THE MOST, brought by a
+# reader reading the script and not the bench. `ask_on` has THREE exits, 0 yes, 1 no, 2
+# unreadable, and in step 1 of phase_hygiene_fierro the NORMAL answer is 1: the step above
+# has just killed those daemons. Written as a bare command followed by `rc_a=$?`, that
+# 1 is a failure in the eyes of `set -e`, which is the mode
+# gate/p2.sh runs in, and IT KILLED THE PHASE ON THE FIRST PASS OF THE LOOP. Everything
+# below was dead code on iron: steps 2, 3 and 4, the seal sweep that this whole block
+# exists to test, the PASS line and `end_check` itself. So the sentence
+# "the seal is written from the hygiene phase, before the sweep" was FALSE on the path
+# of iron, and none of the rows above could see it, because they all
+# call the seal functions DIRECTLY.
 #
-# COMO SE MIDE, y es la unica forma que separa las dos: se corre la fase ENTERA con
-# `set -e` puesto, contra la flota de mentira, y se exige que llegue a su ULTIMA
-# linea, que es la del barrido de sellos. Con la orden desnuda de vuelta, la fase no
-# imprime ni una linea y esta fila cae.
+# HOW IT IS MEASURED, and it is the only form that separates the two: the phase is run
+# WHOLE with `set -e` in place, against the fake fleet, and it must reach its LAST
+# line, which is that of the seal sweep. With the bare command back, the phase does not
+# print a single line and this row falls.
 #
-# LO QUE ESTA FILA NO DICE: nada sobre si los pasos 2 y 3 hacen bien su trabajo
-# contra hosts de verdad. Solo que la fase se recorre entera en vez de morirse en su
-# primer bucle, que es lo que estaba roto.
+# WHAT THIS ROW DOES NOT SAY: nothing about whether steps 2 and 3 do their job well
+# against real hosts. Only that the phase is walked whole instead of dying in its
+# first loop, which is what was broken.
 mkdir -p "${ARTEFACTO_REAL}"
-# LA SALIDA VA A UN FICHERO Y NO A UNA SUSTITUCION, y NINGUN `|| true` toca a la
-# fase. Las dos versiones anteriores de esta linea cometieron el mismo defecto que
-# la fila mide, cada una por su lado, y las dos se cazaron con el mutante puesto:
+# THE OUTPUT GOES TO A FILE AND NOT TO A SUBSTITUTION, and NO `|| true` touches the
+# phase. The two previous versions of this line made the same defect that the row
+# measures, each in its own way, and both were caught with the mutant in place:
 #
-#   1. `$( set -e; fase || true )`: una orden a la izquierda de `||` corre con
-#      errexit SUPRIMIDO, y la supresion entra en el cuerpo de la funcion, asi que
-#      el `set -e` de dentro no valia nada y la fila salia verde con el defecto.
-#   2. `SALIDA="$( set -e; fase )"` a secas, aqui si aborta, pero mata al BANCO:
-#      este fichero SOURCEA gate/p2.sh, que en su linea 55 pone `set -euo pipefail`,
-#      asi que desde esa linea el banco corre con errexit heredado. La sustitucion
-#      fallida se llevaba el banco entero por delante y la fila ni se imprimia.
+#   1. `$( set -e; phase || true )`: a command to the left of `||` runs with
+#      errexit SUPPRESSED, the suppression entering the body of the function, so the
+#      `set -e` inside was worth nothing and the row came out green with the defect.
+#   2. `SALIDA="$( set -e; phase )"` bare, here it does abort, but it kills the BENCH:
+#      this file SOURCES gate/p2.sh, whose line 55 sets `set -euo pipefail`,
+#      so from that line the bench runs with inherited errexit. A failed substitution
+#      took the whole bench down with it and the row was not even printed.
 #
-# La forma de abajo separa las tres cosas: un subshell explicito con su propio
-# `set -e`, que no esta en contexto de condicion y por tanto no suprime nada; la
-# salida a fichero, que sobrevive a la muerte del subshell; y un `set +e` alrededor,
-# que impide que la muerte del subshell se lleve al banco.
+# The form below separates the three things: an explicit subshell with its own
+# `set -e`, which is not in a condition context and therefore suppresses nothing; the
+# output to a file, which survives the death of the subshell; and a `set +e` around it,
+# which keeps the death of the subshell from taking the bench with it.
 set +e
 ( set -e; phase_hygiene_fierro ) > "${BANCO}/17r.out" 2>&1
 set -e
 roja 17r "1" "$(grep -c 'p2 iron artifacts under gate/out' "${BANCO}/17r.out")" "phase_hygiene_fierro se recorre ENTERA bajo set -e y llega a su ultima linea, el barrido de sellos: con un ask_on desnudo el 'no' normal del primer bucle mataba la fase y todo lo de abajo era codigo muerto en fierro"
 CHECK_FAILED=0
 
-# ---- 17v a 17z: EL TECHO DE LOS ARTEFACTOS DE ENSAYO -------------------------
+# ---- 17v to 17z: THE CAP ON THE REHEARSAL ARTIFACTS --------------------------
 #
-# POR QUE ESTAS FILAS ESTAN AQUI Y NO EN gate/p2-guard-test.sh, con la medida que
-# lo decide. Aquel banco es el brazo rojo del ensayo y seria el sitio natural; el
-# problema es el precio. Para probar un techo de CINCO hay que tener SEIS
-# artefactos, y alli cada uno sale de una corrida entera del ensayo, que es un coste
-# de ORDEN MINUTOS por artefacto: seis de ellos son un coste que se cuenta en DECENAS de
-# minutos, para medir una condicion que aqui se monta con seis `mkdir`. El reloj de esa
-# corrida, con sus tres ejes, esta en ../corridas/naylamp-signing-readiness-20260916T1629Z.txt. Alli entra
-# UNA fila, la de punta a punta, que pregunta lo que este banco no puede: que
-# despues de dieciocho ensayos de verdad el techo se cumplio.
+# WHY THESE ROWS ARE HERE AND NOT IN gate/p2-guard-test.sh, with the measurement that
+# decides it. That bench is the red arm of the rehearsal and would be the natural place; the
+# problem is the price. To test a cap of FIVE there have to be SIX
+# artifacts, and there each one comes out of a whole run of the rehearsal, which is a cost
+# on the ORDER OF MINUTES per artifact: six of them are a cost counted in TENS of
+# minutes, to measure a condition that here is set up with one `mkdir` per artifact. The clock of that
+# run, with its three axes, is in ../corridas/naylamp-signing-readiness-20260916T1629Z.txt. One row goes
+# there, the end to end one, which asks what this bench cannot: that
+# after eighteen real rehearsals the cap held.
 #
-# Y SE MONTA UN gate/out DE MENTIRA. El barrido borra directorios, asi que una fila
-# que lo corriera contra el gate/out de verdad se llevaria por delante los
-# artefactos de esta maquina para probar que sabe llevarselos. OUT_DIR se mueve al
-# taller del banco, que la trampa ya barre.
+# AND A FAKE gate/out IS SET UP. The sweep deletes directories, so a row that
+# ran it against the real gate/out would take down the artifacts of this machine to
+# prove that it knows how to take them. OUT_DIR is moved to the bench's workshop,
+# which the trap already sweeps.
 GUARDA_OUTDIR="${OUT_DIR}"; GUARDA_OUT="${OUT_LOCAL}"; GUARDA_FIERRO="${ES_FIERRO}"
 OUT_DIR="${BANCO}/techo"
 ES_FIERRO=0
 
-# siembra_ensayos <cuantos>: crea artefactos con marcas de tiempo crecientes y con
-# contenido, y devuelve el nombre del ultimo, que hace de corrida en curso.
+# siembra_ensayos <how many>: creates artifacts with increasing timestamps and with
+# content, and returns the name of the last one, which acts as the run in progress.
 siembra_ensayos() {
 	local i=1 n="$1" nombre
 	rm -rf -- "${BANCO}/techo"; mkdir -p "${OUT_DIR}"
@@ -698,8 +698,8 @@ siembra_ensayos() {
 		nombre="p2-local-2026090${i}T000000Z-${i}00"
 		mkdir -p "${OUT_DIR}/${nombre}"
 		printf 'manifiesto de la corrida %s\n' "${i}" > "${OUT_DIR}/${nombre}/manifest.txt"
-		# El orden por fecha es lo que el barrido usa, y `ls -dt` mira mtime, asi que
-		# se fija a mano en vez de confiar en el orden en que se crearon.
+		# The order by date is what the sweep uses, and `ls -dt` looks at mtime, so
+		# it is fixed by hand instead of trusting the order in which they were created.
 		touch -t "20260${i}010000" "${OUT_DIR}/${nombre}"
 		i=$((i + 1))
 	done
@@ -707,24 +707,24 @@ siembra_ensayos() {
 }
 cuenta_ensayos() { ls -1d "${OUT_DIR}"/p2-local-[0-9]*Z-[0-9]* 2>/dev/null | wc -l | tr -d ' '; }
 
-# 17v: SEIS artefactos y el de la corrida en curso es uno de ellos. Quedan CINCO
-#      mas el propio, y el que se va es el mas VIEJO, no uno cualquiera.
+# 17v: SEVEN artifacts and the one of the run in progress is one of them. FIVE remain
+#      plus its own, and the one that goes is the OLDEST, not just any of them.
 ULTIMO="$(siembra_ensayos 7)"
 OUT_LOCAL="${OUT_DIR}/${ULTIMO}"
 RETIRADOS="$(barre_ensayos_viejos)"
 fila 17v "1|6|no|si" "${RETIRADOS}|$(cuenta_ensayos)|$([ -d "${OUT_DIR}/p2-local-20260901T000000Z-100" ] && echo si || echo no)|$([ -d "${OUT_LOCAL}" ] && echo si || echo no)" "con siete artefactos el techo retira UNO, deja cinco mas el de esta corrida, se lleva el MAS VIEJO y no toca el propio"
 
-# 17w: por DEBAJO del techo no se toca nada. Una fila que solo probara el corte
-#      pasaria con un barrido que borrase siempre.
+# 17w: BELOW the cap nothing is touched. A row that only tested the cutoff
+#      would pass with a sweep that always deleted.
 ULTIMO="$(siembra_ensayos 3)"
 OUT_LOCAL="${OUT_DIR}/${ULTIMO}"
 RETIRADOS="$(barre_ensayos_viejos)"
 fila 17w "0|3" "${RETIRADOS}|$(cuenta_ensayos)" "por debajo del techo no se retira nada: el barrido no borra por costumbre, borra por cuenta"
 
-# 17x: EL ARTEFACTO DE FIERRO NO SE TOCA, ni sellado ni sin sellar, y esta es la
-#      fila que separa las dos clases. Es la mitad que la decision del 8 de
-#      septiembre de 2026 hace obligatoria: el techo es del ensayo y el fierro
-#      queda fuera.
+# 17x: THE IRON ARTIFACT IS NOT TOUCHED, neither sealed nor unsealed, and this is
+#      the row that separates the two classes. It is the half that the decision of
+#      2026-09-08 makes obligatory: the cap is the rehearsal's and iron
+#      stays out.
 ULTIMO="$(siembra_ensayos 7)"
 OUT_LOCAL="${OUT_DIR}/${ULTIMO}"
 mkdir -p "${OUT_DIR}/p2-20260901T000000Z-999" "${OUT_DIR}/p2-20260902T000000Z-998"
@@ -735,8 +735,8 @@ touch -t 202601010000 "${OUT_DIR}/p2-20260901T000000Z-999" "${OUT_DIR}/p2-202609
 barre_ensayos_viejos >/dev/null
 roja 17x "si|si" "$([ -d "${OUT_DIR}/p2-20260901T000000Z-999" ] && echo si || echo no)|$([ -d "${OUT_DIR}/p2-20260902T000000Z-998" ] && echo si || echo no)" "los artefactos de FIERRO sobreviven al techo, el sellado y el que no lo esta, aunque sean los mas viejos de todos: el techo es del ensayo y esa es la decision entera"
 
-# 17y: la flota huerfana se va con su artefacto y NO antes. Una flota cuyo
-#      artefacto sigue ahi es de una corrida viva.
+# 17y: the orphan fleet goes with its artifact and NOT before. A fleet whose
+#      artifact is still there is from a live run.
 ULTIMO="$(siembra_ensayos 3)"
 OUT_LOCAL="${OUT_DIR}/${ULTIMO}"
 mkdir -p "${OUT_DIR}/p2-local-fleet-20260901T000000Z-100" "${OUT_DIR}/p2-local-fleet-20260999T000000Z-777"
@@ -745,8 +745,8 @@ printf 'x\n' > "${OUT_DIR}/p2-local-fleet-20260999T000000Z-777/node1.log"
 barre_ensayos_viejos >/dev/null
 roja 17y "si|no" "$([ -d "${OUT_DIR}/p2-local-fleet-20260901T000000Z-100" ] && echo si || echo no)|$([ -d "${OUT_DIR}/p2-local-fleet-20260999T000000Z-777" ] && echo si || echo no)" "una flota cuyo artefacto SIGUE ahi se queda, y la huerfana se va: es un invariante, una flota nunca sobrevive a su artefacto, y no un segundo techo"
 
-# 17z: EN FIERRO EL BARRIDO NO CORRE. Sin esta fila, la guarda de la primera linea
-#      seria una decision que nadie mira.
+# 17z: ON IRON THE SWEEP DOES NOT RUN. Without this row, the guard of the first line
+#      would be a decision nobody looks at.
 ULTIMO="$(siembra_ensayos 7)"
 OUT_LOCAL="${OUT_DIR}/${ULTIMO}"
 ES_FIERRO=1
@@ -757,20 +757,20 @@ roja 17z "0|7" "${RETIRADOS}|$(cuenta_ensayos)" "en una corrida de FIERRO el bar
 rm -rf -- "${BANCO}/techo"
 OUT_DIR="${GUARDA_OUTDIR}"; OUT_LOCAL="${GUARDA_OUT}"; ES_FIERRO="${GUARDA_FIERRO}"
 
-# ---- 17aa a 17ad: EL MARCADOR MANDA SOBRE EL TECHO ---------------------------
+# ---- 17aa to 17ad: THE MARKER TAKES PRECEDENCE OVER THE CAP ------------------
 #
-# ESTAS CUATRO FILAS EXISTEN POR UN INCIDENTE QUE YA IBA POR LA TERCERA VEZ, y la
-# tercera la escribio esta misma casa: el techo de los ensayos borraba por
-# antiguedad sin mirar el marcador RUNNING, o sea que un ensayo VIVO que corriera
-# fuera del banco perdia su directorio a mitad. Es lo que un `make clean` hizo el
-# 28 de agosto y el 7 de septiembre de 2026, con la leccion ya escrita en el
-# Makefile a dos ficheros de distancia. Se midio antes de arreglarlo: con un
-# artefacto viejo que llevaba un pid VIVO dentro y seis mas nuevos por delante, el
-# techo se lo llevo.
+# THESE FOUR ROWS EXIST BECAUSE OF AN INCIDENT THAT HAD ALREADY HAPPENED THREE TIMES, and the
+# third one was written by this same house: the rehearsal cap deleted artifacts by
+# age without looking at the RUNNING marker, so a LIVE rehearsal that ran
+# outside the bench lost its directory halfway. That is what `make clean` did on
+# 2026-08-28 and on 2026-09-07, with the lesson already written in the
+# Makefile two files away. It was measured before fixing it: with an
+# old artifact that carried a LIVE pid inside and six newer ones ahead of it, the
+# cap took it away.
 #
-# EL PID VIVO ES UN PROCESO DE VERDAD Y NO UN NUMERO INVENTADO. Un pid escrito a
-# mano puede estar libre hoy y ocupado manana, y entonces la fila mide otra cosa
-# sin decirlo. Aqui se lanza un `sleep`, se usa SU pid, y se mata al terminar.
+# THE LIVE PID IS A REAL PROCESS AND NOT AN INVENTED NUMBER. A pid typed
+# by hand may be free today and busy tomorrow, so the row measures something else
+# without saying so. Here a `sleep` is started, ITS pid is used, and it is killed at the end.
 GUARDA_OUTDIR="${OUT_DIR}"; GUARDA_OUT="${OUT_LOCAL}"; GUARDA_FIERRO="${ES_FIERRO}"
 OUT_DIR="${BANCO}/marcador"
 ES_FIERRO=0
@@ -779,9 +779,9 @@ rm -rf -- "${OUT_DIR}"; mkdir -p "${OUT_DIR}"
 sleep 300 &
 PID_VIVO=$!
 
-# Cuatro artefactos viejos, uno por cada respuesta de marcador_de, y seis nuevos
-# por delante para empujarlos a todos por debajo del techo.
-siembra_marcado() {   # <nombre> <contenido del RUNNING, o vacio para no ponerlo>
+# Four old artifacts, one per answer of marcador_de, and six new ones
+# ahead to push all four past the cap.
+siembra_marcado() {   # <name> <RUNNING contents, or empty to leave it out>
 	mkdir -p "${OUT_DIR}/$1"
 	printf 'manifiesto\n' > "${OUT_DIR}/$1/manifest.txt"
 	[ -n "${2:-}" ] && printf 'pid: %s\nrun: %s\nscript: gate/p2.sh\n' "$2" "$1" > "${OUT_DIR}/$1/RUNNING"
@@ -809,31 +809,31 @@ wait "${PID_VIVO}" 2>/dev/null || true
 rm -rf -- "${OUT_DIR}"
 OUT_DIR="${GUARDA_OUTDIR}"; OUT_LOCAL="${GUARDA_OUT}"; ES_FIERRO="${GUARDA_FIERRO}"
 
-# ---- 17ba a 17bh: LOS CINCO BLOQUEANTES DEL FIERRO ---------------------------
+# ---- 17ba to 17bh: THE FIVE IRON BLOCKERS ------------------------------------
 #
-# LAS TRAJO UN LECTOR EXTERNO al que se le paso el diseno de la seccion 10 entera
-# con una sola condicion, que no pudiera correr nada, y su ultima linea era "no
-# encenderia". Los cinco se re-derivaron contra el guion antes de tocarlos. Las
-# filas de aqui son lo que impide que vuelvan, y cada una se dispara por los dos
-# lados: la forma de hoy y la que tenia.
+# AN EXTERNAL READER BROUGHT THEM IN, and the reader was handed the whole design of
+# section 10 with a single condition, that the reader could not run anything, and the reader's last
+# line was "it would not turn on". The five were re-derived against the script
+# before being touched, and the rows here are what stops them from coming back: each one
+# fires on both sides, today's form and the one it had.
 #
-# POR QUE VIVEN AQUI. Son predicados del camino de FIERRO, que es lo que este banco
-# existe para probar sin encender nada. Ninguna de las cinco se puede medir en
-# gate/p2-guard-test.sh, que corre el ensayo.
+# WHY THEY LIVE HERE. They are predicates of the IRON path, which is what this
+# bench exists to test without turning anything on. None of the five can be
+# measured in gate/p2-guard-test.sh, which runs the rehearsal.
 
-# ---- B1: el artefacto de fierro no se declara un ensayo ----------------------
+# ---- B1: the iron artifact does not declare itself a rehearsal ---------------
 #
-# El banner no tenia NI UNA rama por ES_FIERRO, medido: cero apariciones dentro de
-# la funcion. Una corrida sobre tres maquinas de verdad imprimia "This is NOT gate
+# The banner had NOT ONE branch on ES_FIERRO, measured: zero occurrences inside
+# the function. A run over three real machines printed "This is NOT gate
 # evidence and it seals nothing", "Three directories on 127.0.0.1 play three
-# replicas... there is no fleet" y "Its cut is kill -9", y cerraba con "all
-# rehearsal checks passed". El log ES el artefacto y no se arregla despues.
-# LA FILA QUE DE VERDAD MIDE EL DESPACHO, y faltaba: las tres de abajo llaman a
-# banner_fierro y banner_ensayo DIRECTAMENTE, asi que comprueban lo que cada texto
-# dice y no que `banner` elija el correcto. El barrido lo midio: quitandole a
-# `banner` su rama de fierro, las tres seguian verdes, porque `banner_fierro`
-# seguia existiendo y diciendo lo suyo, solo que ya no lo llamaba nadie. Es la clase
-# 15 en una fila: probar la pieza y no el circuito.
+# replicas... there is no fleet" and "Its cut is kill -9", and closed with "all
+# rehearsal checks passed". The log IS the artifact and it is not fixed afterwards.
+# THE ROW THAT REALLY MEASURES THE DISPATCH, and it was missing: the three below
+# call banner_fierro and banner_ensayo DIRECTLY, so they check what each text
+# says and not that `banner` picks the right one. The sweep measured it: with
+# `banner` losing its iron branch, the three stayed green, because `banner_fierro`
+# kept existing and saying its piece, only nobody called it any more. It is class
+# 15, inside a row: testing the piece and not the circuit.
 GUARDA_FIERRO_B="${ES_FIERRO}"
 ES_FIERRO=1; BANNER_DESPACHADO_FIERRO="$(banner 2>/dev/null)"
 ES_FIERRO=0; BANNER_DESPACHADO_ENSAYO="$(banner 2>/dev/null)"
@@ -845,18 +845,18 @@ BANNER_FIERRO="$(banner_fierro 2>/dev/null)"
 BANNER_ENSAYO="$(banner_ensayo 2>/dev/null)"
 fila 17ba "0|0|0|1" "$(printf '%s' "${BANNER_FIERRO}" | grep -c 'NOT gate evidence')|$(printf '%s' "${BANNER_FIERRO}" | grep -c '127\.0\.0\.1')|$(printf '%s' "${BANNER_FIERRO}" | grep -c 'kill -9')|$(printf '%s' "${BANNER_FIERRO}" | grep -c 'THIS IS GATE EVIDENCE')" "el banner de FIERRO no dice que no es evidencia, ni habla de tres directorios en loopback, ni de un corte con kill -9, y si dice lo que es"
 roja 17bb "1|1|1|0" "$(printf '%s' "${BANNER_ENSAYO}" | grep -c 'NOT gate evidence')|$(printf '%s' "${BANNER_ENSAYO}" | grep -c '127\.0\.0\.1')|$(printf '%s' "${BANNER_ENSAYO}" | grep -c 'kill -9')|$(printf '%s' "${BANNER_ENSAYO}" | grep -c 'THIS IS GATE EVIDENCE')" "y el del ENSAYO sigue diciendo exactamente lo que decia, palabra por palabra: la rama nueva no se llevo por delante la declaracion que el ensayo tiene que hacer"
-# LA PREGUNTA ES POR PRESENCIA Y NO POR CUENTA, y la primera version contaba. Pedia
-# UNA aparicion de sysrq-trigger y el banner lo nombra DOS, en el corte y en la
-# lectura del 7 de septiembre: la fila salia roja por una expectativa mia y no por
-# el objeto. Contar apariciones de una frase dentro de PROSA es una cifra que se
-# mueve cada vez que alguien reescribe un parrafo, y entonces el banco se pone rojo
-# por trabajar. Lo que esta fila quiere saber es si la frase ESTA.
+# THE QUESTION IS ONE OF PRESENCE, NOT OF COUNT, and the first version counted. It
+# asked for ONE occurrence of sysrq-trigger and the banner names it TWICE, in the
+# cut and in the reading of 2026-09-07: the row came out red on an expectation of
+# mine, not on the object. Counting occurrences of a phrase inside PROSE is a
+# figure that moves whenever a paragraph is rewritten, and then the bench turns
+# red while nothing is broken. What this row wants to know is whether the phrase IS THERE.
 fila 17bc "si|si" "$(printf '%s' "${BANNER_FIERRO}" | grep -q 'sysrq-trigger' && echo si || echo no)|$(printf '%s' "${BANNER_FIERRO}" | grep -q 'caching: ReadWrite' && echo si || echo no)" "y el de fierro lleva su corte de verdad y la frontera del cache del anfitrion, que es la exclusion que el diseno cuelga de este banner"
 
-# ---- B1, la otra mitad: la linea de cierre -----------------------------------
+# ---- B1, the other half: the closing line ------------------------------------
 #
-# Es la ULTIMA linea del log, que es la que se cita, y decia "all rehearsal checks
-# passed" sobre la unica corrida que no se puede repetir.
+# It is the LAST line of the log, the one that gets cited, and it said "all
+# rehearsal checks passed" over the only run that cannot be repeated.
 GUARDA_FIERRO="${ES_FIERRO}"; GUARDA_EXPECTED="${EXPECTED}"; GUARDA_VERDICTS="${VERDICTS}"
 GUARDA_COMPLETED="${COMPLETED}"; GUARDA_STARTED="${RUN_STARTED}"
 EXPECTED="P2.build"; VERDICTS=" P2.build=pass "; COMPLETED=1; RUN_STARTED=1
@@ -867,47 +867,47 @@ roja 17be "1" "$(printf '%s' "${CIERRE_ENSAYO}" | grep -c 'all rehearsal checks 
 ES_FIERRO="${GUARDA_FIERRO}"; EXPECTED="${GUARDA_EXPECTED}"; VERDICTS="${GUARDA_VERDICTS}"
 COMPLETED="${GUARDA_COMPLETED}"; RUN_STARTED="${GUARDA_STARTED}"
 
-# ---- B2: el cliente del mutante corre en el host y no en este portatil -------
+# ---- B2: the mutant's client runs on the host and not on this laptop ---------
 #
-# Corria aqui, con el binario darwin y atado a una direccion privada de la flota
-# que esta maquina no tiene. Es el mismo defecto que la seccion 10.16 declara
-# cerrado para client_op, y a client_op si se le aplico. Sin esto, los cuarenta
-# intentos fallaban los cuarenta y el brazo rojo entero no llegaba a medir.
+# It ran here, with the darwin binary and bound to a private address of the fleet
+# that this machine does not have. It is the same defect section 10.16 declares
+# closed for client_op, and to client_op it was indeed applied. Without this, the
+# forty attempts all failed and the whole red arm never got to measure.
 CUERPO_RED_FIERRO="$(awk '/^phase_red_fierro\(\) \{/,/^\}$/' "${GATE_DIR}/p2.sh")"
 fila 17bf "si|no" "$(printf '%s' "${CUERPO_RED_FIERRO}" | grep -q 'run_on 1 "cd naylamp' && echo si || echo no)|$(printf '%s' "${CUERPO_RED_FIERRO}" | grep -q '"\${BIN}" client -listen' && echo si || echo no)" "el cliente del mutante va por run_on al host 1, como client_op, y ya no se invoca el binario local contra una direccion que esta maquina no tiene"
 roja 17bg "si" "$(printf '%s' "${CUERPO_RED_FIERRO}" | grep -q '__RC__=0)' && echo si || echo no)" "y lee su estado por la ULTIMA linea entera y no por una subcadena, que es la misma guarda de client_op: un canal de estado que la carga util puede falsificar no es un canal de estado"
 
-# ---- B5b: el testigo sincroniza su fichero y su directorio, no la maquina ----
+# ---- B5b: the canary syncs its file and its directory, not the machine -------
 #
-# `sync` es GLOBAL y vaciaba la pagina sucia entera del host, log de raft incluido,
-# asi que en el instante del corte todo lo ackeado estaba en el plato hubiera
-# barrera o no. Es el hallazgo mas caro: el camino VERDE que no media nada.
+# `sync` is GLOBAL and flushed the host's whole dirty page cache, raft log included,
+# so at the instant of the cut everything acked was on the platter, barrier or not.
+# It is the most expensive finding: the GREEN path that measured nothing.
 CUERPO_TESTIGO="$(awk '/^testigo_siembra\(\) \{/,/^\}$/' "${GATE_DIR}/p2.sh")"
 roja 17bh "no|si|si" "$(printf '%s' "${CUERPO_TESTIGO}" | grep -qE '&& sync$|; sync$' && echo si || echo no)|$(printf '%s' "${CUERPO_TESTIGO}" | grep -q 'os.fsync(f)' && echo si || echo no)|$(printf '%s' "${CUERPO_TESTIGO}" | grep -q 'os.fsync(h)' && echo si || echo no)" "el testigo ya no hace un sync GLOBAL, y sincroniza el fichero Y su directorio: un sync global dentro de un gate de durabilidad es el instrumento anulando lo que mide"
 
-# ---- 17ca a 17cf: B5a, LAS ESCRITURAS EN VUELO EN EL INSTANTE DEL CORTE ------
+# ---- 17ca to 17cf: B5a, THE IN-FLIGHT WRITES AT THE INSTANT OF THE CUT -------
 #
-# LA DECISION ES DE QUIEN ENCARGA y dice por que: la propiedad es "ack implica
-# durable", y sin escrituras en vuelo la mitad del ack no se ejercita nunca, porque
-# el mutante solo pierde algo si el corte cae ENTRE el ack y la barrera. La carga
-# cerraba antes del corte, asi que esa ventana no existia.
+# THE DECISION BELONGS TO WHOEVER COMMISSIONS IT, and it says why: the property is "ack implies
+# durable", and without in-flight writes the ack half is never exercised, because
+# the mutant only loses something if the cut falls BETWEEN the ack and the barrier.
+# The load closed before the cut, so that window did not exist.
 #
-# Y ESTAS FILAS DISPARAN LA FUNCION DE VERDAD, no su texto. `escritor_en_vuelo`
-# corre contra la flota de mentira de este banco, con un naylampd falso que se
-# puede hacer contestar 0 o distinto de 0 a voluntad. Es lo mas cerca del objeto
-# que se puede estar sin encender tres maquinas.
+# AND THESE ROWS FIRE THE REAL FUNCTION, not its text. `escritor_en_vuelo`
+# runs against this bench's fake fleet, with a fake naylampd that can be
+# made to answer 0 or non-zero at will. It is as close to the object as one can be
+# without turning three machines on.
 GUARDA_OUTDIR="${OUT_DIR}"; GUARDA_OUT="${OUT_LOCAL}"; GUARDA_FIERRO="${ES_FIERRO}"
 GUARDA_MANIFEST="${MANIFEST}"
 OUT_LOCAL="${BANCO}/vuelo"; rm -rf -- "${OUT_LOCAL}"; mkdir -p "${OUT_LOCAL}"
 MANIFEST="${OUT_LOCAL}/manifest.txt"; : > "${MANIFEST}"
 ES_FIERRO=1
-# La cota se baja para que la fila cueste segundos y no minutos: lo que se mide es
-# la FORMA de lo que escribe, y esa no depende de cuantas veces lo haga.
+# The bound is lowered so the row costs seconds and not minutes: what is measured is
+# the SHAPE of what it writes, and that does not depend on how often it does it.
 GUARDA_VUELO_MAX="${EN_VUELO_MAX}"; EN_VUELO_MAX=6
 
-# EL naylampd DE MENTIRA, que es lo que deja disparar los dos lados: contesta 0
-# mientras exista el fichero de la senal, y distinto de 0 en cuanto se retire. Es
-# el corte, visto desde el cliente: la conexion deja de dar acks.
+# THE FAKE naylampd, which is what lets both sides be fired: it answers 0
+# while the signal file exists, and non-zero as soon as it is removed. It is
+# the cut, seen from the client: the connection stops giving acks.
 cat > "${BANCO}/casa/1/naylamp/bin/naylampd" <<'FALSO'
 #!/bin/sh
 [ -e "${BANCO_ESTADO}/1.acepta" ] || exit 7
@@ -921,7 +921,7 @@ fila 17ca "6|0" "$(grep -c ' confirmed$' "${MANIFEST}")|$(grep -c ' uncertain$' 
 fila 17cb "6|0" "$(grep -c '^ack ' "${OUT_LOCAL}/en-vuelo.txt")|$(grep -c '^sin-ack ' "${OUT_LOCAL}/en-vuelo.txt")" "y cada uno queda fechado en el crudo de la frontera, que es lo que dice en que INSTANTE se cerro el manifiesto"
 fila 17cc "1|1" "$(grep -c 'last ack:' "${OUT_LOCAL}/en-vuelo-frontera.txt")|$(grep -c '^acks:' "${OUT_LOCAL}/en-vuelo-frontera.txt")" "y la frontera se escribe en el ARTEFACTO y no solo en la consola, porque es lo que se cita cuando la consola ya no esta"
 
-# EL CORTE, visto desde el cliente: la conexion deja de dar acks a mitad.
+# THE CUT, seen from the client: the connection stops giving acks halfway.
 : > "${MANIFEST}"; rm -f -- "${OUT_LOCAL}/en-vuelo.txt"
 EN_VUELO_MAX=6
 cat > "${BANCO}/casa/1/naylamp/bin/naylampd" <<'FALSO'
@@ -944,39 +944,39 @@ rm -f -- "${BANCO}/estado/1.acepta" "${BANCO}/estado/1.cuenta"
 rm -rf -- "${BANCO}/vuelo"
 OUT_DIR="${GUARDA_OUTDIR}"; OUT_LOCAL="${GUARDA_OUT}"; ES_FIERRO="${GUARDA_FIERRO}"; MANIFEST="${GUARDA_MANIFEST}"
 
-# ---- 17da a 17dd: B3 y B4, lo que la mitad CALIENTE del preflight tiene que hacer
+# ---- 17da to 17dd: B3 and B4, what the HOT half of the preflight has to do
 #
-# ESTAS CUATRO SE LEEN DEL TEXTO DE LA FUNCION Y NO SE DISPARAN, y eso va dicho en
-# vez de disfrazado. `caliente()` de gate/p2-preflight.sh EXIGE tres maquinas
-# encendidas: no hay forma de correrla aqui sin encender, que es justo lo que este
-# banco existe para no hacer. Lo que si se puede es exigir que los pasos ESTEN, y
-# los mutantes del barrido los quitan uno a uno para comprobar que estas filas
-# caen. Es mas debil que disparar la funcion y mas fuerte que no mirar nada, y
-# cual de las dos cosas es va escrito aqui y no se deja suponer.
+# THESE FOUR ARE READ FROM THE TEXT OF THE FUNCTION AND ARE NOT FIRED, and that is
+# said out loud and not disguised. `caliente()` of gate/p2-preflight.sh REQUIRES
+# three machines turned on: there is no way to run it here without turning them on, which
+# is just what this bench exists not to do. What can be done is to require that the
+# steps ARE there, and the sweep's mutants remove them one by one to check that
+# these rows fall. It is weaker than firing the function and stronger than looking
+# at nothing, and which of the two it is is written here, not left to be assumed.
 #
-# LO QUE COSTABA QUE NO ESTUVIERAN, medido contra el guion: `P2.pre.identity` en
-# fierro compara la huella del binario de los hosts BYTE A BYTE con el que la
-# corrida acaba de cruza-compilar, asi que sin despliegue fresco no casa nunca; el
-# material TLS dura 24 h, asi que el de los hosts esta caducado y la flota no elige
-# lider; y una sola entrada vieja en naylamp/data sale FANTASMA en las TRES copias
-# frias y pone P2.recover.faithful roja con cara de rojo de PROPIEDAD, que es el
-# rojo que no se re-corre nunca.
+# WHAT THEIR ABSENCE COST, measured against the script: `P2.pre.identity`
+# on iron compares the fingerprint of the hosts' binary BYTE BY BYTE with the one
+# the run has just cross-compiled, so without a fresh deployment it never matches;
+# the TLS material lasts 24 h, so the hosts' is expired and the fleet picks no
+# leader; and a single old entry in naylamp/data comes out a GHOST in the THREE cold
+# copies and turns P2.recover.faithful red looking like a PROPERTY red, which
+# is the red that is never re-run.
 CUERPO_CALIENTE="$(awk '/^caliente\(\) \{/,/^\}$/' "${GATE_DIR}/p2-preflight.sh")"
 fila 17da "si|si" "$(printf '%s' "${CUERPO_CALIENTE}" | grep -q '"${GATE_DIR}/deploy.sh"' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q '"${GATE_DIR}/cluster.sh" start' && echo si || echo no)" "la mitad caliente DESPLIEGA el binario y los certificados y LEVANTA la flota, que es lo que la cabecera de gate/p2.sh llevaba afirmando que hacia sin hacerlo"
 roja 17db "si|si|si" "$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'LITERAL_LIDER=' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'quien=' && echo si || echo no)|$(LIT="$(printf '%s' "${CUERPO_CALIENTE}" | sed -n "s/.*LITERAL_LIDER='\\([^']*\\)'.*/\\1/p" | head -1)"; [ -n "${LIT}" ] && grep -rqF "${LIT}" "${GATE_DIR}/../engine" && echo si || echo no)" "y no se conforma con que los demonios arranquen: exige que ELIJAN LIDER, y la tercera columna CASTEA EL LITERAL CONTRA engine/ en vez de contra el texto del propio gate. Hasta la cuarta vuelta esperaba 'became leader', que no existe en el motor: el demonio escribe role=leader, el case no casaba nunca, y el paso cerraba con mal nombrando material TLS caducado sobre una flota sana. Preguntar si la frase esta en el gate solo comprueba que el gate se cita a si mismo"
 fila 17dc "si|si|si" "$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'rm -rf data logs data-mutante' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'EMPTY on the three, checked' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'naylamp/data-mutante -mindepth 1' && echo si || echo no)" "naylamp/data, naylamp/logs y naylamp/data-mutante se miden, se limpian y se vuelven a MEDIR: es una precondicion y no una tolerancia, y el del mutante estaba fuera hasta que un lector lo trajo, con el mismo razonamiento entero encima: un id 7 viejo ahi dentro hace que el brazo rojo publique que el mutante sin barrera no perdio nada"
 roja 17dd "si|si" "$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'sudo -n test -w /proc/sysrq-trigger' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'os.fsync(os.open' && echo si || echo no)" "y se ejercitan ANTES del corte las dos cosas de las que el corte depende y que corta_en no puede ver, porque tira su estado a proposito: que sudo no pida contrasena, y que python3 pueda hacer fsync de un directorio"
 
-# ---- 17ea a 17ef: LO QUE LA SEGUNDA VUELTA DEL LECTOR EXTERNO ENCONTRO --------
+# ---- 17ea to 17ef: WHAT THE EXTERNAL READER'S SECOND PASS FOUND ---------------
 #
-# LAS FILAS 17ca A 17cf DEJARON PASAR TRES DEFECTOS, y el lector
-# dijo por que con una frase que este mismo fichero acababa de escribir sobre el
-# banner: **probaban la pieza y no el circuito**. Contaban lineas `confirmed` y
-# `uncertain` en el manifiesto y ahi paraban. Ninguna metia ese manifiesto en el
-# python que construye `live-ids.txt`, que es uno de los DOS consumidores del
-# manifiesto y el unico que este guion controla. Si lo hubieran hecho, la 17cd,
-# que espera dos confirmed y tres uncertain, habria destapado en el acto que las
-# tres `uncertain` entraban en el conjunto vivo y ponian la corrida roja.
+# ROWS 17ca TO 17cf LET THREE DEFECTS THROUGH, and the reader
+# said why with a phrase this very file had just written about the
+# banner: **they tested the piece and not the circuit**. They counted `confirmed`
+# and `uncertain` lines in the manifest and stopped there. None of them put that
+# manifest into the python that builds `live-ids.txt`, which is one of the TWO
+# consumers of the manifest and the only one this script controls. Had they done
+# so, 17cd, which expects two confirmed and three uncertain, would have exposed
+# at once that the three `uncertain` entered the live set and turned the run red.
 LIVEIDS="${BANCO}/live-ids.py"
 awk '/^\t\/usr\/bin\/python3 - "\$\{MANIFEST\}" > "\$\{OUT_LOCAL\}\/live-ids.txt" <<.PY.$/{f=1;next} f&&/^PY$/{exit} f{print}' "${GATE_DIR}/p2.sh" > "${LIVEIDS}"
 fila 17ea "si" "$([ -s "${LIVEIDS}" ] && echo si || echo no)" "el constructor del conjunto vivo se extrae de gate/p2.sh y no se copia aqui: si cambia de forma, esta extraccion sale vacia y el banco lo dice en vez de probar aire"
@@ -986,14 +986,14 @@ printf 'put 1 1,0,0,0,0,0,0,0 confirmed\nput 100 0,0,1,0,0,1,1,0 uncertain\nput 
 VIVOS="$(/usr/bin/python3 "${LIVEIDS}" "${MAN_PRUEBA}" | tr '\n' ' ')"
 roja 17eb "2 " "${VIVOS}" "un id UNCERTAIN no entra en el conjunto vivo, uno sin marcador SI, y un del retira el suyo: sin esta linea, cada envio que no volvio con ack se exigia presente, no podia estarlo porque se mando contra tres maquinas ya muertas, y la corrida salia ROJA diciendo que el motor perdio una escritura ackeada"
 
-# EL RANGO EN VUELO, medido contra vec_for y no afirmado
+# THE IN-FLIGHT RANGE, measured against vec_for and not asserted
 roja 17ec "0 0" "$(comprueba_rango_en_vuelo)" "ningun vector del rango en vuelo coincide con uno de la carga ni es el vector cero: vec_for solo depende de id mod 256, asi que el rango de antes daba el vector CERO en el 512 y treinta colisiones con la carga, que es el defecto de la seccion 10.9 reabierto"
 GUARDA_DESDE="${ID_EN_VUELO_DESDE}"; GUARDA_MAXV="${EN_VUELO_MAX}"
 ID_EN_VUELO_DESDE=500; EN_VUELO_MAX=200
 roja 17ed "30 1" "$(comprueba_rango_en_vuelo)" "y con el rango de antes la guarda MUERDE, y dice cuanto: treinta choques, uno por cada id de la carga, y un vector cero. Sin esta mitad, la fila de arriba pasaria con una guarda que dijera siempre cero"
 ID_EN_VUELO_DESDE="${GUARDA_DESDE}"; EN_VUELO_MAX="${GUARDA_MAXV}"
 
-# LO ENVIADO Y NO ACKEADO SE PLIEGA, tambien si el escritor murio
+# WHAT WAS SENT AND NOT ACKED IS FOLDED IN, even if the writer died
 GUARDA_OUT2="${OUT_LOCAL}"; GUARDA_MAN2="${MANIFEST}"
 OUT_LOCAL="${BANCO}/pliegue"; rm -rf -- "${OUT_LOCAL}"; mkdir -p "${OUT_LOCAL}"
 MANIFEST="${OUT_LOCAL}/manifest.txt"
@@ -1006,73 +1006,73 @@ roja 17ef "1|2" "$(grep -c ' confirmed$' "${MANIFEST}")|$(grep -c ' uncertain$' 
 OUT_LOCAL="${GUARDA_OUT2}"; MANIFEST="${GUARDA_MAN2}"
 rm -rf -- "${BANCO}/pliegue"
 
-# NINGUN wait DESNUDO detras de un corte, en NINGUNA de las dos fases
+# NO BARE wait behind a cut, in EITHER of the two phases
 CUERPO_CUT_FIERRO="$(awk '/^phase_cut_fierro\(\) \{/,/^\}$/' "${GATE_DIR}/p2.sh")"
 CUERPO_RED_FIERRO2="$(awk '/^phase_red_fierro\(\) \{/,/^\}$/' "${GATE_DIR}/p2.sh")"
 roja 17eg "si|si" "$(printf '%s' "${CUERPO_CUT_FIERRO}" | grep -q 'wait ${pids_corte}' && echo si || echo no)|$(printf '%s' "${CUERPO_RED_FIERRO2}" | grep -q 'wait ${pids_corte_rojo}' && echo si || echo no)" "ninguna de las dos fases que cortan espera con un wait DESNUDO: un wait sin argumentos espera a TODO lo de fondo, y con el escritor en vuelo detras habria tomado el instante del corte treinta segundos tarde, contra una cota de cinco, poniendo los veredictos en none sin decir por que"
 
-# EL VEREDICTO QUE FALTABA, y que la lista de fierro lo nombre
+# THE VERDICT THAT WAS MISSING, and the iron list names it
 roja 17eh "si|si" "$(grep -q 'P2.cut.envuelo' "${GATE_DIR}/p2.sh" && echo si || echo no)|$([ "$(grep -c '^[[:space:]]*EXPECTED=.*P2\.pre\.sysrq.*P2\.cut\.envuelo' "${GATE_DIR}/p2.sh")" -ge 1 ] && echo si || echo no)" "existe un veredicto colgado de que HAYA habido al menos un ack en vuelo, y la lista de fierro lo nombra: sin el, un escritor que no ackeara nada dejaba la propiedad igual de sin medir que antes del arreglo, y nada lo decia"
 
-# Y LA MITAD DE ARRIBA SE ESCRIBE SIN TUBERIA Y SIN ESCAPES, que es lo que la
-# hace inmune a las DOS clases de dependencia de entorno que esta pasada encontro.
-# La primera es la de los escapes, que es la que la tumbo. La segunda se midio al
-# revisarla y no habia salido todavia: con `set -o pipefail`, una tuberia que
-# acaba en `grep -q` devuelve 141 cuando el de aguas arriba escribe mas de lo que
-# cabe en el tubo y el de abajo sale al primer acierto. Medido aqui: una tuberia
-# con 200.000 lineas y `grep -q` da rc=141 con el acierto dentro, o sea que habria
-# impreso "no" teniendo el hecho delante. La fila de aqui abajo tiene una salida
-# de dos lineas y no llega a esa ventana, pero la forma sin tuberia la saca de las
-# dos clases a la vez y no solo de la que ya mordio.
-# LA FILA QUE EXISTE POR EL INCIDENTE DEL 14 DE SEPTIEMBRE DE 2026, y es la unica
-# de este banco que no mira a gate/p2.sh sino a los guiones que preguntan. La
-# fila de arriba, la 17eh, dio VERDE en macOS y ROJA en el runner de CI con el
-# MISMO commit, y no por la propiedad: su patron era '^\t\t\t\tEXPECTED=' y POSIX
-# no define \t dentro de una expresion, asi que BSD grep leia tabulador y GNU
-# grep leia la letra t. El hecho que la fila asevera era cierto en los dos sitios;
-# lo que cambiaba era el instrumento. Un rojo asi se lee como rojo de propiedad y
-# nadie lo re-corre, que es lo caro. LA REPARACION FUERON DOS CAMBIOS Y NO UNO, y
-# ninguno de los dos es la forma $'\t': la clase '[[:space:]]*', que POSIX SI
-# define, y el colapso de la tuberia de tres greps en un solo `grep -c` con
-# comparacion, que saca a la fila tambien de la clase del rc=141. La forma $'\t'
-# la nombra gate/entorno.sh como la portable y NO la usa ningun patron de este
-# arbol: medido el 14 de septiembre de 2026, CERO apariciones en todo el
-# repositorio. Esta fila impide que vuelva la forma SIN DEFINIR, que es la que
-# mordio, y su mitad roja reinstala el defecto en una copia para probar que el
-# censo sabe contarlo. La primera version de este comentario decia que la
-# reparacion fue $'\t', que es una forma que el arbol no contiene: se corrige aqui
-# porque es el sitio donde cayo.
+# AND THE UPPER HALF IS WRITTEN WITHOUT A PIPE AND WITHOUT ESCAPES, which is what
+# makes it immune to the TWO classes of environment dependence this pass found. The
+# first is the one of the escapes, which is the one that brought it down. The second
+# was measured on review and had not come out yet: with `set -o pipefail`,
+# a pipe that ends in `grep -q` returns 141 when the upstream one writes more than
+# fits in the pipe and the downstream one exits on the first match. Measured here:
+# a pipe with 200,000 lines and `grep -q` gives rc=141 with the match inside, so it
+# would have printed "no" with the fact right in front of it. The row below has an
+# output of two lines and does not reach that window, but the form without a pipe
+# takes it out of the two classes at once and not only of the one that already bit.
+# THE ROW THAT EXISTS BECAUSE OF THE INCIDENT OF 2026-09-14, and it is the
+# only one of this bench that does not look at gate/p2.sh but at the scripts that
+# ask. The row above, 17eh, came out GREEN on macOS, RED on the CI runner, with the
+# SAME commit, and not by the property: its pattern was '^\t\t\t\tEXPECTED='
+# and POSIX does not define \t inside an expression, so BSD grep read a tab and GNU
+# grep read the letter t. The fact the row asserts was true in both places; what
+# changed was the instrument. A red like that reads as a property red and nobody
+# re-runs it, which is the expensive part. THE REPAIR WAS TWO CHANGES AND NOT ONE,
+# and neither of the two is the form $'\t': the class '[[:space:]]*', which POSIX
+# DOES define, and the collapse of the pipe of three greps into a single `grep -c`
+# with a comparison, which takes the row out of the rc=141 class as well. The form
+# $'\t' is named by gate/entorno.sh as the portable one and NO pattern of this
+# tree uses it: measured on 2026-09-14, ZERO occurrences in the whole
+# repository. This row keeps the UNDEFINED form from coming back, which is the one
+# that bit, and its red half reinstalls the defect in a copy to prove that the
+# census knows how to count it. The first version of this comment said that the
+# repair was $'\t', which is a form the tree does not contain: it is corrected here
+# because this is where it fell.
 MUT_ESC="${BANCO}/p2-iron-test-escape.sh"
 python3 - "${GATE_DIR}/p2-iron-test.sh" "${MUT_ESC}" <<'MUTESC'
 import sys
-# El mutante NO deshace una forma concreta -eso ataba el brazo a como este fichero
-# este escrito hoy-: INYECTA una linea con la forma prohibida. Asi la mitad roja
-# mide lo que dice medir, que el censo cuenta un escape sin definir, y sigue
-# valiendo el dia que ninguna linea del banco use ya la forma portable.
+# The mutant does NOT undo a concrete form -that would tie the arm to how this file
+# is written today-: it INJECTS a line with the forbidden form. Thus the red half
+# measures what it says it measures, that the census counts an undefined escape, and
+# it still holds on the day no line of the bench uses the portable form any more.
 s = open(sys.argv[1], encoding="utf-8").read()
 s += "\ngrep '^\\tEXPECTED=' \"${GATE_DIR}/p2.sh\"  # linea inyectada por el brazo rojo de 17ei\n"
 open(sys.argv[2], "w", encoding="utf-8").write(s)
 MUTESC
-# EL SEGUNDO BRAZO, del 15 de septiembre de 2026, y es para la OTRA clase que el
-# mismo censo vigila: un metacaracter en una posicion que POSIX no define, que es
-# la familia del escape de arriba y no otra cosa. Se inyecta, como el primero, en
-# vez de deshacer una forma concreta, y va sobre un fichero nuevo porque lo que se
-# mide aqui es el censo y no el banco que lo alberga.
+# THE SECOND ARM, of 2026-09-15, and it is for the OTHER class the same
+# census watches: a metacharacter in a position POSIX does not define, which is the
+# family of the escape above and not something else. It is injected, as the first
+# one, instead of undoing a concrete form, and it goes on a new file because what
+# is measured here is the census and not the bench that houses it.
 MUT_ANCLA="${BANCO}/p2-iron-test-ancla.sh"
 python3 - "${MUT_ANCLA}" <<'MUTANCLA'
 import sys
-# EL GREP DEL MUTANTE SE ARMA CON PIEZAS, y va dicho porque se lee raro y la razon no
-# es estetica: el censo lee ESTE fichero tambien, y con el grep entero en una linea se
-# contaba a si mismo. Medido: entorno.sh se nego a cargar, que es un `exit 2` a la
-# puerta de los bancos que cargan este fichero, y murieron todos antes de imprimir una fila;
-# el reloj de esa muerte, con sus tres ejes, esta en ../corridas/naylamp-cifras-20260915T1659Z.txt. Lo que este texto escribe SI
-# se censa, y lo pide la fila por su nombre: por eso la palabra y el patron viven en
-# trozos distintos de esta linea.
+# THE MUTANT'S grep IS BUILT FROM PIECES, and that is said because it reads oddly and
+# the reason is not aesthetic: the census reads THIS file too, and with the whole grep
+# on one line it counted itself. Measured: entorno.sh refused to load, an `exit 2`
+# at the door of the benches that load this file, and they all died before printing a
+# row; the clock of that death, with its three axes, is in ../corridas/naylamp-cifras-20260915T1659Z.txt. What this text WRITES
+# is counted by the census, and the row asks for it by name: that is why the word and the pattern
+# live in different pieces of this line.
 #
 # AND THE FORMS ARE FOUR AND NOT ONE, because the first version of the invocation
 # pattern took only short flags with no argument and could not read them. THE FIGURES
 # OF THAT WIDENING ARE NOT RECITED HERE, for the reason the paragraph above gives; the
-# order, with its two counting rules, is in the crudo named there. The four forms below
+# order, with its two counting rules, is in the raw named there. The four forms below
 # all carry `-E`, so this row exercises the ANCHOR arm through all four; the FORM arm on
 # a BASIC pattern is done by the set of probes above, and that is a different arm.
 formas = ["-E -A2", "-A 3 -E", "-E -q --", "--extended-regexp"]
@@ -1083,7 +1083,7 @@ open(sys.argv[1], "w", encoding="utf-8").write(cuerpo)
 MUTANCLA
 # AND THE SET OF PROBES WITH A DECLARED OUTCOME LIVES HERE, and it lives here because of a
 # defect MEASURED and not as a precaution: a set of fourteen probes published by an earlier
-# crudo could not be re-derived, because the drawer that built it was retired and NOT ONE of
+# raw could not be re-derived, because the drawer that built it was removed and NOT ONE of
 # those names was left in the tree -measured: a grep for them over the whole repository
 # returns nothing-. A count that cannot be re-derived is a count that gets recited wrong, and
 # that one was one step away from being signed. This set is derived from the classes the
@@ -1112,8 +1112,8 @@ MUTANCLA
 # THE PROBE LINES ARE BUILT FROM PIECES, and the reason is the one this file already paid for
 # once: the census reads THIS file too, and a whole `grep ... 'pattern'` on one line would be
 # counted by the census as an invocation of this bench. The word and the pattern live in
-# different pieces of the same line, so what this text WRITES is censused -the files under
-# ${PROBES} are read by the two last fields- and what this text SAYS is not.
+# different pieces of the same line, so what this text WRITES is counted by the census -the files under
+# ${PROBES} are read by the last two fields- and what this text SAYS is not.
 PROBES="${BANCO}/probes"
 python3 - "${PROBES}" > "${PROBES}.tabla" <<'PROBESET'
 import os, sys
@@ -1166,13 +1166,13 @@ while read -r sonda esperado; do
 done < "${PROBES}.tabla"
 roja 17ei "0|1|4|23|23" "$(entorno_escapes_sin_definir "${GATE_DIR}"/*.sh | wc -l | tr -d ' ')|$(entorno_escapes_sin_definir "${MUT_ESC}" | wc -l | tr -d ' ')|$(entorno_escapes_sin_definir "${MUT_ANCLA}" | wc -l | tr -d ' ')|${sondas_ok}|${sondas_tot}" "ningun patron de grep de gate/ lleva un escape -\t, \s, \d, \w- ni un metacaracter en una posicion que POSIX no defina, que es lo que hizo que la fila de arriba respondiera distinto en dos maquinas con el mismo arbol y lo que hace que un dolar del medio responda a la implementacion y no al arbol; y el censo cuenta las dos clases cuando se le inyectan en una copia, con las CUATRO formas de invocacion del brazo del ancla -bandera con argumento pegada, separada, doble guion y opcion larga-, o sea que sabe contar lo que dice contar; AND, with the two last fields, the set of probes DERIVED FROM THE CLASSES this census declares -eleven that have to be counted, eleven boundaries where the rule does not apply and the one blind spot it names- lands on its declared outcome in all of them, and that count is PRINTED by the row and not recited in this text"
 
-# LA FILA DE UN PISO POR ENCIMA, del mismo dia y de la misma forma: un guion que
-# SOURCEA un fichero que git no trackea corre aqui y muere en un clon, y CI clona
-# en limpio. El arreglo de hoy lo estreno: `gate/entorno.sh` entro sourceado en
-# SEIS bancos, asi que hasta que no estuviera en el indice el radio de daño de un
-# olvido pasaba de uno a seis. La cuenta que se exige es la de las cargas del
-# ARBOL; las que el propio guion escribe en su taller quedan exentas y su exencion
-# se demuestra con la asignacion de la variable, no se supone.
+# THE ROW ABOVE, of the same day and of the same shape: a script that
+# SOURCES a file git does not track runs here and dies in a clone, and CI clones
+# clean. Today's fix gave it its first outing: `gate/entorno.sh` came in sourced in
+# SIX benches, so until it was in the index the blast radius of an oversight
+# went from one to six. The count that is required is that of the loads of the
+# TREE; the ones the script itself writes in its workshop are exempt and their
+# exemption is proved by the variable assignment, and not assumed.
 MUT_CARGA="${BANCO}/p2-iron-test-carga.sh"
 python3 - "${GATE_DIR}/p2-iron-test.sh" "${MUT_CARGA}" <<'MUTCARGA'
 import sys
@@ -1339,13 +1339,13 @@ printf '#!/bin/sh\n. "$(dirname "$0")/entorno.sh"\n' > "${DRAWER_LOAD}/dot-only.
 printf '#!/bin/sh\nsource "$(dirname "$0")/entorno.sh"\n' > "${DRAWER_SOURCE}/source-only.sh"
 roja 17ek "4|0|0|0|portable|broken|bash-red|0|1|1" "$(sh_benches_classified)|$(classify_bank "${MUT_RESOLUTION}")|$(classify_bank "${MUT_BROKEN}")|$(classify_bank "${MUT_BASH_RED}")|$(sh_benches_loading_entorno "${DRAWER_MENTION}" | wc -l | tr -d ' ')|$(sh_benches_loading_entorno "${DRAWER_LOAD}" | wc -l | tr -d ' ')|$(sh_benches_loading_entorno "${DRAWER_SOURCE}" | wc -l | tr -d ' ')" "no bench under gate/ that asks for sh is dash-red alone, nor broken, nor bash-red alone, and any that is gets named in the dash-portable.txt, dash-broken.txt and dash-bash-red.txt files of the workshop; the classifier tells the three causes apart; and the family is derived by LOAD and not by mention, so a copy that only names the file in a comment is not a member and copies that load it are, with EITHER operator: the POSIX dot and the non-POSIX source, which dies under dash at that very line"
 
-# ---- 17fa a 17fd: EL CIRCUITO Y NO LA PIEZA, POR TERCERA VEZ ------------------
+# ---- 17fa to 17fd: THE CIRCUIT AND NOT THE PIECE, FOR THE THIRD TIME ----------
 #
-# El barrido volvio a cazarme lo mismo: la 17ec llama a `comprueba_rango_en_vuelo`
-# DIRECTAMENTE, asi que prueba que la guarda sabe contar y no que el escritor la
-# CORRA; y el veredicto en vuelo vivia dentro de una fase que necesita tres
-# maquinas, asi que ponerlo a verde por las bravas no tumbaba nada. Las dos salidas
-# son la misma: llamar al circuito.
+# The sweep caught me at the same thing again: 17ec calls `comprueba_rango_en_vuelo`
+# DIRECTLY, so it proves that the guard knows how to count and not that the writer
+# RUNS it; and the in-flight verdict lived inside a phase that needs three
+# machines, so forcing it green by brute force did not take down anything. The two ways out
+# are the same one: call the circuit.
 GUARDA_OUT3="${OUT_LOCAL}"; GUARDA_MAN3="${MANIFEST}"; GUARDA_FIERRO3="${ES_FIERRO}"
 GUARDA_DESDE3="${ID_EN_VUELO_DESDE}"; GUARDA_MAX3="${EN_VUELO_MAX}"
 OUT_LOCAL="${BANCO}/circuito"; rm -rf -- "${OUT_LOCAL}"; mkdir -p "${OUT_LOCAL}"
@@ -1359,18 +1359,18 @@ exit 0
 FALSO
 chmod +x "${BANCO}/casa/1/naylamp/bin/naylampd"
 
-# 17fa: con un rango que colisiona, el ESCRITOR se niega y no escribe una sola linea
+# 17fa: with a range that collides, the WRITER refuses and does not write a single line
 ID_EN_VUELO_DESDE=500; EN_VUELO_MAX=200
 SALIDA_17FA="$(escritor_en_vuelo 2>&1)"
 roja 17fa "1|0" "$(printf '%s' "${SALIDA_17FA}" | grep -c 'refusing to write in flight')|$(grep -c . "${MANIFEST}")" "con un rango que colisiona, el ESCRITOR se niega antes de mandar nada y el manifiesto queda vacio: la fila de la guarda sola probaba que sabe contar, no que alguien la mire"
 
-# 17fb: y con el rango bueno escribe
+# 17fb: and with the good range it writes
 ID_EN_VUELO_DESDE="${GUARDA_DESDE3}"; EN_VUELO_MAX=4
 : > "${MANIFEST}"
 escritor_en_vuelo >/dev/null 2>&1
 fila 17fb "4" "$(grep -c ' confirmed$' "${MANIFEST}")" "y con el rango bueno escribe, que es la mitad sin la cual la de arriba pasaria con un escritor que no escribiera nunca"
 
-# 17fc y 17fd: el veredicto en vuelo, por los dos lados
+# 17fc and 17fd: the in-flight verdict, from both sides
 CHECK_FAILED=0; VERDICTS=" "
 veredicto_en_vuelo
 fila 17fc "pass" "$(verdict_of P2.cut.envuelo)" "con acks en vuelo, P2.cut.envuelo pasa"
@@ -1385,33 +1385,33 @@ rm -f -- "${BANCO}/estado/1.acepta"; rm -rf -- "${BANCO}/circuito"
 OUT_LOCAL="${GUARDA_OUT3}"; MANIFEST="${GUARDA_MAN3}"; ES_FIERRO="${GUARDA_FIERRO3}"
 CHECK_FAILED=0
 
-# ---- 17ga a 17gf: LO QUE LA TERCERA VUELTA DEL LECTOR EXTERNO ENCONTRO --------
+# ---- 17ga to 17gf: WHAT THE THIRD ROUND OF THE EXTERNAL READER FOUND ----------
 #
-# Y LA PRIMERA DE ELLAS ES LA QUINTA VEZ QUE ESTA CASA COMETE EL MISMO DEFECTO EN
-# UNA SOLA SESION: `veredicto_en_vuelo` abria un `begin_check` DENTRO del bloque
-# abierto de `P2.cut.fired`, y `begin_check` pone `CHECK_FAILED` a cero. Borraba
-# todos sus FAIL: el del nodo que no armo su testigo, el del que NUNCA dejo de
-# contestar al ssh -o sea que no se corto- y el de la frontera ausente, que era
-# codigo muerto desde el dia que nacio. Y lo que lo escondia fue, otra vez, que la
-# fila del banco llamaba a la funcion SOLA, donde funciona. **Llamar a la pieza es
-# justo lo que tapa que el circuito esta roto.**
+# AND THE FIRST OF THEM IS THE FIFTH TIME THIS HOUSE COMMITS THE SAME DEFECT IN
+# A SINGLE SESSION: `veredicto_en_vuelo` opened a `begin_check` INSIDE the block
+# opened by `P2.cut.fired`, and `begin_check` sets `CHECK_FAILED` to zero. It erased
+# all its FAILs: that of the node that did not arm its canary, that of the one that NEVER stopped
+# answering ssh -that is, it was NOT cut- and that of the missing boundary, which was
+# dead code from the day it was born. And what hid it was, once again, that the
+# bench row called the function ALONE, where it works. **Calling the piece is
+# exactly what hides the fact that the circuit is broken.**
 CUERPO_VEREDICTO="$(awk '/^veredicto_en_vuelo\(\) \{/,/^\}$/' "${GATE_DIR}/p2.sh")"
 CUERPO_CUT2="$(awk '/^phase_cut_fierro\(\) \{/,/^\}$/' "${GATE_DIR}/p2.sh")"
 POS_END="$(printf '%s\n' "${CUERPO_CUT2}" | grep -n 'end_check P2.cut.fired' | tail -1 | cut -d: -f1)"
 POS_VER="$(printf '%s\n' "${CUERPO_CUT2}" | grep -n '^	veredicto_en_vuelo$' | tail -1 | cut -d: -f1)"
 roja 17ga "si" "$([ -n "${POS_END}" ] && [ -n "${POS_VER}" ] && [ "${POS_VER}" -gt "${POS_END}" ] && echo si || echo no)" "veredicto_en_vuelo se llama DESPUES del ultimo end_check de P2.cut.fired y no dentro de su bloque: begin_check pone CHECK_FAILED a cero, asi que dentro borraba los FAIL de la fase y P2.cut.fired podia registrar PASS con sus propios FAIL impresos encima"
 
-# EL CIRCUITO Y NO LA PIEZA: se monta la fase entera en pequeno, con un FAIL
-# acumulado antes, y se exige que sobreviva a la llamada.
+# THE CIRCUIT AND NOT THE PIECE: the whole phase is set up in miniature, with a FAIL
+# accumulated before it, and it is demanded that it survive the call.
 GUARDA_CF="${CHECK_FAILED}"; GUARDA_V="${VERDICTS}"; GUARDA_OUT4="${OUT_LOCAL}"
 OUT_LOCAL="${BANCO}/veredicto"; rm -rf -- "${OUT_LOCAL}"; mkdir -p "${OUT_LOCAL}"
 printf 'ack 100 2026-09-09T00:00:00Z\n' > "${OUT_LOCAL}/en-vuelo.txt"
-# SE MONTA LA SECUENCIA DE LA FASE Y NO EL ESTADO SUELTO, y la primera version de
-# esta fila miraba `CHECK_FAILED` DESPUES de la llamada, que es una expectativa
-# imposible: `veredicto_en_vuelo` abre su PROPIO bloque, asi que ese contador ya no
-# es el de quien llama. Lo que hay que medir es el VEREDICTO: que P2.cut.fired
-# quede en `fail` con la llamada detras. Es la misma leccion una vez mas, y esta vez
-# cometida al escribir la fila que la vigila.
+# THE SEQUENCE OF THE PHASE IS SET UP AND NOT THE STATE ON ITS OWN, and the first version of
+# this row looked at `CHECK_FAILED` AFTER the call, which is an impossible
+# expectation: `veredicto_en_vuelo` opens its OWN block, so that counter is no longer
+# the caller's. What has to be measured is the VERDICT: that P2.cut.fired
+# comes out `fail` with the call behind it. It is the same lesson once more, and this time
+# committed while writing the row that watches it.
 VERDICTS=" "; begin_check
 fail "P2.cut.fired: un FAIL de mentira, para ver si sobrevive" >/dev/null 2>&1
 end_check P2.cut.fired
@@ -1419,7 +1419,7 @@ veredicto_en_vuelo >/dev/null 2>&1
 roja 17gb "fail|pass" "$(verdict_of P2.cut.fired)|$(verdict_of P2.cut.envuelo)" "en la secuencia de la fase, el veredicto de P2.cut.fired queda en FAIL y el de P2.cut.envuelo en pass: son dos bloques y no uno, y con la llamada dentro el primero salia pass con sus propios FAIL impresos encima"
 OUT_LOCAL="${GUARDA_OUT4}"; CHECK_FAILED="${GUARDA_CF}"; VERDICTS="${GUARDA_V}"
 
-# B2: el conteo de entradas, medido de verdad sobre directorios VACIOS
+# B2: the count of entries, measured for real over EMPTY directories
 mkdir -p "${BANCO}/vacios/data" "${BANCO}/vacios/logs" "${BANCO}/vacios/data-mutante"
 roja 17gc "3|0" "$(cd "${BANCO}/vacios" && ls -A data logs data-mutante 2>/dev/null | grep -c .)|$(cd "${BANCO}/vacios" && find data logs data-mutante -mindepth 1 2>/dev/null | grep -c .)" "sobre TRES directorios VACIOS, ls -A con varios operandos da TRES por sus cabeceras y find -mindepth 1 da CERO: con el primero, la precondicion del preflight fallaba en un host impecable, siempre, con el mensaje mas caro del diseno"
 printf 'x\n' > "${BANCO}/vacios/data/algo"
@@ -1427,23 +1427,23 @@ fila 17gd "1" "$(cd "${BANCO}/vacios" && find data logs data-mutante -mindepth 1
 rm -rf -- "${BANCO}/vacios"
 roja 17ge "si|no" "$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'find naylamp/data naylamp/logs naylamp/data-mutante -mindepth 1' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'ls -A naylamp/data naylamp/logs' && echo si || echo no)" "y el preflight cuenta con find y ya no con ls -A"
 
-# B3: el lider se pregunta a los TRES y con cota
+# B3: the leader is asked of all THREE and with a bound
 roja 17gf "si|si" "$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'for h in "${hosts\[@\]}"' && printf '%s' "${CUERPO_CALIENTE}" | grep -q 'and host .* wrote it with' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'NOT elected a leader in 20 s, asking all THREE' && echo si || echo no)" "el lider se pregunta a los TRES y con cota: solo el nodo que GANA escribe esa linea, asi que preguntar solo al host 1 daba un rojo que nombra la causa equivocada dos de cada tres veces, sobre una flota sana y con las tres encendidas"
 
-# ---- 17ha y 17hb: LOS DOS SITIOS QUE LA GUARDA NUEVA DESTAPO -----------------
+# ---- 17ha and 17hb: THE TWO SITES THE NEW GUARD UNCOVERED --------------------
 #
-# `gate/sitio-test.sh` entra hoy con el predicado de la clase que mordio CINCO
-# veces en un dia, y su primera corrida encontro mas de lo que el censo a mano
-# habia visto: `seal_artifact`, `completa_el_sello`, `retira_running`,
-# `emit_final_verdict` y `pliega_en_vuelo_sin_ack` tienen su sitio DESNUDO dentro
-# de `al_salir`, y **ninguna fila corria `al_salir`**. Es exactamente donde el
-# mutante que quita el `kill` del escritor en vuelo salio MUDO.
+# `gate/sitio-test.sh` enters today with the predicate of the class that bit FIVE
+# times in one day, and its first run found more than the census by hand
+# had seen: `seal_artifact`, `completa_el_sello`, `retira_running`,
+# `emit_final_verdict` and `pliega_en_vuelo_sin_ack` have their BARE site inside
+# `al_salir`, and **no row ran `al_salir`**. It is exactly where the
+# mutant that removes the `kill` of the in-flight writer came out SILENT.
 #
-# LA FILA CORRE LA TRAMPA ENTERA, en un subshell porque `al_salir` termina en
-# `exit`, y mira lo que deja: el artefacto sellado, el sello TERMINADO con su
-# `closed:`, el marcador retirado y el bloque de veredictos impreso. Con eso, un
-# cambio en el ORDEN de esas seis llamadas -que es lo unico que el sitio decide-
-# cae aqui y no en la primera corrida de fierro.
+# THE ROW RUNS THE WHOLE TRAP, in a subshell because `al_salir` ends in
+# `exit`, and looks at what it leaves: the sealed artifact, the seal FINISHED with its
+# `closed:`, and the marker removed. With that, a
+# change in the ORDER of those six calls -which is the only thing the site decides-
+# falls here and not in the first iron run.
 GUARDA_OUT5="${OUT_LOCAL}"; GUARDA_MAN5="${MANIFEST}"; GUARDA_FIERRO5="${ES_FIERRO}"
 GUARDA_RUN5="${RUN_STARTED}"; GUARDA_EMIT5="${EMITIDO}"; GUARDA_V5="${VERDICTS}"
 GUARDA_EXP5="${EXPECTED}"; GUARDA_RID5="${RUN_ID}"; GUARDA_OD5="${OUT_DIR}"
@@ -1457,10 +1457,10 @@ ES_FIERRO=1; RUN_STARTED=1; EMITIDO=1; SELLO_ESCRITO_AQUI=0
 EXPECTED="P2.build"; VERDICTS=" P2.build=pass "
 SUBCOMANDO=all; ARRANCO_A="2026-09-09T00:00:00Z"
 escribe_running
-# UN ESCRITOR EN VUELO DE MENTIRA, para poder exigir que la trampa lo MATE. El
-# barrido lo pidio: quitandole a al_salir el kill, esta fila seguia verde porque
-# miraba lo que la trampa DEJA y no lo que la trampa PARA. Un proceso que sobrevive
-# a la trampa sigue escribiendo en el manifiesto detras del sello.
+# A FAKE IN-FLIGHT WRITER, so that the trap can be required to KILL it. The
+# sweep asked for it: taking the kill away from al_salir, this row stayed green because
+# it looked at what the trap LEAVES and not at what the trap STOPS. A process that survives
+# the trap keeps writing to the manifest behind the seal.
 sleep 120 &
 PID_EN_VUELO=$!
 SALIDA_TRAMPA="$( al_salir 2>&1 )"
@@ -1474,38 +1474,38 @@ MANIFEST="${GUARDA_MAN5}"; ES_FIERRO="${GUARDA_FIERRO5}"; RUN_STARTED="${GUARDA_
 EMITIDO="${GUARDA_EMIT5}"; VERDICTS="${GUARDA_V5}"; EXPECTED="${GUARDA_EXP5}"
 SELLO_ESCRITO_AQUI=1; CHECK_FAILED=0
 
-# ---- 17hc: EL DESPACHO POR ES_FIERRO, que es el sitio de las tres fases de fierro
+# ---- 17hc: THE DISPATCH BY ES_FIERRO, which is the site of the three iron phases
 #
-# `phase_hygiene`, `phase_cut` y `phase_red` no hacen mas que elegir rama por
-# `ES_FIERRO`, y esa eleccion es su unico contenido. Las filas que corren
-# `phase_hygiene_fierro` prueban la fase; esta prueba que se llegue a ella.
+# `phase_hygiene`, `phase_cut` and `phase_red` do nothing but choose a branch by
+# `ES_FIERRO`, and that choice is their only content. The rows that run
+# `phase_hygiene_fierro` test the phase; this one tests that it is reached.
 GUARDA_FIERRO6="${ES_FIERRO}"
 ES_FIERRO=1
 DESPACHO="$( set +e; phase_hygiene 2>&1 )"
 ES_FIERRO="${GUARDA_FIERRO6}"
-# SE PREGUNTA POR UNA FRASE QUE SOLO IMPRIME UNA DE LAS DOS RAMAS, y por presencia
-# y no por cuenta: contar apariciones dentro de la salida de una fase es una cifra
-# que se mueve cada vez que alguien anade una linea, y entonces el banco se pone
-# rojo por trabajar. Es la tercera vez hoy que lo corrijo en la misma direccion.
+# IT ASKS FOR A PHRASE THAT ONLY ONE OF THE TWO BRANCHES PRINTS, and by presence
+# and not by count: counting appearances inside the output of a phase is a figure
+# that moves every time someone adds a line, and then the bench turns
+# red while nothing is broken. It is the third time today that I have corrected it in the same direction.
 roja 17hc "si|no" "$(printf '%s' "${DESPACHO}" | grep -q 'sane fleet is at' && echo si || echo no)|$(printf '%s' "${DESPACHO}" | grep -q 'is still running' && echo si || echo no)" "con ES_FIERRO=1, phase_hygiene DESPACHA a su rama de fierro y no corre la del ensayo: es el mismo circuito que el del banner, y las tres fases de fierro cuelgan de el"
 CHECK_FAILED=0
 
-# ---- 17ia y 17ib: LA FASE DEL CORTE, CORRIDA ENTERA --------------------------
+# ---- 17ia and 17ib: THE CUT PHASE, RUN WHOLE ---------------------------------
 #
-# LA GUARDA `gate/sitio-test.sh` DEJO ESTAS TRES AL DESCUBIERTO y no se pudieron
-# declarar: `escritor_en_vuelo`, `pliega_en_vuelo_sin_ack` y `veredicto_en_vuelo`
-# tienen su unico sitio DESNUDO dentro de `phase_cut_fierro`, y ese sitio decide
-# lo que ninguna de sus filas puede ver: en que ORDEN se llaman, si el escritor
-# arranca antes del corte, si el `wait` espera solo a los cortes, y si el veredicto
-# queda fuera del bloque de `P2.cut.fired`. Es donde el mutante que quita la espera
-# del primer ack salio MUDO.
+# THE GUARD `gate/sitio-test.sh` LEFT THESE THREE EXPOSED and they could not be
+# declared: `escritor_en_vuelo`, `pliega_en_vuelo_sin_ack` and `veredicto_en_vuelo`
+# have their only BARE site inside `phase_cut_fierro`, and that site decides
+# what none of their rows can see: in what ORDER they are called, whether the writer
+# starts before the cut, whether the `wait` waits only for the cuts, and whether the verdict
+# stays outside the block of `P2.cut.fired`. It is where the mutant that removes the wait
+# for the first ack came out SILENT.
 #
-# SE CORRE LA FASE DE VERDAD, con el corte SIMULADO sobre la flota de mentira, y
-# eso cuesta SEGUNDOS en vez del coste de dejar que sus dos esperas se agoten, que es de
-# ORDEN MINUTOS y es la razon de simularlo. El reloj con sus tres ejes esta en
-# ../corridas/naylamp-cifras-20260915T1659Z.txt. Un ayudante en segundo plano hace lo que haria el corte: marca los
-# tres hosts muertos, les cambia el boot id, deja el testigo en su semilla, y los
-# devuelve. Nada de esto enciende nada: los tres hosts son directorios.
+# THE PHASE IS RUN FOR REAL, with the cut SIMULATED over the fake fleet, and
+# that costs SECONDS instead of the cost of letting its two waits run out, which is on
+# the ORDER OF MINUTES and is the reason for simulating it. The clock with its three axes is in
+# ../corridas/naylamp-cifras-20260915T1659Z.txt. A helper in the background does what the cut would do: it marks the
+# three hosts dead, changes their boot id, leaves the canary at its seed, and gives them
+# back. None of this powers on anything: the three hosts are directories.
 GUARDA_OUT7="${OUT_LOCAL}"; GUARDA_MAN7="${MANIFEST}"; GUARDA_FIERRO7="${ES_FIERRO}"
 GUARDA_V7="${VERDICTS}"; GUARDA_CF7="${CHECK_FAILED}"; GUARDA_MAXV7="${EN_VUELO_MAX}"
 OUT_LOCAL="${BANCO}/fasecorte"; rm -rf -- "${OUT_LOCAL}"; mkdir -p "${OUT_LOCAL}"
@@ -1519,23 +1519,23 @@ exit 0
 FALSO
 chmod +x "${BANCO}/casa/1/naylamp/bin/naylampd"
 
-# Y EL NODO 2 NO PUEDE ARMAR, a proposito y en esta misma corrida. El stub de ssh
-# le niega el UNICO viaje que hace un `>>` sobre el testigo, o sea el armado, y le
-# deja pasar la siembra. La primera version de esta linea puso el testigo como
-# DIRECTORIO y no valia: eso rompe la SIEMBRA, que va antes y tiene su propia
-# salida temprana, asi que la fase se iba sin llegar nunca al armado y las tres
-# columnas salian en no por la razon equivocada. Es una de las dos causas que el
-# comentario de la fase nombra -un ssh cortado o un disco lleno- y hasta ahora
-# ninguna fila la ejercia: `testigo_arma` se probaba SOLO, en las filas 22 a 25,
-# y el SITIO donde su fallo tiene que recordarse por nodo no lo recorria nadie.
-# Ese hueco dejo entrar un defecto el 9 de septiembre de 2026, en el arreglo mismo
-# que paralelizo el armado: al sacar la llamada de la condicion de un `if` perdio
-# la exencion de errexit, y con un arma que fallaba el gate moria entero en vez de
-# anotar el nodo y seguir. Con esta linea puesta, esa version no llega al final.
+# AND NODE 2 CANNOT ARM, on purpose and in this same run. The ssh stub
+# denies it the ONLY trip that does a `>>` over the canary, that is, the arming, and
+# lets the seeding through. The first version of this line put the canary as
+# a DIRECTORY and that was no good: it breaks the SEEDING, which goes earlier and has its own
+# early exit, so the phase went away without ever reaching the arming and the three
+# columns came out as no for the wrong reason. It is one of the two causes that the
+# phase's comment names -an ssh cut off or a full disk- and until now
+# no row exercised it: `testigo_arma` was tested ALONE, in rows 22 to 25,
+# and the SITE where its failure has to be noted per node was not walked by anybody.
+# That hole let a defect in on 2026-09-09, in the very fix
+# that parallelised the arming: by taking the call out of the condition of an `if` it lost
+# the errexit exemption, and with one arm that failed the gate died whole instead of
+# noting the node and going on. With this line in place, that version does not reach the end.
 : > "${BANCO_ESTADO}/2.no-arma"
 
-# El ayudante que hace de corte. Los numeros son cortos a proposito: lo que esta
-# fila mide es el RECORRIDO de la fase, no cuanto tarda una VM en volver.
+# The helper that plays the cut. The numbers are short on purpose: what this
+# row measures is the TRAVERSAL of the phase, not how long a VM takes to come back.
 (
 	sleep 3
 	for n in 1 2 3; do : > "${BANCO_ESTADO}/${n}.muerto"; done
@@ -1547,113 +1547,113 @@ chmod +x "${BANCO}/casa/1/naylamp/bin/naylampd"
 	done
 ) &
 AYUDANTE=$!
-# Y LA LLAMADA ENTRA POR `phase_cut` Y NO POR `phase_cut_fierro`, que es UNA
-# palabra y cubre un sitio entero. Hasta la cuarta vuelta esta linea llamaba a la
-# rama de fierro DIRECTAMENTE, y entonces el DESPACHO por ES_FIERRO que hay en
-# `phase_cut` no lo ejercia nadie: gate/sitio-test.sh lo tenia DECLARADO como
-# cubierto "por la fila del despacho", y esa fila, la 17hc, es la de phase_hygiene.
-# Una exencion escrita con una razon falsa es peor que ninguna, porque apaga la
-# guarda en el sitio exacto donde hacia falta. Entrando por el despacho la fila
-# recorre lo mismo y ademas comprueba a que rama fue, y la declaracion sobra.
-# Y NO SE CAPTURA CON `$( )`, que es una SUBCAPA y se lleva los veredictos. La
-# fase registra en `VERDICTS`, que es una variable, y una sustitucion de orden corre
-# en un proceso hijo: al cerrarse, todo lo que la fase escribio ahi se pierde. Se
-# midio el 9 de septiembre de 2026 imprimiendo `VERDICTS` justo detras de la
-# captura y saliendo el espacio con el que se habia inicializado. Lo que eso
-# significaba es peor que un veredicto perdido: la segunda mitad de la 17ib
-# preguntaba si P2.cut.envuelo quedaba en `pass` o en `none`, y `verdict_of` sobre
-# una variable vacia devuelve `none` SIEMPRE, por su rama por defecto. O sea que
-# esa columna salia verde pasara lo que pasara, en una fila cuyo propio comentario
-# de arriba explica que una asercion que admite los dos desenlaces no vigila nada.
-# Se redirige a fichero y la fase corre en ESTA capa, que es como el banco ya
-# ejerce phase_hygiene_fierro y al_salir.
+# AND THE CALL GOES IN THROUGH `phase_cut` AND NOT THROUGH `phase_cut_fierro`, which is ONE
+# word and covers a whole site. Until the fourth round this line called the
+# iron branch DIRECTLY, and then the DISPATCH BY ES_FIERRO that is in
+# `phase_cut` was exercised by nobody: gate/sitio-test.sh had it DECLARED as
+# covered "by the dispatch row", and that row, 17hc, is the phase_hygiene one.
+# An exemption written with a false reason is worse than none, because it switches the
+# guard off at the exact site where it was needed. Going in through the dispatch the row
+# walks the same ground and also checks which branch it went to, and the declaration is superfluous.
+# AND IT IS NOT CAPTURED WITH `$( )`, which is a SUBSHELL and takes the verdicts with it. The
+# phase records in `VERDICTS`, which is a variable, and a command substitution runs
+# in a child process: when it closes, everything the phase wrote there is lost. It
+# was measured on 2026-09-09 by printing `VERDICTS` right behind the
+# capture, and what came out was the space it had been initialised with. What that
+# meant is worse than a lost verdict: the second half of 17ib
+# asked whether P2.cut.envuelo stayed at `pass` or at `none`, and `verdict_of` over
+# an empty variable returns `none` ALWAYS, by its default branch. Which means that
+# that column came out green whatever happened, in a row whose own comment
+# above explains that an assertion that admits both outcomes watches nothing.
+# It is redirected to a file and the phase runs in THIS shell, which is how the bench already
+# exercises phase_hygiene_fierro and al_salir.
 set +e
 phase_cut > "${BANCO}/fasecorte.salida" 2>&1
 set -e
 SALIDA_CORTE="$(cat "${BANCO}/fasecorte.salida")"
 wait "${AYUDANTE}" 2>/dev/null || true
-# LA NEGACION DEL ARMADO SE RETIRA AQUI, y olvidarla puso roja la fila 25 tres
-# minutos: esa fila arma el nodo 2 de verdad para medir su tamano, y con la
-# bandera puesta media 4096 en vez de 69632. Un montaje que no se deshace no es
-# un montaje, es un cambio de entorno para todo lo que venga detras.
+# THE ARMING DENIAL IS REMOVED HERE, and forgetting it turned row 25 red for three
+# minutes: that row arms node 2 for real to measure its size, and with the
+# flag in place it measured 4096 instead of 69632. A setup that is not undone is not
+# a setup, it is an environment change for everything that comes after.
 rm -f -- "${BANCO_ESTADO}/2.no-arma"
 rm -f -- "${BANCO}/estado/1.acepta"
 printf 'binario sano, igual en las tres\n' > "${BANCO}/casa/1/naylamp/bin/naylampd"
 
-# LA CUARTA MITAD LA PIDIO EL BARRIDO DE MUTANTES, no yo: quitandole a la fase la
-# espera del primer ack, esta fila seguia verde, porque miraba que el escritor
-# ARRANCARA y no que la fase le ESPERARA. Arrancar y esperar son dos cosas, y la
-# que decide si hay poblacion en vuelo con edad casi cero es la segunda.
+# THE FOURTH HALF WAS ASKED FOR BY THE MUTANT SWEEP, not by me: taking away from the phase the
+# wait for the first ack, this row stayed green, because it looked at the writer
+# STARTING and not at the phase WAITING for it. Starting and waiting are two things, and the
+# one that decides whether there is a nearly zero-age in-flight population is the second.
 #
-# Y LA PRIMERA VERSION DE ESTA MITAD SEGUIA SIN MORDER, porque acepto las DOS ramas
-# con una alternancia: el mutante caia en la otra y pasaba. Una asercion que admite
-# los dos desenlaces de la decision que vigila no vigila nada. En este montaje el
-# escritor SI ackea -seis, medido- asi que se exige la rama positiva y solo esa.
+# AND THE FIRST VERSION OF THIS HALF STILL DID NOT BITE, because it accepted the TWO branches
+# with an alternation: the mutant fell into the other one and passed. An assertion that admits
+# the two outcomes of the decision it watches watches nothing. In this setup the
+# writer DOES ack -six, measured- so the positive branch is demanded and only that one.
 fila 17ia "si|si|si|si|no" "$(printf '%s' "${SALIDA_CORTE}" | grep -q 'starting the in-flight writer' && echo si || echo no)|$(printf '%s' "${SALIDA_CORTE}" | grep -q 'has at least one acknowledged write' && echo si || echo no)|$(printf '%s' "${SALIDA_CORTE}" | grep -q 'cutting the THREE' && echo si || echo no)|$(printf '%s' "${SALIDA_CORTE}" | grep -q 'boot id after' && echo si || echo no)|$(printf '%s' "${SALIDA_CORTE}" | grep -q 'cutting nodes 1 and 2 with kill -9' && echo si || echo no)" "phase_cut_fierro se recorre ENTERA contra la flota de mentira, ENTRANDO POR EL DESPACHO: arranca el escritor en vuelo, corta, y llega a leer los boot id de vuelta. Es el SITIO de tres funciones que este banco prueba una a una y que nadie ejercia, y la quinta columna exige que con ES_FIERRO=1 no se haya colado la rama del ensayo, que corta dos nodos con kill -9 en vez de tres con sysrq"
-# Y NO LLEVA UN `case` DENTRO DE LA SUSTITUCION, que es la clausula 31 y la
-# segunda version de esta linea la cometio: un `case` dentro de `$( )` es un error
-# de sintaxis en el bash 3.2 de esta maquina, porque el parser toma el `)` del
-# patron por el cierre de la sustitucion. Y no muere: el error va a stderr, la
-# sustitucion devuelve el texto suelto de detras del parentesis, y la fila salio
-# roja mostrando medio `esac` como si fuera un veredicto.
+# AND IT DOES NOT CARRY A `case` INSIDE THE SUBSTITUTION, which is clause 31 and the
+# second version of this line committed it: a `case` inside `$( )` is a syntax
+# error in the bash 3.2 of this machine, because the parser takes the `)` of the
+# pattern for the closing of the substitution. And it does not die: the error goes to stderr, the
+# substitution returns the loose text from behind the parenthesis, and the row came out
+# red showing half an `esac` as if it were a verdict.
 #
-# LA 17ib PREGUNTA DOS COSAS QUE PUEDEN SALIR MAL, y la primera version pregunto
-# una que no podia: comparaba el veredicto contra "distinto de none O igual a
-# none", que es verdad siempre. Una fila que no puede fallar no es una fila.
+# 17ib ASKS TWO THINGS THAT CAN GO WRONG, and the first version asked
+# one that could not: it compared the verdict against "different from none OR equal to
+# none", which is always true. A row that cannot fail is not a row.
 roja 17ib "si|pass" "$(printf '%s' "${SALIDA_CORTE}" | grep -q 'in flight:' && echo si || echo no)|$(verdict_of P2.cut.envuelo)" "y en el mismo recorrido lee la frontera del escritor y REGISTRA el veredicto en vuelo: el ORDEN de esas seis llamadas es lo unico que el sitio decide, y sin esta fila un cambio en el orden solo se veria en la primera corrida de fierro. La segunda columna exige PASS y no una alternancia: en este montaje el escritor ackea cuatro veces medidas, asi que none seria un defecto y no una rama legitima"
 
-# ---- 17ic: EL PRESUPUESTO DE LA VENTANA, medido por la ESTRUCTURA -------------
+# ---- 17ic: THE BUDGET OF THE WINDOW, measured by the STRUCTURE ----------------
 #
-# LA CUARTA VUELTA DEL LECTOR ENCONTRO QUE LA VENTANA NO CABIA EN SU COTA, y el
-# defecto no lo metio quien escribio la fase: lo metieron las CORRECCIONES de la
-# tercera vuelta. La ventana va de armar el testigo a disparar el corte y su cota
-# es VENTANA_MAX, cinco segundos, derivada de commit=30. Dentro de esa ventana la
-# tercera vuelta metio dos gastos nuevos sin tocar la cota: el fsync de directorio
-# en la siembra, y hasta tres segundos esperando el primer ack del escritor en
-# vuelo. Con las tres armas EN SERIE contra Azure, el presupuesto se pasaba de
-# cinco antes de que el corte saliera. Y no falla ruidosamente: `ventana_dentro`
-# da falso y P2.cut.bytes sale NOT RUN, o sea que la lectura central de la fase
-# -si el corte fue seco- se anula sola sobre una flota sana.
+# THE FOURTH PASS OF THE READER FOUND THAT THE WINDOW DID NOT FIT IN ITS BOUND, and the
+# defect was not put there by whoever wrote the phase: it was put there by the
+# CORRECTIONS of the third pass. The window runs from arming the canary to firing the
+# cut and its bound is VENTANA_MAX, five seconds, derived from commit=30. Inside that
+# window the third pass put two new costs without touching the bound: the directory fsync
+# in the seeding, and up to three seconds waiting for the first ack of the in-flight
+# writer. With the three arms IN SERIES against Azure, the budget went over five before
+# the cut fired. And it does not fail loudly: `ventana_dentro` gives false and
+# P2.cut.bytes comes out NOT RUN, that is, the central reading of the phase -whether
+# the cut was dry- is voided on its own over a healthy fleet.
 #
-# ESTA FILA MIDE ESTRUCTURA Y NO PROSA, que es lo que la clase de esta semana
-# obliga: se saca el NUMERO DE LINEA de las dos cosas dentro del cuerpo de la
-# funcion y se exige el orden. Una fila que preguntara si el comentario dice
-# "en paralelo" seguiria verde el dia que alguien devolviera las armas a la serie
-# y dejara el parrafo puesto. Las tres columnas caen si se deshace la correccion:
-# volver a poner el escritor detras del bucle tumba la primera, quitar el `&` de
-# las armas tumba la segunda, y quitar el `wait` tumba la tercera, que es la que
-# impide la version veloz y falsa: armar al fondo sin juntar cortaria antes de
-# que las semillas estuvieran puestas.
-# Y EL CUERPO SE LEE SIN COMENTARIOS, que no es limpieza: la primera version de
-# la 17ic salia VERDE por su propia prosa. El comentario que explica el arreglo
-# CITA la forma rota, `( testigo_arma "$n"; echo $? > ... ) &`, y el grep de la
-# segunda columna casaba esa cita en vez del codigo. O sea que la fila escrita
-# para vigilar el armado se habria quedado verde el dia que alguien devolviera el
-# armado a la forma rota, porque el parrafo que la describe seguiria puesto. Es
-# la misma clase que este banco lleva un dia entero persiguiendo, cometida DENTRO
-# de la fila que la persigue, y la caza fue el censo de mutantes: 17ic no aparecia
-# en la lista de filas que algun mutante hace caer.
+# THIS ROW MEASURES STRUCTURE AND NOT PROSE, which is what this week's class
+# requires: the LINE NUMBER of the two things is taken inside the body of the
+# function and the order is required. A row that asked whether the comment says
+# "in parallel" would stay green the day someone put the arms back in series
+# and left the paragraph in place. The three columns fall if the correction is undone:
+# putting the writer back behind the loop takes the first one down, taking the `&` out of
+# the arms takes the second down, and taking the `wait` out takes down the third, which is the
+# one that stops the fast and false version: arming in the background without gathering them
+# would cut before the seeds were in place.
+# AND THE BODY IS READ WITHOUT COMMENTS, which is not tidiness: the first version of
+# 17ic came out GREEN for its own prose. The comment that explains the fix
+# QUOTES the broken form, `( testigo_arma "$n"; echo $? > ... ) &`, and the grep of the
+# second column matched that quote instead of the code. That is, the row written
+# to watch the arming would have stayed green the day someone put the arming
+# back in the broken form, since the paragraph that describes it would still be there. It
+# is the same class this bench has spent a whole day chasing, committed INSIDE
+# the row that chases it, and what caught it was the census of mutants: 17ic did not appear
+# in the list of rows that some mutant knocks down.
 CUERPO_CORTE_F="$(awk '/^phase_cut_fierro\(\) \{/,/^\}$/' "${GATE_DIR}/p2.sh" | grep -v '^[[:space:]]*#')"
 roja 17ic "si|si|si" "$(L_ESC="$(printf '%s\n' "${CUERPO_CORTE_F}" | grep -n 'escritor_en_vuelo &' | head -1 | cut -d: -f1)"; L_ARM="$(printf '%s\n' "${CUERPO_CORTE_F}" | grep -n 'testigo_arma "\$n"' | head -1 | cut -d: -f1)"; [ -n "${L_ESC}" ] && [ -n "${L_ARM}" ] && [ "${L_ESC}" -lt "${L_ARM}" ] && echo si || echo no)|$(printf '%s\n' "${CUERPO_CORTE_F}" | grep -qE '^[[:space:]]*\( if testigo_arma "\$n";.*\) &$' && echo si || echo no)|$(printf '%s\n' "${CUERPO_CORTE_F}" | grep -q 'wait \${pids_arma}' && echo si || echo no)" "el escritor en vuelo arranca ANTES del bucle de armado, las tres armas van al fondo CON su llamada dentro de un if, que es su exencion de errexit, y se las junta con wait antes de cortar: asi la espera del primer ack se solapa con las armas en vez de sumarse detras, y dentro de la ventana queda UN viaje ssh de armar mas el abanico del corte, que ya iba en paralelo"
 
-# ---- 17id: UN ARMA QUE FALLA NO SE LLEVA LA CORRIDA --------------------------
+# ---- 17id: AN ARM THAT FAILS DOES NOT TAKE THE RUN DOWN ----------------------
 #
-# ESTA FILA LEE LA MISMA CAPTURA QUE LA 17ia y no cuesta un segundo mas: el nodo 2
-# tiene su testigo puesto como directorio arriba, asi que en ese mismo recorrido
-# de `phase_cut` hay UN arma que falla y DOS que arman. Las tres columnas son el
-# circuito entero del caso degradado: se anota el nodo por su numero, la fase
-# SIGUE VIVA hasta disparar el corte, y el veredicto del corte queda registrado.
+# THIS ROW READS THE SAME CAPTURE AS 17ia and does not cost one second more: node 2
+# is denied its arming by the stub higher up, so in that same traversal
+# of `phase_cut` there is ONE arm that fails and TWO that arm. The three columns are the
+# whole circuit of the degraded case: the node is noted by its number, the phase
+# STAYS ALIVE until it fires the cut, and the verdict of the cut is left recorded.
 #
-# LA SEGUNDA COLUMNA ES LA QUE VALE Y ES LA QUE NO EXISTIA. Bajo `set -e`, una
-# llamada que falla fuera de una condicion mata la subcapa que la contiene, y si
-# esa subcapa esta al fondo, el `wait` que la recoge devuelve distinto de cero y
-# se lleva el gate. La version de este arreglo escrita media hora antes hacia
-# exactamente eso: la corrida de fierro moria en el armado, sin `fail`, sin corte
-# y sin veredicto, o sea que la sesion se perdia entera y el artefacto no decia
-# por que. Preguntar solo por el `fail` del nodo 2 no lo habria cazado, porque en
-# esa version el `fail` tampoco se escribia: lo que lo caza es exigir que la fase
-# LLEGUE a una linea posterior. Es la diferencia entre mirar la pieza y mirar que
-# la corriente sale por el otro lado.
+# THE SECOND COLUMN IS THE ONE THAT COUNTS AND IT DID NOT EXIST BEFORE. Under `set -e`, a
+# call that fails outside a condition kills the subshell that holds it, and if
+# that subshell is in the background, the `wait` that collects it returns non-zero and
+# takes the gate down. The version of this fix written half an hour earlier did
+# exactly that: the iron run died in the arming, with no `fail`, no cut
+# and no verdict, that is, the whole session was lost and the artifact did not say
+# why. Asking only about the `fail` of node 2 would not have caught it, because in
+# that version the `fail` was not written either: what catches it is requiring the phase
+# to REACH a later line. It is the difference between looking at the piece and looking at
+# whether the current comes out the other side.
 roja 17id "si|si|fail" "$(printf '%s' "${SALIDA_CORTE}" | grep -q 'node 2 would not arm its canary' && echo si || echo no)|$(printf '%s' "${SALIDA_CORTE}" | grep -q 'cutting the THREE' && echo si || echo no)|$(verdict_of P2.cut.fired)" "con el stub negandole al nodo 2 el unico viaje que hace un >> sobre el testigo, su arma falla de verdad y la siembra pasa: se anota P2.cut.fired contra ESE nodo, la fase sobrevive y dispara el corte, y el veredicto sale FAIL y no none. Sin la exencion de errexit dentro de la subcapa del armado paralelo las tres columnas caen a la vez, porque el gate muere antes de escribir ninguna"
 
 # ---- 17ie: THE PARALLEL ARMING, UNDER REAL errexit ----------------------------
@@ -1765,10 +1765,10 @@ roja 17if "1|3|si|si" "$(bash "${BANCO}/arming-channel.sh" 2>/dev/null | grep -c
 
 
 
-# LA FLOTA DE MENTIRA SE DEVUELVE A SU ESTADO, y esto es una correccion medida: el
-# ayudante cambia los boot id para que el corte se note, y sin devolverlos la fila
-# 18, que los lee mas abajo, salia roja por un estado que le dejo puesto otra fila.
-# Una fila que le mueve el suelo a las de detras es peor que una que no mide nada.
+# THE FAKE FLEET IS PUT BACK TO ITS STATE, and this is a measured correction: the
+# helper changes the boot ids so that the cut is noticed, and without putting them back row
+# 18, which reads them further down, came out red for a state that another row left behind.
+# A row that moves the ground under the ones behind it is worse than one that measures nothing.
 for n in 1 2 3; do
 	printf 'aaaa-bbbb-cccc-000%s\n' "${n}" > "${BANCO}/casa/${n}/proc/sys/kernel/random/boot_id"
 	rm -f -- "${BANCO}/estado/${n}.muerto"
@@ -1778,7 +1778,7 @@ rm -rf -- "${OUT_LOCAL}"
 OUT_LOCAL="${GUARDA_OUT7}"; MANIFEST="${GUARDA_MAN7}"; ES_FIERRO="${GUARDA_FIERRO7}"
 VERDICTS="${GUARDA_V7}"; CHECK_FAILED="${GUARDA_CF7}"; EN_VUELO_MAX="${GUARDA_MAXV7}"
 
-# ---- 18 a 21: las primitivas de fierro contra el stub ------------------------
+# ---- 18 to 21: the iron primitives against the stub --------------------------
 fila 18 "aaaa-bbbb-cccc-0002" "$(boot_id_de 2)" "boot_id_de lee el boot id por el canal de tres estados"
 : > "${BANCO}/estado/2.muerto"
 roja 19 "2" "$( boot_id_de 2 >/dev/null 2>&1; echo $? )" "un host que no contesta devuelve 2, y NO una cadena vacia que pase por respuesta"
@@ -1786,52 +1786,52 @@ rm -f -- "${BANCO}/estado/2.muerto"
 fila 20 "si" "$(ask_on 1 'true' && echo si || echo no)" "ask_on contesta SI sobre el host vivo"
 fila 21 "176" "$(sysrq_de 1)" "sysrq_de trae el valor del host"
 
-# ---- 22 a 25: el tercer testigo, que es lo que mide el corte ------------------
+# ---- 22 to 25: the third canary, which is what the cut measures ---------------
 testigo_siembra 1 >/dev/null 2>&1
 fila 22 "${TESTIGO_SEMILLA}" "$(testigo_tamano 1)" "sembrado y sincronizado: ${TESTIGO_SEMILLA} bytes durables por construccion"
 testigo_arma 1 >/dev/null 2>&1
 fila 23 "$(( TESTIGO_SEMILLA + TESTIGO_COLA ))" "$(testigo_tamano 1)" "armado: la cola sin sincronizar esta encima"
-# un corte SECO se lleva la cola: se simula truncando a la semilla
+# a DRY cut takes the tail with it: it is simulated by truncating to the seed
 head -c "${TESTIGO_SEMILLA}" /dev/zero > "${BANCO}/casa/1/${TESTIGO_REMOTO}"
 fila 24 "${TESTIGO_SEMILLA}" "$(testigo_tamano 1)" "tras un corte seco vuelve a la semilla, que es la senal que el gate lee"
 roja 25 "$(( TESTIGO_SEMILLA + TESTIGO_COLA ))" "$(testigo_siembra 2 >/dev/null 2>&1; testigo_arma 2 >/dev/null 2>&1; testigo_tamano 2)" "un testigo que vuelve ENTERO significa que ahi no se corto nada, y ese es el caso que no puede leerse como verde"
 
-# ---- 26 a 31: LAS DECISIONES, llamando a las funciones DE gate/p2.sh ---------
+# ---- 26 to 31: THE DECISIONS, calling the functions OF gate/p2.sh ------------
 #
-# Estas filas eran aritmetica sobre literales escritos aqui, y un lector lo midio
-# el 7 de septiembre de 2026: `cambiados=2; [ "${cambiados}" -ge 2 ]` demuestra
-# que dos es al menos dos, no que este guion haga nada. Rebobinada la decision en
-# p2.sh, las diez seguian verdes. Ahora las decisiones son funciones nombradas
-# EN p2.sh y estas filas llaman a esas, asi que rebobinar el objeto pone la fila
-# roja, que es lo unico que hace util a un banco.
+# These rows were arithmetic over literals written here, and a reader measured it
+# on 2026-09-07: `cambiados=2; [ "${cambiados}" -ge 2 ]` proves
+# that two is at least two, not that this script does anything. With the decision rewound in
+# p2.sh, the ten stayed green. Now the decisions are functions named
+# IN p2.sh and these rows call those, so rewinding the object puts the row
+# red, which is the only thing that makes a bench useful.
 fila 26 "2" "$(mayoria_de 3)" "mayoria_de(3) de p2.sh da 2, igual que cluster.Config.Quorum() en engine/cluster/config.go:87"
 fila 27 "pasa" "$(faithful_suficiente 2 3 && echo pasa || echo cae)" "faithful_suficiente(2,3): dos copias frias fieles PASAN, la tercera puede no haber persistido"
 roja 28 "cae" "$(faithful_suficiente 0 3 && echo pasa || echo cae)" "faithful_suficiente(0,3) CAE, que es donde el mutante sin barrera se queda"
 roja 29 "cae" "$(faithful_suficiente 1 3 && echo pasa || echo cae)" "faithful_suficiente(1,3) tambien CAE: la mayoria no se relaja hasta volverse decorativa"
 
-# ---- 30 y 31: la ventana, llamando a ventana_dentro de p2.sh ------------------
+# ---- 30 and 31: the window, calling ventana_dentro of p2.sh -------------------
 fila 30 "dentro" "$(ventana_dentro 1.2 && echo dentro || echo fuera)" "ventana_dentro(1.2) con la cota en ${VENTANA_MAX} s"
 roja 31 "fuera" "$(ventana_dentro 31.0 && echo dentro || echo fuera)" "ventana_dentro(31.0) queda FUERA: con la raiz en commit=30 el diario pudo volcar la cola"
 
-# ---- 32 a 35: LOS MUTANTES. Cada decision, rebobinada a lo que era ------------
+# ---- 32 to 35: THE MUTANTS. Each decision, rewound to what it was -------------
 echo
 echo "-- mutantes: cada uno rebobina una decision del 7 de septiembre de 2026 --"
 
-# 32: lineas_listening rebobinada al || echo 0
+# 32: lineas_listening rewound to the || echo 0
 viejo_listening() { grep -c 'listening' "${FLEET}/node$1.log" 2>/dev/null || echo 0; }
 roja 32 "2" "$(viejo_listening 1 | wc -l | tr -d ' ')" "MUTANTE: con el || echo 0 la funcion devuelve DOS lineas y la comparacion revienta"
 
-# 33 y 33b: entry_log_bytes rebobinada a la forma fail-open.
+# 33 and 33b: entry_log_bytes rewound to the fail-open form.
 #
-# LA PRIMERA VERSION DE ESTA FILA MEDIA OTRA COSA, y lo cazo un lector: montaba
-# el fichero ilegible con un enlace CIRCULAR, para el que `[ -e ]` es falso, asi
-# que el `continue` saltaba y la linea de la aritmetica NO SE EJECUTABA. La fila
-# salia verde por el salto y no por la sustitucion vacia, que es justo el defecto
-# que dice rebobinar. Es un caso del error que este banco existe para cazar,
-# dentro del banco. Ahora hay dos filas y cada una monta su caso:
-#   33  el nombre existe y no resuelve, que es lo que el `-L` de p2.sh caza
-#   33b el fichero SI resuelve y `stat` falla igualmente, que es el unico montaje
-#       en el que la aritmetica llega a correr y se ve el operando vacio
+# THE FIRST VERSION OF THIS ROW MEASURED SOMETHING ELSE, and a reader caught it: it set up
+# the unreadable file with a CIRCULAR symlink, for which `[ -e ]` is false, so
+# the `continue` was taken and the line of the arithmetic DID NOT RUN. The row
+# came out green because of the skip and not because of the empty substitution, which is
+# exactly the defect it claims to rewind. It is a case of the error this bench exists to
+# catch, inside the bench. Now there are two rows and each one sets up its own case:
+#   33  the name exists and does not resolve, which is what the `-L` of p2.sh catches
+#   33b the file DOES resolve and `stat` fails all the same, which is the only setup
+#       in which the arithmetic gets to run and the empty operand is seen
 viejo_bytes() {
 	local n="$1" t=0 f
 	for f in "${FLEET}/node${n}/data"/raft-*.log; do
@@ -1842,8 +1842,8 @@ viejo_bytes() {
 }
 roja 33 "0" "$(viejo_bytes 2 2>/dev/null)" "MUTANTE: la forma vieja devuelve 0 sobre el segmento que no resuelve, o sea 'el log encogio'"
 
-# El stub de stat sale 1 SIEMPRE, con el fichero presente y legible, que es la
-# unica forma de que la sustitucion vuelva vacia y la aritmetica se ejecute.
+# The stat stub exits 1 ALWAYS, with the file present and readable, which is the
+# only way for the substitution to come back empty and the arithmetic to run.
 mkdir -p "${BANCO}/bin-stat"
 printf '#!/bin/sh\nexit 1\n' > "${BANCO}/bin-stat/stat"
 chmod +x "${BANCO}/bin-stat/stat"
@@ -1859,44 +1859,44 @@ salida_33b="$(PATH="${BANCO}/bin-stat:${PATH}" bash -c '
 	printf "%d" "${t}"
 	echo " y-el-guion-siguio-vivo"' 2>/dev/null)"
 roja 33b "0 y-el-guion-siguio-vivo" "${salida_33b}" "MUTANTE: con stat fallando de verdad, la aritmetica revienta en stderr, t conserva su valor y el guion SIGUE con rc 0; eso es el fail-open que set -e no caza"
-# El `set +e` va porque p2.sh trae `set -euo pipefail` consigo al cargarse, y sin
-# el la propia funcion que devuelve 2, que es lo que esta fila quiere ver, mata
-# la subshell antes del `echo $?`. La primera version de esta fila abortaba el
-# banco entero ahi, o sea que la fila escrita para medir un fail-open se moria
-# por el modo estricto del objeto que estaba midiendo.
+# The `set +e` is there because p2.sh brings `set -euo pipefail` along when sourced, and
+# without it the very function that returns 2, which is what this row wants to see, kills
+# the subshell before the `echo $?`. The first version of this row aborted the
+# whole bench there, that is, the row written to measure a fail-open died
+# because of the strict mode of the object it was measuring.
 salida_33c="$(PATH="${BANCO}/bin-stat:${PATH}" bash -c 'source "'"${GATE_DIR}"'/p2.sh" >/dev/null 2>&1; set +e; FLEET="'"${FLEET}"'"; entry_log_bytes 3 >/dev/null 2>&1; echo $?' 2>/dev/null)"
 fila 33c "2" "${salida_33c}" "y la forma de hoy, en el MISMO montaje, devuelve 2 en vez de un total corto"
 
-# 34 y 35: el umbral del corte. La roja rebobina corte_completo a un umbral de
-# dos, escribiendola aqui como estaba en el arbol; la verde llama a la DE p2.sh.
+# 34 and 35: the threshold of the cut. The red row rewinds corte_completo to a threshold of
+# two, writing it here as it was in the tree; the green row calls the one of p2.sh.
 corte_completo_viejo() { [ "$1" -ge 2 ]; }
 roja 34 "acepta" "$(corte_completo_viejo 2 3 && echo acepta || echo rechaza)" "MUTANTE: con umbral de DOS, dos boot id cambiados bastan y la superviviente cura a las otras"
 fila 35 "rechaza" "$(corte_completo 2 3 && echo acepta || echo rechaza)" "corte_completo(2,3) de p2.sh RECHAZA: la decision del 7 de septiembre de 2026 exige las tres"
 fila 36 "acepta" "$(corte_completo 3 3 && echo acepta || echo rechaza)" "y corte_completo(3,3) acepta, para que la fila de arriba no pase por ser siempre negativa"
 
-# 37: faithful rebobinada a exigir las tres, contra la de p2.sh
+# 37: faithful rewound to demanding all three, against the one of p2.sh
 faithful_viejo() { [ "$1" -eq "$2" ]; }
 roja 37 "cae" "$(faithful_viejo 2 3 && echo pasa || echo cae)" "MUTANTE: exigir las TRES pone rojo un hardware sano, porque Raft ackea con dos"
 
-# 38 y 39: la identidad por ruta contra la identidad por contenido, con la de p2.sh
+# 38 and 39: identity by path against identity by content, with the one of p2.sh
 roja 38 "no-distingue" "$(identidad_confirmada deadbeef deadbeef && echo distingue || echo no-distingue)" "identidad_confirmada con el MISMO sha no distingue: un mutante sobre el nombre sano tiene la misma ruta y el mismo contenido no"
 fila 39 "distingue" "$(identidad_confirmada cafe1234 deadbeef && echo distingue || echo no-distingue)" "identidad_confirmada de p2.sh separa contenidos distintos"
 roja 39b "no-distingue" "$(identidad_confirmada "" deadbeef && echo distingue || echo no-distingue)" "y una lectura VACIA no cuenta como distinta: un pid muerto no confirma nada"
 
-# 39c a 39f: testigo_veredicto de p2.sh, sus cuatro salidas
+# 39c to 39g: testigo_veredicto of p2.sh, its five outputs
 fila 39c "seco"         "$(testigo_veredicto 4096 4096 65536)"  "testigo_veredicto: la semilla sola es un corte SECO"
 fila 39d "entero"       "$(testigo_veredicto 69632 4096 65536)" "el total es ENTERO, o sea que ahi no se corto"
 fila 39e "parcial"      "$(testigo_veredicto 30000 4096 65536)" "a medias sigue siendo un corte"
 roja 39f "bajo-semilla" "$(testigo_veredicto 100 4096 65536)"   "por DEBAJO de la semilla sincronizada no es un corte seco: es una barrera rota bajo el sistema de ficheros"
 roja 39g "ilegible"     "$(testigo_veredicto "" 4096 65536)"    "y una lectura vacia es ILEGIBLE, no cero"
 
-# ---- 42 a 45: el estado del cliente REMOTO, que en fierro viene por el texto --
+# ---- 42 to 45: the state of the REMOTE client, which on iron travels as text --
 #
-# En fierro el cliente corre dentro del host 1 y su codigo de salida vuelve como
-# una linea, porque ssh mezcla el estado del transporte con el del programa. La
-# primera version buscaba __RC__=0 EN CUALQUIER PARTE del flujo, o sea que la
-# salida del propio cliente podia decidir el veredicto: un canal de estado que la
-# carga puede falsificar no es un canal de estado. Se lee la ULTIMA linea entera.
+# On iron the client runs inside host 1 and its exit code comes back as one
+# line, because ssh mixes the status of the transport with that of the program. The
+# first version looked for __RC__=0 ANYWHERE in the stream, that is, the output
+# of the client itself could decide the verdict: a status channel that the payload
+# can falsify is not a status channel. The LAST line is read whole.
 cliente_estado() {
 	local salida="$1" ultima rc
 	ultima="$(printf '%s' "${salida}" | tail -1)"
@@ -1913,7 +1913,7 @@ roja 43 "1" "$(cliente_estado "$(printf 'error\n__RC__=3\n')")" "sale distinto d
 roja 44 "1" "$(cliente_estado "$(printf 'id=1 texto __RC__=0 pegado\n__RC__=3\n')")" "la SALIDA lleva __RC__=0 dentro y el estado real es 3: no se deja falsificar"
 roja 45 "2" "$(cliente_estado "$(printf 'a medias\n')")" "el canal se corto y no hay linea de estado: eso es ILEGIBLE, no un fallo del programa"
 
-# ---- 40: el mutante NO aterriza en el path que mide el omnibus ----------------
+# ---- 40: the mutant does NOT land on the path the omnibus measures ------------
 fila 40 "0" "$(printf '%s' "${MUT_REMOTO}" | grep -c '^naylamp/bin/naylampd$')" "el mutante NO va a naylamp/bin/naylampd, que es lo que record_binary_digests lee en gate/omnibus.sh:589"
 fila 41 "1" "$(printf '%s' "${MUT_REMOTO}" | grep -c 'naylampd-mutante')" "va a su propio nombre"
 
@@ -1923,9 +1923,9 @@ if [ "${OMITIDAS}" -ne 0 ]; then
 	echo "${OMITIDAS} fila(s) no aplican en este entorno y no se cuentan como filas; el motivo va impreso arriba"
 fi
 echo "RESULTADO: ${FILAS} rows, ${ROJAS} of them red, ${FALLAS} failing"
-# COMPLETO SE PONE AQUI, detras del resumen y delante de la anti-vacuidad, por la
-# razon escrita en los otros bancos: salir por exit 1 con COMPLETO en cero hace que
-# la trampa imprima "ABORTADO antes del resumen" justo debajo del resumen.
+# COMPLETO IS SET HERE, behind the summary and in front of the anti-vacuity check, for the
+# reason written in the other benches: exiting with 1 with COMPLETO at zero makes
+# the trap print "ABORTADO antes del resumen" right below the summary.
 COMPLETO=1
 if [ "${FILAS}" -eq 0 ]; then
 	echo "p2-iron-test: VACIO. Cero filas, asi que este banco no ha probado nada, y eso NO es un pase" >&2
