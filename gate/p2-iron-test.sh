@@ -127,14 +127,14 @@ barre_el_banco() {
 	[ -d "${BANCO}" ] && chmod -R u+w "${BANCO}" 2>/dev/null
 	if [ "${COMPLETO}" -ne 1 ]; then
 		echo "p2-iron-test: ABORTADO antes del resumen; lo impreso arriba NO es un resultado" >&2
-		echo "p2-iron-test: el banco queda en gate/out/banco-iron-p2" >&2
+		echo "p2-iron-test: the bench remains in gate/out/banco-iron-p2" >&2
 		exit 1
 	fi
 	if [ "${rc}" -eq 0 ] && [ "${FALLAS}" -eq 0 ]; then
 		cd "${GATE_DIR}/out" && rm -rf banco-iron-p2
-		echo "p2-iron-test: todas las filas verdes; el banco y su artefacto se barren"
+		echo "p2-iron-test: all rows green; the bench and its artifact are swept"
 	else
-		echo "p2-iron-test: ${FALLAS} filas en FALLA o un aborto; el banco queda en gate/out/banco-iron-p2" >&2
+		echo "p2-iron-test: ${FALLAS} rows FAILING or an abort; the bench remains in gate/out/banco-iron-p2" >&2
 	fi
 }
 
@@ -234,7 +234,7 @@ for n in 1 2 3; do
 	mkdir -p "${BANCO}/casa/${n}/proc/sys/kernel/random"
 	printf '176\n' > "${BANCO}/casa/${n}/proc/sys/kernel/sysrq"
 	printf 'aaaa-bbbb-cccc-000%s\n' "${n}" > "${BANCO}/casa/${n}/proc/sys/kernel/random/boot_id"
-	printf 'binario sano, igual en las tres\n' > "${BANCO}/casa/${n}/naylamp/bin/naylampd"
+	printf 'healthy binary, the same on all three\n' > "${BANCO}/casa/${n}/naylamp/bin/naylampd"
 done
 
 export BANCO_CASA="${BANCO}/casa"
@@ -248,9 +248,9 @@ export NAYLAMP_GATE_USER=nadie
 export NAYLAMP_P2_SOURCE_ONLY=1
 
 echo "=============================================================================="
-echo "BANCO DEL CAMINO DE FIERRO DE gate/p2.sh"
+echo "BENCH FOR THE IRON PATH OF gate/p2.sh"
 echo "fecha: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-echo "flota de mentira: ${NAYLAMP_GATE_HOSTS} (RFC 5737), stub ssh bajo NAYLAMP_RED_ARM=1"
+echo "fake fleet: ${NAYLAMP_GATE_HOSTS} (RFC 5737), ssh stub under NAYLAMP_RED_ARM=1"
 echo "=============================================================================="
 echo
 
@@ -261,36 +261,36 @@ source "${GATE_DIR}/p2.sh" >/dev/null 2>&1
 # can move OUT_LOCAL. It is the only thing the trap deletes under gate/out.
 ARTEFACTO_REAL="${OUT_LOCAL}"
 trap barre_el_banco EXIT
-echo "-- cargado en modo fierro: ES_FIERRO=${ES_FIERRO}, artefacto $(basename "${ARTEFACTO_REAL}") --"
+echo "-- loaded in iron mode: ES_FIERRO=${ES_FIERRO}, artifact $(basename "${ARTEFACTO_REAL}") --"
 echo
 
 # ---- 1 to 5: the sysrq reading, which is not a flat mask ----------------------
-fila 1  "si" "$(sysrq_permite_reinicio 176 && echo si || echo no)" "sysrq=176, el valor real de naylamp-1, permite el reinicio"
-fila 2  "si" "$(sysrq_permite_reinicio 1   && echo si || echo no)" "sysrq=1 habilita todas las funciones"
-roja 3  "no" "$(sysrq_permite_reinicio 0   && echo si || echo no)" "sysrq=0 NO permite: el corte seria un no-op y todo verde de abajo mentiria"
-roja 4  "no" "$(sysrq_permite_reinicio 16  && echo si || echo no)" "sysrq=16 es una mascara SIN el bit 128, y leerla como bitmask plano la daria por buena"
-roja 5  "no" "$(sysrq_permite_reinicio 'cat: /proc/sys/kernel/sysrq: Permission denied' && echo si || echo no)" "una respuesta que no es un numero NO es un permiso"
+fila 1  "si" "$(sysrq_permite_reinicio 176 && echo si || echo no)" "sysrq=176, the actual value on naylamp-1, allows the reboot"
+fila 2  "si" "$(sysrq_permite_reinicio 1   && echo si || echo no)" "sysrq=1 enables every function"
+roja 3  "no" "$(sysrq_permite_reinicio 0   && echo si || echo no)" "sysrq=0 does NOT allow it: the cut would be a no-op and every green below would lie"
+roja 4  "no" "$(sysrq_permite_reinicio 16  && echo si || echo no)" "sysrq=16 is a mask WITHOUT bit 128, and reading it as a flat bitmask would accept it"
+roja 5  "no" "$(sysrq_permite_reinicio 'cat: /proc/sys/kernel/sysrq: Permission denied' && echo si || echo no)" "an answer that is not a number is NOT a permission"
 
 # ---- 6 to 8: lineas_listening returns ONE line, always ------------------------
 FLEET="${BANCO}/flota"; mkdir -p "${FLEET}"
-printf 'arranca\nnada aqui\n' > "${FLEET}/node1.log"
-printf 'arranca\nlistening on x\n' > "${FLEET}/node2.log"
+printf 'starting\nnothing here\n' > "${FLEET}/node1.log"
+printf 'starting\nlistening on x\n' > "${FLEET}/node2.log"
 # The predicate is "the value does NOT carry a newline inside". Counting with wc -l
 # over an output without a final newline gives 0 and not 1, and the first version of these
 # rows wrote it that way: a predicate that does not measure what its text says, inside
 # the bench written to catch exactly that.
 saltos_en() { printf '%s' "$1" | tr -cd '\n' | wc -c | tr -d ' '; }
-fila 6 "0" "$(saltos_en "$(lineas_listening 1)")" "log que existe SIN la linea: CERO saltos dentro del valor (el defecto metia uno)"
-fila 7 "0" "$(lineas_listening 1)" "y su valor es 0"
-fila 8 "1" "$(lineas_listening 2)" "log con la linea: 1"
-fila 9 "0" "$(lineas_listening 9)" "log que no existe: 0"
-fila 10 "1" "$( set +e; [ "$(lineas_listening 1)" -gt 0 ] >/dev/null 2>&1; echo $? )" "la comparacion devuelve 1, que es FALSO; antes devolvia 2, que es un error de sintaxis disfrazado de falso"
+fila 6 "0" "$(saltos_en "$(lineas_listening 1)")" "a log that exists WITHOUT the line: ZERO newlines inside the value (the defect put one in)"
+fila 7 "0" "$(lineas_listening 1)" "and its value is 0"
+fila 8 "1" "$(lineas_listening 2)" "a log with the line: 1"
+fila 9 "0" "$(lineas_listening 9)" "a log that does not exist: 0"
+fila 10 "1" "$( set +e; [ "$(lineas_listening 1)" -gt 0 ] >/dev/null 2>&1; echo $? )" "the comparison returns 1, which is FALSE; it used to return 2, which is a syntax error disguised as false"
 
 # ---- 11 and 12: entry_log_bytes has a third outcome, UNREADABLE ---------------
 mkdir -p "${FLEET}/node1/data"
 head -c 100 /dev/zero > "${FLEET}/node1/data/raft-1.log"
 head -c 50  /dev/zero > "${FLEET}/node1/data/raft-2.log"
-fila 11 "150" "$(entry_log_bytes 1)" "suma los segmentos legibles"
+fila 11 "150" "$(entry_log_bytes 1)" "adds up the readable segments"
 # The unreadable file is set up with a CIRCULAR symbolic link and not with chmod
 # 000: the first version used chmod and rows 12 and 33 came out green for the
 # wrong reason, because stat reads METADATA and not content, so a file
@@ -298,22 +298,22 @@ fila 11 "150" "$(entry_log_bytes 1)" "suma los segmentos legibles"
 # stat fail for real, which is what these rows want.
 mkdir -p "${FLEET}/node2/data"
 ln -sf "raft-1.log" "${FLEET}/node2/data/raft-1.log"
-roja 12 "2" "$( entry_log_bytes 2 >/dev/null 2>&1; echo $? )" "un segmento que stat no puede leer devuelve 2, y no un total corto en silencio"
+roja 12 "2" "$( entry_log_bytes 2 >/dev/null 2>&1; echo $? )" "a segment that stat cannot read returns 2, and not a silently short total"
 
 # ---- 13 and 14: the iron artifact is called p2-, which is what make clean protects
-fila 13 "p2" "$(basename "${OUT_LOCAL}" | cut -d- -f1)" "en fierro el artefacto es p2-<run id>, o sea el que la guarda del Makefile exige sellado"
-fila 14 "1" "$(printf '%s' "$(basename "${OUT_LOCAL}")" | grep -c '^p2-[0-9]')" "y NO p2-local-, que es el que make clean barre sin preguntar"
+fila 13 "p2" "$(basename "${OUT_LOCAL}" | cut -d- -f1)" "on iron the artifact is p2-<run id>, that is, the one the Makefile guard requires to be sealed"
+fila 14 "1" "$(printf '%s' "$(basename "${OUT_LOCAL}")" | grep -c '^p2-[0-9]')" "and NOT p2-local-, which is the one make clean sweeps without asking"
 
 # ---- 15 to 17: the RUNNING marker knows the iron name -------------------------
 mkdir -p "${OUT_LOCAL}"
 escribe_running
-fila 15 "1" "$(grep -c "^run: $(basename "${OUT_LOCAL}")\$" "${OUT_LOCAL}/RUNNING")" "el marcador lleva dentro el nombre de fierro"
+fila 15 "1" "$(grep -c "^run: $(basename "${OUT_LOCAL}")\$" "${OUT_LOCAL}/RUNNING")" "the marker carries the iron name inside"
 retira_running
-fila 16 "0" "$( [ -f "${OUT_LOCAL}/RUNNING" ] && echo 1 || echo 0 )" "y la retirada lo encuentra por su literal de fierro"
+fila 16 "0" "$( [ -f "${OUT_LOCAL}/RUNNING" ] && echo 1 || echo 0 )" "and the removal finds it by its iron literal"
 escribe_running
 GUARDA_OUT="${OUT_LOCAL}"
 OUT_LOCAL="${GATE_DIR}/out/p2-un-tercer-nombre"
-roja 17 "1" "$(retira_running 2>&1 | grep -c 'NOT removed')" "y con un tercer nombre se niega EN VOZ ALTA en vez de callarse"
+roja 17 "1" "$(retira_running 2>&1 | grep -c 'NOT removed')" "and with a third name it refuses OUT LOUD instead of keeping quiet"
 OUT_LOCAL="${GUARDA_OUT}"
 rm -f -- "${OUT_LOCAL}/RUNNING"
 
@@ -360,34 +360,34 @@ rm -rf -- "${OUT_LOCAL}"
 mkdir -p "${OUT_LOCAL}"
 escribe_running
 seal_artifact
-roja 17a "no|no" "$([ -e "${OUT_LOCAL}/SEALED" ] && echo si || echo no)|$(esta_en_el_barrido)" "con solo el marcador dentro NO se sella y el barrido NO lo nombra: es la excepcion del vacio, y seal_artifact, el barrido y la guarda del Makefile la preguntan igual"
+roja 17a "no|no" "$([ -e "${OUT_LOCAL}/SEALED" ] && echo si || echo no)|$(esta_en_el_barrido)" "with only the marker inside it is NOT sealed and the sweep does NOT name it: it is the exception for the empty case, and seal_artifact, the sweep and the Makefile guard ask about it the same way"
 
-printf 'lo que esta corrida escribio\n' > "${OUT_LOCAL}/hygiene.log"
-roja 17b "no|si" "$([ -e "${OUT_LOCAL}/SEALED" ] && echo si || echo no)|$(esta_en_el_barrido)" "con contenido y sin sello el barrido LO NOMBRA, y esa es la linea que pone roja a P2.hygiene y la que make clean convierte en una negativa"
+printf 'what this run wrote\n' > "${OUT_LOCAL}/hygiene.log"
+roja 17b "no|si" "$([ -e "${OUT_LOCAL}/SEALED" ] && echo si || echo no)|$(esta_en_el_barrido)" "with content and no seal the sweep NAMES IT, and that is the line that turns P2.hygiene red and the one make clean turns into a refusal"
 
 seal_artifact
 ESPERADA_ANTES="$(grep -m1 '^expected:' "${OUT_LOCAL}/SEALED")"
-fila 17c "si|no" "$([ -e "${OUT_LOCAL}/SEALED" ] && echo si || echo no)|$(esta_en_el_barrido)" "y en cuanto el sello esta escrito, el barrido deja de nombrarlo: es la linea del barrido que salta un artefacto sellado. El ORDEN de las dos operaciones no lo mide esta fila, lo mide la 17k, y decir aqui que si era describirse de mas"
+fila 17c "si|no" "$([ -e "${OUT_LOCAL}/SEALED" ] && echo si || echo no)|$(esta_en_el_barrido)" "and as soon as the seal is written, the sweep stops naming it: it is the line of the sweep that skips a sealed artifact. This row does not measure the ORDER of the two operations, row 17k does, and saying here that it did was the row claiming more than it measures"
 
-roja 17d "0|1|2" "$(grep -c '^closed:' "${OUT_LOCAL}/SEALED")|$(palabras_de verdicts)|$(palabras_de expected)" "el sello a medias no lleva closed y trae MENOS veredictos que esperados, que es la forma que una corrida matada y una completa compartian en gate/p1.sh hasta el 8 de septiembre de 2026"
+roja 17d "0|1|2" "$(grep -c '^closed:' "${OUT_LOCAL}/SEALED")|$(palabras_de verdicts)|$(palabras_de expected)" "the partial seal carries no closed line and holds FEWER verdicts than the expected line lists, which is the shape a killed run and a complete one shared in gate/p1.sh until 2026-09-08"
 
 # The run reaches its end: the hygiene emits the verdict that was missing and the
 # trap finishes the seal. It is the sequence of al_salir, without the trap.
 record_verdict P2.hygiene pass
 completa_el_sello
-fila 17e "1|2|2" "$(grep -c '^closed:' "${OUT_LOCAL}/SEALED")|$(palabras_de verdicts)|$(palabras_de expected)" "terminado, lleva UNA linea closed y tantos veredictos como esperados: una corrida completa y una matada dejan de tener la misma forma"
-fila 17f "${ESPERADA_ANTES}" "$(grep -m1 '^expected:' "${OUT_LOCAL}/SEALED")" "la linea expected sale identica byte a byte, que es por la que dos sellos se comparan. Lo que esta fila mide es el brazo VERBATIM del bucle, no la guarda que compara: quitando esa guarda entera el banco sigue verde, medido, y por que no se puede alcanzar desde fuera va escrito en el bloque de la 17n"
+fila 17e "1|2|2" "$(grep -c '^closed:' "${OUT_LOCAL}/SEALED")|$(palabras_de verdicts)|$(palabras_de expected)" "once finished, it carries ONE closed line and as many verdicts as the expected line lists: a complete run and a killed one no longer have the same shape"
+fila 17f "${ESPERADA_ANTES}" "$(grep -m1 '^expected:' "${OUT_LOCAL}/SEALED")" "the expected line comes out identical byte for byte, and it is the line two seals are compared by. What this row measures is the VERBATIM arm of the loop, not the guard that compares that line: with that guard removed entirely the bench stays green, measured, and why that guard cannot be reached from outside is written in the block of row 17n"
 
 completa_el_sello
-fila 17g "1|1" "$(grep -c '^closed:' "${OUT_LOCAL}/SEALED")|$(grep -c '^verdicts:' "${OUT_LOCAL}/SEALED")" "dos pasadas dejan UNA sola closed y UNA sola verdicts: terminar un sello ya terminado no lo duplica"
-fila 17h "0" "$(ls -1 "${OUT_LOCAL}" | grep -c '^SEALED\.a-medias$')" "y no sobrevive ningun SEALED.a-medias dentro de un artefacto que el sello protege de make clean"
+fila 17g "1|1" "$(grep -c '^closed:' "${OUT_LOCAL}/SEALED")|$(grep -c '^verdicts:' "${OUT_LOCAL}/SEALED")" "two passes leave only ONE closed line and only ONE verdicts line: finishing a seal that is already finished does not duplicate it"
+fila 17h "0" "$(ls -1 "${OUT_LOCAL}" | grep -c '^SEALED\.a-medias$')" "and no SEALED.a-medias survives inside an artifact that the seal protects from make clean"
 
 # 17i HAS TWO HALVES AND THE FIRST VERSION HAD ONLY ONE, which is a finding
 # of a reader: measured only by the echo, a p2.sh with the flag line removed and
 # its echo left in place would shout "THIS run did not write it" on the second normal
 # call of EVERY run, which is the ordinary case, and the row stayed green. The
 # missing half is that one: with the flag set, the second call is SILENT.
-roja 17i "0|1|1" "$(seal_artifact 2>&1 | grep -c 'did not write it')|$( SELLO_ESCRITO_AQUI=0; seal_artifact 2>&1 | grep -c 'did not write it')|$(grep -c '^closed:' "${OUT_LOCAL}/SEALED")" "con la bandera puesta la segunda llamada de la corrida NO dice nada, y sin ella un sello que esta corrida no escribio se dice en voz alta y no se toca: la bandera de la clausula 30, y aqui basta una porque ningun subcomando de este guion adopta el id de otra corrida"
+roja 17i "0|1|1" "$(seal_artifact 2>&1 | grep -c 'did not write it')|$( SELLO_ESCRITO_AQUI=0; seal_artifact 2>&1 | grep -c 'did not write it')|$(grep -c '^closed:' "${OUT_LOCAL}/SEALED")" "with the flag set the second call of the run says NOTHING, and without it a seal this run did not write is reported out loud and left untouched: the flag of clause 30, and one is enough here because no subcommand of gate/p2.sh adopts the id of another run"
 
 # 17u: A SEAL THAT COULD NOT BE WRITTEN IS NOT ANNOUNCED AS WRITTEN, and this row
 #      comes in with the guard that makes it possible. Measured on this machine's bash 3.2, a
@@ -398,7 +398,7 @@ roja 17i "0|1|1" "$(seal_artifact 2>&1 | grep -c 'did not write it')|$( SELLO_ES
 GUARDA_OUT="${OUT_LOCAL}"
 OUT_LOCAL="${BANCO}/artefacto-sin-permiso"
 rm -rf -- "${OUT_LOCAL}"; mkdir -p "${OUT_LOCAL}"
-printf 'contenido\n' > "${OUT_LOCAL}/manifest.txt"
+printf 'content\n' > "${OUT_LOCAL}/manifest.txt"
 GUARDA_RUNID2="${RUN_ID}"; RUN_ID="$(basename "${GUARDA_OUT}" | sed 's/^p2-//')"
 mv -- "${OUT_LOCAL}" "${BANCO}/p2-${RUN_ID}"; OUT_LOCAL="${BANCO}/p2-${RUN_ID}"
 chmod 500 "${OUT_LOCAL}"
@@ -406,11 +406,11 @@ SELLO_ESCRITO_AQUI=0
 if ( : > "${OUT_LOCAL}/.sonda-17u" ) 2>/dev/null; then
 	rm -f -- "${OUT_LOCAL}/.sonda-17u"
 	chmod 700 "${OUT_LOCAL}"
-	no_aplica 17u "el modo 500 no deniega la escritura en este entorno, probablemente root"
+	no_aplica 17u "mode 500 does not deny writing in this environment, probably root"
 else
 	SALIDA_17U="$(seal_artifact 2>&1)"
 	chmod 700 "${OUT_LOCAL}"
-	roja 17u "no|0|1" "$([ -e "${OUT_LOCAL}/SEALED" ] && echo si || echo no)|${SELLO_ESCRITO_AQUI}|$(printf '%s' "${SALIDA_17U}" | grep -c 'could NOT be written')" "un sello que no se pudo escribir no deja bandera puesta ni anuncia que se sello: sin esa comprobacion la redireccion falla en silencio y la corrida cierra diciendo que sello algo que no existe"
+	roja 17u "no|0|1" "$([ -e "${OUT_LOCAL}/SEALED" ] && echo si || echo no)|${SELLO_ESCRITO_AQUI}|$(printf '%s' "${SALIDA_17U}" | grep -c 'could NOT be written')" "a seal that could not be written leaves no flag set and does not announce that the artifact was sealed: without that check the redirection fails without the script noticing and the run closes saying it sealed something that does not exist"
 fi
 rm -rf -- "${OUT_LOCAL}"
 RUN_ID="${GUARDA_RUNID2}"
@@ -421,7 +421,7 @@ GUARDA_OUT="${OUT_LOCAL}"
 OUT_LOCAL="${BANCO}/p2-un-cuarto-nombre"
 mkdir -p "${OUT_LOCAL}"
 printf 'expected:    P2.build\nverdicts:    P2.build=pass\n' > "${OUT_LOCAL}/SEALED"
-roja 17j "1|0" "$(completa_el_sello 2>&1 | grep -c 'is not p2-')|$(grep -c '^closed:' "${OUT_LOCAL}/SEALED")" "y bajo un nombre que no es p2-<run id> se niega EN VOZ ALTA y no lo termina, en vez de escribir un closed dentro de un fichero que no sabe de quien es"
+roja 17j "1|0" "$(completa_el_sello 2>&1 | grep -c 'is not p2-')|$(grep -c '^closed:' "${OUT_LOCAL}/SEALED")" "and under a name that is not p2-<run id> it refuses OUT LOUD and does not finish it, instead of writing a closed line inside a file whose owner it does not know"
 OUT_LOCAL="${GUARDA_OUT}"
 
 # ---- 17k and 17l: THE ORDER, measured by its effect and not by its text ------
@@ -436,7 +436,7 @@ rm -f -- "${OUT_LOCAL}/SEALED"
 SELLO_ESCRITO_AQUI=0
 CHECK_FAILED=0
 veredicto_del_sello
-fila 17k "sellado|verde" "$([ -e "${OUT_LOCAL}/SEALED" ] && echo sellado || echo sin-sello)|$([ "${CHECK_FAILED}" -eq 0 ] && echo verde || echo rojo)" "veredicto_del_sello sella y DESPUES barre: el artefacto sale sellado y la fase no se pone roja por el"
+fila 17k "sellado|verde" "$([ -e "${OUT_LOCAL}/SEALED" ] && echo sellado || echo sin-sello)|$([ "${CHECK_FAILED}" -eq 0 ] && echo verde || echo rojo)" "veredicto_del_sello seals and THEN sweeps: the artifact comes out sealed and the phase does not turn red because of it"
 
 # And the other half: a run that does NOT manage to seal itself. It is set up by taking
 # the precondition RUN_STARTED away from seal_artifact, and not by editing the script: the
@@ -446,7 +446,7 @@ SELLO_ESCRITO_AQUI=0
 CHECK_FAILED=0
 RUN_STARTED=0
 veredicto_del_sello
-roja 17l "sin-sello|rojo" "$([ -e "${OUT_LOCAL}/SEALED" ] && echo sellado || echo sin-sello)|$([ "${CHECK_FAILED}" -eq 0 ] && echo verde || echo rojo)" "una corrida que no consigue sellarse se pone roja AQUI y AHORA, en la misma invocacion, en vez de que la evidencia se descubra ausente meses despues"
+roja 17l "sin-sello|rojo" "$([ -e "${OUT_LOCAL}/SEALED" ] && echo sellado || echo sin-sello)|$([ "${CHECK_FAILED}" -eq 0 ] && echo verde || echo rojo)" "a run that does not manage to seal itself turns red HERE and NOW, in the same invocation, instead of the evidence being found missing months later"
 RUN_STARTED=1
 CHECK_FAILED=0
 
@@ -471,7 +471,7 @@ seal_artifact
 GUARDA_OUTDIR="${OUT_DIR}"
 OUT_DIR="${BANCO}/gate-out-de-mentira"
 mkdir -p "${OUT_DIR}/p2-20200101T000000Z-1"
-printf 'de otra corrida, y sin sello\n' > "${OUT_DIR}/p2-20200101T000000Z-1/manifest.txt"
+printf 'from another run, and without a seal\n' > "${OUT_DIR}/p2-20200101T000000Z-1/manifest.txt"
 # THE OUTPUT IS COLLECTED IN A FILE AND NOT IN A SUBSTITUTION, and the first version
 # used `$( )`. That runs in a SUBSHELL, so the `fail` inside did not reach the parent's
 # CHECK_FAILED and the line that came after it, setting it back to zero, was a
@@ -480,7 +480,7 @@ printf 'de otra corrida, y sin sello\n' > "${OUT_DIR}/p2-20200101T000000Z-1/mani
 CHECK_FAILED=0
 veredicto_del_sello 2> "${BANCO}/17m.err"
 OUT_DIR="${GUARDA_OUTDIR}"
-roja 17m "0|1|rojo" "$(grep -c 'this run wrote an artifact' "${BANCO}/17m.err")|$(grep -c 'p2-20200101T000000Z-1' "${BANCO}/17m.err")|$([ "${CHECK_FAILED}" -eq 0 ] && echo verde || echo rojo)" "con lo propio sellado y un artefacto AJENO sin sello, la linea de ESTA corrida no sale, el barrido nombra al ajeno y la fase se pone roja: es el barrido quien enrojece aqui, y por eso las dos guardas rojas no son la misma"
+roja 17m "0|1|rojo" "$(grep -c 'this run wrote an artifact' "${BANCO}/17m.err")|$(grep -c 'p2-20200101T000000Z-1' "${BANCO}/17m.err")|$([ "${CHECK_FAILED}" -eq 0 ] && echo verde || echo rojo)" "with the artifact of this run sealed and a FOREIGN artifact unsealed, the line about THIS run is not printed, the sweep names the foreign one and the phase turns red: here it is the sweep that turns it red, and that is why the two red guards are not the same"
 CHECK_FAILED=0
 
 # ---- 17s: the guard that NO mutant knocked down ------------------------------
@@ -499,11 +499,11 @@ GUARDA_OUTDIR="${OUT_DIR}"; GUARDA_OUT="${OUT_LOCAL}"
 OUT_DIR="${BANCO}/taller-vacio"; mkdir -p "${OUT_DIR}"
 OUT_LOCAL="${BANCO}/artefacto-fuera-del-taller"
 rm -rf -- "${OUT_LOCAL}"; mkdir -p "${OUT_LOCAL}"
-printf 'lo que la corrida escribio\n' > "${OUT_LOCAL}/manifest.txt"
+printf 'what the run wrote\n' > "${OUT_LOCAL}/manifest.txt"
 SELLO_ESCRITO_AQUI=0
 CHECK_FAILED=0
 veredicto_del_sello 2> "${BANCO}/17s.err"
-roja 17s "1|0|rojo" "$(grep -c 'this run wrote an artifact' "${BANCO}/17s.err")|$(grep -c 'with no SEALED file' "${BANCO}/17s.err")|$([ "${CHECK_FAILED}" -eq 0 ] && echo verde || echo rojo)" "con el barrido sin nada que nombrar, la corrida que no consiguio sellar SU artefacto se pone roja por su propia linea: es la unica guarda que habla de la corrida en curso y hasta hoy no la miraba ninguna fila"
+roja 17s "1|0|rojo" "$(grep -c 'this run wrote an artifact' "${BANCO}/17s.err")|$(grep -c 'with no SEALED file' "${BANCO}/17s.err")|$([ "${CHECK_FAILED}" -eq 0 ] && echo verde || echo rojo)" "with nothing for the sweep to name, the run that did not manage to seal ITS artifact turns red through its own line: it is the only guard that speaks of the run in progress, and until today no row watched it"
 OUT_DIR="${GUARDA_OUTDIR}"; OUT_LOCAL="${GUARDA_OUT}"
 CHECK_FAILED=0
 
@@ -563,13 +563,13 @@ restos_al_lado() { ls -1 "${OUT_LOCAL}" 2>/dev/null | grep -c '^SEALED\.a-medias
 #      with ONE LINE FEWER; the count catches it and nothing is published.
 ANTES_17N="$(siembra_sello 2)"
 SALIDA_17N="$(completa_el_sello 2>&1)"
-roja 17n "${ANTES_17N}|0|1" "$(huella_del_sello)|$(restos_al_lado)|$(printf '%s' "${SALIDA_17N}" | grep -c 'did not match the seal it came from')" "una reescritura que PIERDE lineas con expected intacta la caza el recuento: el sello sale identico byte a byte, sin restos y con su aviso"
+roja 17n "${ANTES_17N}|0|1" "$(huella_del_sello)|$(restos_al_lado)|$(printf '%s' "${SALIDA_17N}" | grep -c 'did not match the seal it came from')" "a rewrite that LOSES lines while the expected line stays intact is caught by the count: the seal comes out identical byte for byte, with no leftovers and with its warning"
 
 # 17o: without a verdicts line there is nothing to rewrite, and saying nothing would
 #      leave the seal described as one from a run that did not reach its end.
 ANTES_17O="$(siembra_sello 0 sin-verdicts)"
 SALIDA_17O="$(completa_el_sello 2>&1)"
-roja 17o "${ANTES_17O}|0|1" "$(huella_del_sello)|$(restos_al_lado)|$(printf '%s' "${SALIDA_17O}" | grep -c 'has no verdicts line')" "un sello sin linea de veredictos se deja EXACTAMENTE como esta y se dice, en vez de darse por terminado en silencio"
+roja 17o "${ANTES_17O}|0|1" "$(huella_del_sello)|$(restos_al_lado)|$(printf '%s' "${SALIDA_17O}" | grep -c 'has no verdicts line')" "a seal with no verdicts line is left EXACTLY as it is and this is reported, instead of being treated as finished in silence"
 
 # 17p: with no write permission beside the seal nothing can be written, not
 #      even a note inside the seal itself, and the confession is the only thing
@@ -586,11 +586,11 @@ chmod 500 "${OUT_LOCAL}"
 if ( : > "${OUT_LOCAL}/.sonda-17p" ) 2>/dev/null; then
 	rm -f -- "${OUT_LOCAL}/.sonda-17p"
 	chmod 700 "${OUT_LOCAL}"
-	no_aplica 17p "el modo 500 no deniega la escritura en este entorno, probablemente root; una fila que no puede fallar no prueba nada y no se cuenta"
+	no_aplica 17p "mode 500 does not deny writing in this environment, probably root; a row that cannot fail proves nothing and is not counted"
 else
 	SALIDA_17P="$(completa_el_sello 2>&1)"
 	chmod 700 "${OUT_LOCAL}"
-	roja 17p "${ANTES_17P}|0|1" "$(huella_del_sello)|$(restos_al_lado)|$(printf '%s' "${SALIDA_17P}" | grep -c 'nothing could be written beside it')" "sin permiso de escritura al lado, el sello sale intacto, sin restos, y la funcion confiesa que ese sello va a parecer el de una version que no terminaba sus sellos"
+	roja 17p "${ANTES_17P}|0|1" "$(huella_del_sello)|$(restos_al_lado)|$(printf '%s' "${SALIDA_17P}" | grep -c 'nothing could be written beside it')" "with no write permission beside it, the seal comes out intact, with no leftovers, and the function confesses that this seal now looks like one from a run that did not reach its end"
 fi
 
 # 17t: THE LAST LINE WITHOUT A NEWLINE. The loop of completa_el_sello carries a
@@ -602,9 +602,9 @@ fi
 #      with `echo`, but the Makefile invites writing one by hand and the guard that
 #      should stop it is exactly the one that lets itself be fooled.
 rm -rf -- "${OUT_LOCAL}"; mkdir -p "${OUT_LOCAL}"
-printf 'Phase 2 iron gate artifact, sealed by gate/p2.sh.\nexpected:    P2.build P2.hygiene\nverdicts:    P2.build=pass\nla ultima linea, y va SIN salto' > "${OUT_LOCAL}/SEALED"
+printf 'Phase 2 iron gate artifact, sealed by gate/p2.sh.\nexpected:    P2.build P2.hygiene\nverdicts:    P2.build=pass\nthe last line, and it ends WITHOUT a newline' > "${OUT_LOCAL}/SEALED"
 completa_el_sello >/dev/null 2>&1
-roja 17t "1|1" "$(grep -c 'la ultima linea, y va SIN salto' "${OUT_LOCAL}/SEALED")|$(grep -c '^closed:' "${OUT_LOCAL}/SEALED")" "la ultima linea sin salto sobrevive a la reescritura: sin esa mitad de la condicion del bucle se pierde, y el closed que se anade tapa la perdida en el recuento"
+roja 17t "1|1" "$(grep -c 'the last line, and it ends WITHOUT a newline' "${OUT_LOCAL}/SEALED")|$(grep -c '^closed:' "${OUT_LOCAL}/SEALED")" "the last line without a newline survives the rewrite: without that half of the loop condition it is lost, and the closed line that is added hides the loss from the count"
 
 # 17q: THE CLAUSE 30 FLAG, on its own, and it is the row that weighs the most of the
 #      first seventeen. 17i measures the half that lives in seal_artifact, which REFUSES to
@@ -617,7 +617,7 @@ roja 17t "1|1" "$(grep -c 'la ultima linea, y va SIN salto' "${OUT_LOCAL}/SEALED
 ANTES_17Q="$(siembra_sello 0)"
 SELLO_ESCRITO_AQUI=0
 completa_el_sello
-roja 17q "${ANTES_17Q}|0" "$(huella_del_sello)|$(restos_al_lado)" "sin la bandera de la ESCRITURA el sello no se toca ni se termina: es lo que impide que una invocacion que se ENCONTRO un sello le ponga encima sus propios veredictos"
+roja 17q "${ANTES_17Q}|0" "$(huella_del_sello)|$(restos_al_lado)" "without the flag that records the WRITE the seal is neither touched nor finished: it is what keeps an invocation that FOUND a seal from putting its own verdicts on top of it"
 SELLO_ESCRITO_AQUI=1
 
 rm -rf -- "${BANCO}/sellos"
@@ -666,7 +666,7 @@ mkdir -p "${ARTEFACTO_REAL}"
 set +e
 ( set -e; phase_hygiene_fierro ) > "${BANCO}/17r.out" 2>&1
 set -e
-roja 17r "1" "$(grep -c 'p2 iron artifacts under gate/out' "${BANCO}/17r.out")" "phase_hygiene_fierro se recorre ENTERA bajo set -e y llega a su ultima linea, el barrido de sellos: con un ask_on desnudo el 'no' normal del primer bucle mataba la fase y todo lo de abajo era codigo muerto en fierro"
+roja 17r "1" "$(grep -c 'p2 iron artifacts under gate/out' "${BANCO}/17r.out")" "phase_hygiene_fierro is walked WHOLE under set -e and reaches its last line, the seal sweep: with a bare ask_on, the normal 'no' of the loop that asks whether a mutant daemon is still alive killed the phase on its first pass, and everything below it was dead code on iron"
 CHECK_FAILED=0
 
 # ---- 17v to 17z: THE CAP ON THE REHEARSAL ARTIFACTS --------------------------
@@ -697,7 +697,7 @@ siembra_ensayos() {
 	while [ "${i}" -le "${n}" ]; do
 		nombre="p2-local-2026090${i}T000000Z-${i}00"
 		mkdir -p "${OUT_DIR}/${nombre}"
-		printf 'manifiesto de la corrida %s\n' "${i}" > "${OUT_DIR}/${nombre}/manifest.txt"
+		printf 'manifest of run %s\n' "${i}" > "${OUT_DIR}/${nombre}/manifest.txt"
 		# The order by date is what the sweep uses, and `ls -dt` looks at mtime, so
 		# it is fixed by hand instead of trusting the order in which they were created.
 		touch -t "20260${i}010000" "${OUT_DIR}/${nombre}"
@@ -712,14 +712,14 @@ cuenta_ensayos() { ls -1d "${OUT_DIR}"/p2-local-[0-9]*Z-[0-9]* 2>/dev/null | wc 
 ULTIMO="$(siembra_ensayos 7)"
 OUT_LOCAL="${OUT_DIR}/${ULTIMO}"
 RETIRADOS="$(barre_ensayos_viejos)"
-fila 17v "1|6|no|si" "${RETIRADOS}|$(cuenta_ensayos)|$([ -d "${OUT_DIR}/p2-local-20260901T000000Z-100" ] && echo si || echo no)|$([ -d "${OUT_LOCAL}" ] && echo si || echo no)" "con siete artefactos el techo retira UNO, deja cinco mas el de esta corrida, se lleva el MAS VIEJO y no toca el propio"
+fila 17v "1|6|no|si" "${RETIRADOS}|$(cuenta_ensayos)|$([ -d "${OUT_DIR}/p2-local-20260901T000000Z-100" ] && echo si || echo no)|$([ -d "${OUT_LOCAL}" ] && echo si || echo no)" "with seven artifacts the cap removes ONE, leaves five plus the one from this run, takes the OLDEST and does not touch the artifact of the run in progress"
 
 # 17w: BELOW the cap nothing is touched. A row that only tested the cutoff
 #      would pass with a sweep that always deleted.
 ULTIMO="$(siembra_ensayos 3)"
 OUT_LOCAL="${OUT_DIR}/${ULTIMO}"
 RETIRADOS="$(barre_ensayos_viejos)"
-fila 17w "0|3" "${RETIRADOS}|$(cuenta_ensayos)" "por debajo del techo no se retira nada: el barrido no borra por costumbre, borra por cuenta"
+fila 17w "0|3" "${RETIRADOS}|$(cuenta_ensayos)" "below the cap nothing is removed: the sweep does not delete by habit, it deletes by count"
 
 # 17x: THE IRON ARTIFACT IS NOT TOUCHED, neither sealed nor unsealed, and this is
 #      the row that separates the two classes. It is the half that the decision of
@@ -728,12 +728,12 @@ fila 17w "0|3" "${RETIRADOS}|$(cuenta_ensayos)" "por debajo del techo no se reti
 ULTIMO="$(siembra_ensayos 7)"
 OUT_LOCAL="${OUT_DIR}/${ULTIMO}"
 mkdir -p "${OUT_DIR}/p2-20260901T000000Z-999" "${OUT_DIR}/p2-20260902T000000Z-998"
-printf 'de fierro, sellado\n' > "${OUT_DIR}/p2-20260901T000000Z-999/manifest.txt"
+printf 'iron, sealed\n' > "${OUT_DIR}/p2-20260901T000000Z-999/manifest.txt"
 printf 'Phase 2 iron gate artifact\n' > "${OUT_DIR}/p2-20260901T000000Z-999/SEALED"
-printf 'de fierro, SIN sello\n' > "${OUT_DIR}/p2-20260902T000000Z-998/manifest.txt"
+printf 'iron, WITHOUT a seal\n' > "${OUT_DIR}/p2-20260902T000000Z-998/manifest.txt"
 touch -t 202601010000 "${OUT_DIR}/p2-20260901T000000Z-999" "${OUT_DIR}/p2-20260902T000000Z-998"
 barre_ensayos_viejos >/dev/null
-roja 17x "si|si" "$([ -d "${OUT_DIR}/p2-20260901T000000Z-999" ] && echo si || echo no)|$([ -d "${OUT_DIR}/p2-20260902T000000Z-998" ] && echo si || echo no)" "los artefactos de FIERRO sobreviven al techo, el sellado y el que no lo esta, aunque sean los mas viejos de todos: el techo es del ensayo y esa es la decision entera"
+roja 17x "si|si" "$([ -d "${OUT_DIR}/p2-20260901T000000Z-999" ] && echo si || echo no)|$([ -d "${OUT_DIR}/p2-20260902T000000Z-998" ] && echo si || echo no)" "the IRON artifacts survive the cap, the sealed one and the one that is not, even if they are the oldest of all: the cap belongs to the rehearsal and that is the whole decision"
 
 # 17y: the orphan fleet goes with its artifact and NOT before. A fleet whose
 #      artifact is still there is from a live run.
@@ -743,7 +743,7 @@ mkdir -p "${OUT_DIR}/p2-local-fleet-20260901T000000Z-100" "${OUT_DIR}/p2-local-f
 printf 'x\n' > "${OUT_DIR}/p2-local-fleet-20260901T000000Z-100/node1.log"
 printf 'x\n' > "${OUT_DIR}/p2-local-fleet-20260999T000000Z-777/node1.log"
 barre_ensayos_viejos >/dev/null
-roja 17y "si|no" "$([ -d "${OUT_DIR}/p2-local-fleet-20260901T000000Z-100" ] && echo si || echo no)|$([ -d "${OUT_DIR}/p2-local-fleet-20260999T000000Z-777" ] && echo si || echo no)" "una flota cuyo artefacto SIGUE ahi se queda, y la huerfana se va: es un invariante, una flota nunca sobrevive a su artefacto, y no un segundo techo"
+roja 17y "si|no" "$([ -d "${OUT_DIR}/p2-local-fleet-20260901T000000Z-100" ] && echo si || echo no)|$([ -d "${OUT_DIR}/p2-local-fleet-20260999T000000Z-777" ] && echo si || echo no)" "a fleet whose artifact is STILL there stays, and the orphan goes: it is an invariant, a fleet never outlives its artifact, and not a second cap"
 
 # 17z: ON IRON THE SWEEP DOES NOT RUN. Without this row, the guard of the first line
 #      would be a decision nobody looks at.
@@ -752,7 +752,7 @@ OUT_LOCAL="${OUT_DIR}/${ULTIMO}"
 ES_FIERRO=1
 RETIRADOS="$(barre_ensayos_viejos)"
 ES_FIERRO=0
-roja 17z "0|7" "${RETIRADOS}|$(cuenta_ensayos)" "en una corrida de FIERRO el barrido devuelve en su primera linea y no retira nada: una corrida que cuesta horas de VM no esta ahi para hacer limpieza"
+roja 17z "0|7" "${RETIRADOS}|$(cuenta_ensayos)" "in an IRON run the sweep returns on its first line and removes nothing: a run that costs hours of VM time is not there to clean up"
 
 rm -rf -- "${BANCO}/techo"
 OUT_DIR="${GUARDA_OUTDIR}"; OUT_LOCAL="${GUARDA_OUT}"; ES_FIERRO="${GUARDA_FIERRO}"
@@ -783,13 +783,13 @@ PID_VIVO=$!
 # ahead to push all four past the cap.
 siembra_marcado() {   # <name> <RUNNING contents, or empty to leave it out>
 	mkdir -p "${OUT_DIR}/$1"
-	printf 'manifiesto\n' > "${OUT_DIR}/$1/manifest.txt"
+	printf 'manifest\n' > "${OUT_DIR}/$1/manifest.txt"
 	[ -n "${2:-}" ] && printf 'pid: %s\nrun: %s\nscript: gate/p2.sh\n' "$2" "$1" > "${OUT_DIR}/$1/RUNNING"
 	touch -t 202601010000 "${OUT_DIR}/$1"
 }
 siembra_marcado p2-local-20260101T000000Z-111 "${PID_VIVO}"
 siembra_marcado p2-local-20260101T000000Z-222 999999
-siembra_marcado p2-local-20260101T000000Z-333 "no-es-un-numero"
+siembra_marcado p2-local-20260101T000000Z-333 "not-a-number"
 siembra_marcado p2-local-20260101T000000Z-444 ""
 for i in 3 4 5 6 7 8; do
 	mkdir -p "${OUT_DIR}/p2-local-2026020${i}T000000Z-${i}00"
@@ -799,10 +799,10 @@ done
 OUT_LOCAL="${OUT_DIR}/p2-local-20260208T000000Z-800"
 SALIDA_MARCADOR="$(barre_ensayos_viejos 2>&1 >/dev/null)"
 
-roja 17aa "si|1" "$([ -d "${OUT_DIR}/p2-local-20260101T000000Z-111" ] && echo si || echo no)|$(printf '%s' "${SALIDA_MARCADOR}" | grep -c 'its run is still alive')" "un artefacto con un pid VIVO dentro sobrevive al techo y lo dice: el techo es una regla sobre lo que ya termino, y sin esta linea el barrido repetia por TERCERA vez el incidente que make clean tuvo dos veces"
-fila 17ab "no|1" "$([ -d "${OUT_DIR}/p2-local-20260101T000000Z-222" ] && echo si || echo no)|$(printf '%s' "${SALIDA_MARCADOR}" | grep -c 'an unfinished run')" "y el de un pid MUERTO si se retira, diciendolo: si un marcador huerfano protegiera, una corrida matada con -9 bloquearia el techo para siempre, que es como una defensa se acaba quitando por estorbar"
-roja 17ac "si|1" "$([ -d "${OUT_DIR}/p2-local-20260101T000000Z-333" ] && echo si || echo no)|$(printf '%s' "${SALIDA_MARCADOR}" | grep -c 'cannot be read')" "un pid que no se puede LEER no es lo mismo que un pid muerto: son TRES respuestas y no dos, y la de en medio se conserva y se dice"
-fila 17ad "no" "$([ -d "${OUT_DIR}/p2-local-20260101T000000Z-444" ] && echo si || echo no)" "y sin marcador ninguno el techo se lo lleva como siempre, que es el control sin el cual las tres de arriba pasarian con un techo que no borrase nunca"
+roja 17aa "si|1" "$([ -d "${OUT_DIR}/p2-local-20260101T000000Z-111" ] && echo si || echo no)|$(printf '%s' "${SALIDA_MARCADOR}" | grep -c 'its run is still alive')" "an artifact with a LIVE pid inside survives the cap and says so: the cap is a rule about what has already finished, and without this line the sweep repeated, for the THIRD time, the incident make clean had caused twice"
+fila 17ab "no|1" "$([ -d "${OUT_DIR}/p2-local-20260101T000000Z-222" ] && echo si || echo no)|$(printf '%s' "${SALIDA_MARCADOR}" | grep -c 'an unfinished run')" "and the one with a DEAD pid does get removed, saying so: if an orphan marker protected its artifact, a run killed with -9 would block the cap forever, which is how a defence ends up removed for getting in the way"
+roja 17ac "si|1" "$([ -d "${OUT_DIR}/p2-local-20260101T000000Z-333" ] && echo si || echo no)|$(printf '%s' "${SALIDA_MARCADOR}" | grep -c 'cannot be read')" "a pid that cannot be READ is not the same as a dead pid: there are THREE answers and not two, and the middle one keeps the artifact and says so"
+fila 17ad "no" "$([ -d "${OUT_DIR}/p2-local-20260101T000000Z-444" ] && echo si || echo no)" "and with no marker at all the cap takes it as always, which is the control without which the three above would pass with a cap that never deleted an artifact with no marker"
 
 kill "${PID_VIVO}" 2>/dev/null || true
 wait "${PID_VIVO}" 2>/dev/null || true
@@ -838,20 +838,20 @@ GUARDA_FIERRO_B="${ES_FIERRO}"
 ES_FIERRO=1; BANNER_DESPACHADO_FIERRO="$(banner 2>/dev/null)"
 ES_FIERRO=0; BANNER_DESPACHADO_ENSAYO="$(banner 2>/dev/null)"
 ES_FIERRO="${GUARDA_FIERRO_B}"
-fila 17b0 "si|no" "$(printf '%s' "${BANNER_DESPACHADO_FIERRO}" | grep -q 'THIS IS GATE EVIDENCE' && echo si || echo no)|$(printf '%s' "${BANNER_DESPACHADO_FIERRO}" | grep -q 'NOT gate evidence' && echo si || echo no)" "con ES_FIERRO=1, banner DESPACHA al de fierro: es el circuito y no la pieza, y sin esta fila quitarle la rama a banner dejaba el banco entero en verde"
-roja 17b1 "si|no" "$(printf '%s' "${BANNER_DESPACHADO_ENSAYO}" | grep -q 'NOT gate evidence' && echo si || echo no)|$(printf '%s' "${BANNER_DESPACHADO_ENSAYO}" | grep -q 'THIS IS GATE EVIDENCE' && echo si || echo no)" "y con ES_FIERRO=0 despacha al del ensayo, que es la otra mitad sin la cual un banner que dijera siempre fierro tambien pasaria"
+fila 17b0 "si|no" "$(printf '%s' "${BANNER_DESPACHADO_FIERRO}" | grep -q 'THIS IS GATE EVIDENCE' && echo si || echo no)|$(printf '%s' "${BANNER_DESPACHADO_FIERRO}" | grep -q 'NOT gate evidence' && echo si || echo no)" "with ES_FIERRO=1, banner DISPATCHES to the iron one: it is the circuit and not the piece, and without this row, taking the branch away from banner left the whole bench green"
+roja 17b1 "si|no" "$(printf '%s' "${BANNER_DESPACHADO_ENSAYO}" | grep -q 'NOT gate evidence' && echo si || echo no)|$(printf '%s' "${BANNER_DESPACHADO_ENSAYO}" | grep -q 'THIS IS GATE EVIDENCE' && echo si || echo no)" "and with ES_FIERRO=0 it dispatches to the rehearsal one, which is the other half without which a banner that always said iron would pass too"
 
 BANNER_FIERRO="$(banner_fierro 2>/dev/null)"
 BANNER_ENSAYO="$(banner_ensayo 2>/dev/null)"
-fila 17ba "0|0|0|1" "$(printf '%s' "${BANNER_FIERRO}" | grep -c 'NOT gate evidence')|$(printf '%s' "${BANNER_FIERRO}" | grep -c '127\.0\.0\.1')|$(printf '%s' "${BANNER_FIERRO}" | grep -c 'kill -9')|$(printf '%s' "${BANNER_FIERRO}" | grep -c 'THIS IS GATE EVIDENCE')" "el banner de FIERRO no dice que no es evidencia, ni habla de tres directorios en loopback, ni de un corte con kill -9, y si dice lo que es"
-roja 17bb "1|1|1|0" "$(printf '%s' "${BANNER_ENSAYO}" | grep -c 'NOT gate evidence')|$(printf '%s' "${BANNER_ENSAYO}" | grep -c '127\.0\.0\.1')|$(printf '%s' "${BANNER_ENSAYO}" | grep -c 'kill -9')|$(printf '%s' "${BANNER_ENSAYO}" | grep -c 'THIS IS GATE EVIDENCE')" "y el del ENSAYO sigue diciendo exactamente lo que decia, palabra por palabra: la rama nueva no se llevo por delante la declaracion que el ensayo tiene que hacer"
+fila 17ba "0|0|0|1" "$(printf '%s' "${BANNER_FIERRO}" | grep -c 'NOT gate evidence')|$(printf '%s' "${BANNER_FIERRO}" | grep -c '127\.0\.0\.1')|$(printf '%s' "${BANNER_FIERRO}" | grep -c 'kill -9')|$(printf '%s' "${BANNER_FIERRO}" | grep -c 'THIS IS GATE EVIDENCE')" "the IRON banner does not say it is not evidence, nor speak of three directories on loopback, nor of a cut with kill -9, and it does say what it is"
+roja 17bb "1|1|1|0" "$(printf '%s' "${BANNER_ENSAYO}" | grep -c 'NOT gate evidence')|$(printf '%s' "${BANNER_ENSAYO}" | grep -c '127\.0\.0\.1')|$(printf '%s' "${BANNER_ENSAYO}" | grep -c 'kill -9')|$(printf '%s' "${BANNER_ENSAYO}" | grep -c 'THIS IS GATE EVIDENCE')" "and the REHEARSAL one still says exactly what it said, word for word: the new branch did not knock out the declaration the rehearsal has to make"
 # THE QUESTION IS ONE OF PRESENCE, NOT OF COUNT, and the first version counted. It
 # asked for ONE occurrence of sysrq-trigger and the banner names it TWICE, in the
 # cut and in the reading of 2026-09-07: the row came out red on an expectation of
 # mine, not on the object. Counting occurrences of a phrase inside PROSE is a
 # figure that moves whenever a paragraph is rewritten, and then the bench turns
 # red while nothing is broken. What this row wants to know is whether the phrase IS THERE.
-fila 17bc "si|si" "$(printf '%s' "${BANNER_FIERRO}" | grep -q 'sysrq-trigger' && echo si || echo no)|$(printf '%s' "${BANNER_FIERRO}" | grep -q 'caching: ReadWrite' && echo si || echo no)" "y el de fierro lleva su corte de verdad y la frontera del cache del anfitrion, que es la exclusion que el diseno cuelga de este banner"
+fila 17bc "si|si" "$(printf '%s' "${BANNER_FIERRO}" | grep -q 'sysrq-trigger' && echo si || echo no)|$(printf '%s' "${BANNER_FIERRO}" | grep -q 'caching: ReadWrite' && echo si || echo no)" "and the iron one carries its real cut and the boundary of the host cache, which is the exclusion the design hangs on this banner"
 
 # ---- B1, the other half: the closing line ------------------------------------
 #
@@ -862,8 +862,8 @@ GUARDA_COMPLETED="${COMPLETED}"; GUARDA_STARTED="${RUN_STARTED}"
 EXPECTED="P2.build"; VERDICTS=" P2.build=pass "; COMPLETED=1; RUN_STARTED=1
 ES_FIERRO=1; CIERRE_FIERRO="$(emit_final_verdict 2>/dev/null)"
 ES_FIERRO=0; CIERRE_ENSAYO="$(emit_final_verdict 2>/dev/null)"
-fila 17bd "1|0" "$(printf '%s' "${CIERRE_FIERRO}" | grep -c 'all IRON checks passed')|$(printf '%s' "${CIERRE_FIERRO}" | grep -c 'rehearsal')" "la linea de cierre de una corrida de FIERRO no dice rehearsal"
-roja 17be "1" "$(printf '%s' "${CIERRE_ENSAYO}" | grep -c 'all rehearsal checks passed')" "y la del ensayo sale EXACTA como estaba, que es lo que casan los bancos por su literal"
+fila 17bd "1|0" "$(printf '%s' "${CIERRE_FIERRO}" | grep -c 'all IRON checks passed')|$(printf '%s' "${CIERRE_FIERRO}" | grep -c 'rehearsal')" "the closing line of an IRON run does not say rehearsal"
+roja 17be "1" "$(printf '%s' "${CIERRE_ENSAYO}" | grep -c 'all rehearsal checks passed')" "and the rehearsal one comes out EXACTLY as it was, which is the literal the benches match"
 ES_FIERRO="${GUARDA_FIERRO}"; EXPECTED="${GUARDA_EXPECTED}"; VERDICTS="${GUARDA_VERDICTS}"
 COMPLETED="${GUARDA_COMPLETED}"; RUN_STARTED="${GUARDA_STARTED}"
 
@@ -874,8 +874,8 @@ COMPLETED="${GUARDA_COMPLETED}"; RUN_STARTED="${GUARDA_STARTED}"
 # closed for client_op, and to client_op it was indeed applied. Without this, the
 # forty attempts all failed and the whole red arm never got to measure.
 CUERPO_RED_FIERRO="$(awk '/^phase_red_fierro\(\) \{/,/^\}$/' "${GATE_DIR}/p2.sh")"
-fila 17bf "si|no" "$(printf '%s' "${CUERPO_RED_FIERRO}" | grep -q 'run_on 1 "cd naylamp' && echo si || echo no)|$(printf '%s' "${CUERPO_RED_FIERRO}" | grep -q '"\${BIN}" client -listen' && echo si || echo no)" "el cliente del mutante va por run_on al host 1, como client_op, y ya no se invoca el binario local contra una direccion que esta maquina no tiene"
-roja 17bg "si" "$(printf '%s' "${CUERPO_RED_FIERRO}" | grep -q '__RC__=0)' && echo si || echo no)" "y lee su estado por la ULTIMA linea entera y no por una subcadena, que es la misma guarda de client_op: un canal de estado que la carga util puede falsificar no es un canal de estado"
+fila 17bf "si|no" "$(printf '%s' "${CUERPO_RED_FIERRO}" | grep -q 'run_on 1 "cd naylamp' && echo si || echo no)|$(printf '%s' "${CUERPO_RED_FIERRO}" | grep -q '"\${BIN}" client -listen' && echo si || echo no)" "the client of the mutant goes through run_on to host 1, like client_op, and the local binary is no longer invoked against an address this machine does not have"
+roja 17bg "si" "$(printf '%s' "${CUERPO_RED_FIERRO}" | grep -q '__RC__=0)' && echo si || echo no)" "and it reads its status from the LAST whole line and not from a substring, which is the same guard as in client_op: a status channel that the payload can falsify is not a status channel"
 
 # ---- B5b: the canary syncs its file and its directory, not the machine -------
 #
@@ -883,7 +883,7 @@ roja 17bg "si" "$(printf '%s' "${CUERPO_RED_FIERRO}" | grep -q '__RC__=0)' && ec
 # so at the instant of the cut everything acked was on the platter, barrier or not.
 # It is the most expensive finding: the GREEN path that measured nothing.
 CUERPO_TESTIGO="$(awk '/^testigo_siembra\(\) \{/,/^\}$/' "${GATE_DIR}/p2.sh")"
-roja 17bh "no|si|si" "$(printf '%s' "${CUERPO_TESTIGO}" | grep -qE '&& sync$|; sync$' && echo si || echo no)|$(printf '%s' "${CUERPO_TESTIGO}" | grep -q 'os.fsync(f)' && echo si || echo no)|$(printf '%s' "${CUERPO_TESTIGO}" | grep -q 'os.fsync(h)' && echo si || echo no)" "el testigo ya no hace un sync GLOBAL, y sincroniza el fichero Y su directorio: un sync global dentro de un gate de durabilidad es el instrumento anulando lo que mide"
+roja 17bh "no|si|si" "$(printf '%s' "${CUERPO_TESTIGO}" | grep -qE '&& sync$|; sync$' && echo si || echo no)|$(printf '%s' "${CUERPO_TESTIGO}" | grep -q 'os.fsync(f)' && echo si || echo no)|$(printf '%s' "${CUERPO_TESTIGO}" | grep -q 'os.fsync(h)' && echo si || echo no)" "the canary no longer does a GLOBAL sync, and it syncs the file AND its directory: a global sync inside a durability gate is the instrument cancelling what it measures"
 
 # ---- 17ca to 17cf: B5a, THE IN-FLIGHT WRITES AT THE INSTANT OF THE CUT -------
 #
@@ -917,9 +917,9 @@ chmod +x "${BANCO}/casa/1/naylamp/bin/naylampd"
 : > "${BANCO}/estado/1.acepta"
 
 escritor_en_vuelo
-fila 17ca "6|0" "$(grep -c ' confirmed$' "${MANIFEST}")|$(grep -c ' uncertain$' "${MANIFEST}")" "con la conexion viva, cada ack deja UNA linea confirmed en el manifiesto y ninguna uncertain: su ausencia del log sera un veredicto, que es exactamente la propiedad"
-fila 17cb "6|0" "$(grep -c '^ack ' "${OUT_LOCAL}/en-vuelo.txt")|$(grep -c '^sin-ack ' "${OUT_LOCAL}/en-vuelo.txt")" "y cada uno queda fechado en el crudo de la frontera, que es lo que dice en que INSTANTE se cerro el manifiesto"
-fila 17cc "1|1" "$(grep -c 'last ack:' "${OUT_LOCAL}/en-vuelo-frontera.txt")|$(grep -c '^acks:' "${OUT_LOCAL}/en-vuelo-frontera.txt")" "y la frontera se escribe en el ARTEFACTO y no solo en la consola, porque es lo que se cita cuando la consola ya no esta"
+fila 17ca "6|0" "$(grep -c ' confirmed$' "${MANIFEST}")|$(grep -c ' uncertain$' "${MANIFEST}")" "with the connection alive, each ack leaves ONE confirmed line in the manifest and no uncertain one: the absence of an acked id from the log will be a verdict, which is exactly the property"
+fila 17cb "6|0" "$(grep -c '^ack ' "${OUT_LOCAL}/en-vuelo.txt")|$(grep -c '^sin-ack ' "${OUT_LOCAL}/en-vuelo.txt")" "and each one is dated in the raw file of the boundary, which is what shows at what INSTANT the manifest closed"
+fila 17cc "1|1" "$(grep -c 'last ack:' "${OUT_LOCAL}/en-vuelo-frontera.txt")|$(grep -c '^acks:' "${OUT_LOCAL}/en-vuelo-frontera.txt")" "and the boundary is written in the ARTIFACT and not only on the console, because it is what gets cited when the console is gone"
 
 # THE CUT, seen from the client: the connection stops giving acks halfway.
 : > "${MANIFEST}"; rm -f -- "${OUT_LOCAL}/en-vuelo.txt"
@@ -934,12 +934,12 @@ FALSO
 chmod +x "${BANCO}/casa/1/naylamp/bin/naylampd"
 rm -f -- "${BANCO}/estado/1.cuenta"
 escritor_en_vuelo
-roja 17cd "2|3" "$(grep -c ' confirmed$' "${MANIFEST}")|$(grep -c ' uncertain$' "${MANIFEST}")" "cuando la conexion muere a mitad, lo ackeado queda confirmed y lo que se envio sin respuesta queda UNCERTAIN: sin esa linea, un id comprometido cuyo ack se perdio saldria FANTASMA y pondria roja la fidelidad por hacer justo lo que se le pidio"
-roja 17ce "3" "$(grep -c '^sin-ack ' "${OUT_LOCAL}/en-vuelo.txt")" "y el bucle se PARA a los tres fallos seguidos en vez de seguir contra tres maquinas que ya no contestan, que es la cota que la clausula 24 obliga"
-roja 17cf "0" "$(sort "${MANIFEST}" | awk '{print $2}' | uniq -d | grep -c .)" "y NINGUN id recibe las dos lineas: el comprobador marca AMBIGUO todo id que toque una operacion sin respuesta, asi que escribir las dos habria costado la comparacion de valor de los que SI volvieron con su ack"
+roja 17cd "2|3" "$(grep -c ' confirmed$' "${MANIFEST}")|$(grep -c ' uncertain$' "${MANIFEST}")" "when the connection dies halfway, what was acked stays confirmed and what was sent without an answer stays UNCERTAIN: without that line, a committed id whose ack was lost would come out as a PHANTOM and turn faithfulness red for doing exactly what it was asked to do"
+roja 17ce "3" "$(grep -c '^sin-ack ' "${OUT_LOCAL}/en-vuelo.txt")" "and the loop STOPS after three failures in a row instead of going on against three machines that no longer answer, which is the bound clause 24 requires"
+roja 17cf "0" "$(sort "${MANIFEST}" | awk '{print $2}' | uniq -d | grep -c .)" "and NO id gets both lines: the checker marks as AMBIGUOUS every id touched by an operation without an answer, so writing both would have cost the value comparison of those that DID come back with their ack"
 
 EN_VUELO_MAX="${GUARDA_VUELO_MAX}"
-printf 'binario sano, igual en las tres\n' > "${BANCO}/casa/1/naylamp/bin/naylampd"
+printf 'healthy binary, the same on all three\n' > "${BANCO}/casa/1/naylamp/bin/naylampd"
 rm -f -- "${BANCO}/estado/1.acepta" "${BANCO}/estado/1.cuenta"
 rm -rf -- "${BANCO}/vuelo"
 OUT_DIR="${GUARDA_OUTDIR}"; OUT_LOCAL="${GUARDA_OUT}"; ES_FIERRO="${GUARDA_FIERRO}"; MANIFEST="${GUARDA_MANIFEST}"
@@ -962,10 +962,10 @@ OUT_DIR="${GUARDA_OUTDIR}"; OUT_LOCAL="${GUARDA_OUT}"; ES_FIERRO="${GUARDA_FIERR
 # copies and turns P2.recover.faithful red looking like a PROPERTY red, which
 # is the red that is never re-run.
 CUERPO_CALIENTE="$(awk '/^caliente\(\) \{/,/^\}$/' "${GATE_DIR}/p2-preflight.sh")"
-fila 17da "si|si" "$(printf '%s' "${CUERPO_CALIENTE}" | grep -q '"${GATE_DIR}/deploy.sh"' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q '"${GATE_DIR}/cluster.sh" start' && echo si || echo no)" "la mitad caliente DESPLIEGA el binario y los certificados y LEVANTA la flota, que es lo que la cabecera de gate/p2.sh llevaba afirmando que hacia sin hacerlo"
-roja 17db "si|si|si" "$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'LITERAL_LIDER=' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'quien=' && echo si || echo no)|$(LIT="$(printf '%s' "${CUERPO_CALIENTE}" | sed -n "s/.*LITERAL_LIDER='\\([^']*\\)'.*/\\1/p" | head -1)"; [ -n "${LIT}" ] && grep -rqF "${LIT}" "${GATE_DIR}/../engine" && echo si || echo no)" "y no se conforma con que los demonios arranquen: exige que ELIJAN LIDER, y la tercera columna CASTEA EL LITERAL CONTRA engine/ en vez de contra el texto del propio gate. Hasta la cuarta vuelta esperaba 'became leader', que no existe en el motor: el demonio escribe role=leader, el case no casaba nunca, y el paso cerraba con mal nombrando material TLS caducado sobre una flota sana. Preguntar si la frase esta en el gate solo comprueba que el gate se cita a si mismo"
-fila 17dc "si|si|si" "$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'rm -rf data logs data-mutante' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'EMPTY on the three, checked' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'naylamp/data-mutante -mindepth 1' && echo si || echo no)" "naylamp/data, naylamp/logs y naylamp/data-mutante se miden, se limpian y se vuelven a MEDIR: es una precondicion y no una tolerancia, y el del mutante estaba fuera hasta que un lector lo trajo, con el mismo razonamiento entero encima: un id 7 viejo ahi dentro hace que el brazo rojo publique que el mutante sin barrera no perdio nada"
-roja 17dd "si|si" "$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'sudo -n test -w /proc/sysrq-trigger' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'os.fsync(os.open' && echo si || echo no)" "y se ejercitan ANTES del corte las dos cosas de las que el corte depende y que corta_en no puede ver, porque tira su estado a proposito: que sudo no pida contrasena, y que python3 pueda hacer fsync de un directorio"
+fila 17da "si|si" "$(printf '%s' "${CUERPO_CALIENTE}" | grep -q '"${GATE_DIR}/deploy.sh"' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q '"${GATE_DIR}/cluster.sh" start' && echo si || echo no)" "the hot half DEPLOYS the binary and the certificates and BRINGS UP the fleet, which is what the header of gate/p2.sh had been claiming it did without doing it"
+roja 17db "si|si|si" "$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'LITERAL_LIDER=' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'quien=' && echo si || echo no)|$(LIT="$(printf '%s' "${CUERPO_CALIENTE}" | sed -n "s/.*LITERAL_LIDER='\\([^']*\\)'.*/\\1/p" | head -1)"; [ -n "${LIT}" ] && grep -rqF "${LIT}" "${GATE_DIR}/../engine" && echo si || echo no)" "and it does not settle for the daemons starting: it requires that they ELECT A LEADER, and the third column CHECKS THE LITERAL AGAINST engine/ instead of against the text of the gate itself. Until the fourth round it expected 'became leader', which does not exist in the engine: the daemon writes role=leader, the case pattern never matched, and the step closed with a call to mal naming expired TLS material on a healthy fleet. Asking whether the phrase is in the gate only checks that the gate quotes itself"
+fila 17dc "si|si|si" "$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'rm -rf data logs data-mutante' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'EMPTY on the three, checked' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'naylamp/data-mutante -mindepth 1' && echo si || echo no)" "naylamp/data, naylamp/logs and naylamp/data-mutante are measured, cleaned and MEASURED again: it is a precondition and not a tolerance, and the mutant directory was left out until a reader brought it in, with the same reasoning applying to it in full: an old id 7 in there makes the red arm publish that the mutant without a barrier lost nothing"
+roja 17dd "si|si" "$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'sudo -n test -w /proc/sysrq-trigger' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'os.fsync(os.open' && echo si || echo no)" "and the two things the cut depends on, which corta_en cannot see because it discards its own status on purpose, are exercised BEFORE the cut: that sudo does not ask for a password, and that python3 can fsync a directory"
 
 # ---- 17ea to 17ef: WHAT THE EXTERNAL READER'S SECOND PASS FOUND ---------------
 #
@@ -979,18 +979,18 @@ roja 17dd "si|si" "$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'sudo -n test -w
 # at once that the three `uncertain` entered the live set and turned the run red.
 LIVEIDS="${BANCO}/live-ids.py"
 awk '/^\t\/usr\/bin\/python3 - "\$\{MANIFEST\}" > "\$\{OUT_LOCAL\}\/live-ids.txt" <<.PY.$/{f=1;next} f&&/^PY$/{exit} f{print}' "${GATE_DIR}/p2.sh" > "${LIVEIDS}"
-fila 17ea "si" "$([ -s "${LIVEIDS}" ] && echo si || echo no)" "el constructor del conjunto vivo se extrae de gate/p2.sh y no se copia aqui: si cambia de forma, esta extraccion sale vacia y el banco lo dice en vez de probar aire"
+fila 17ea "si" "$([ -s "${LIVEIDS}" ] && echo si || echo no)" "the builder of the live set is extracted from gate/p2.sh and not copied here: if it changes shape, this extraction comes out empty and the bench says so instead of testing thin air"
 
 MAN_PRUEBA="${BANCO}/manifiesto-de-prueba.txt"
 printf 'put 1 1,0,0,0,0,0,0,0 confirmed\nput 100 0,0,1,0,0,1,1,0 uncertain\nput 2 0,1,0,0,0,0,0,0\ndel 1\n' > "${MAN_PRUEBA}"
 VIVOS="$(/usr/bin/python3 "${LIVEIDS}" "${MAN_PRUEBA}" | tr '\n' ' ')"
-roja 17eb "2 " "${VIVOS}" "un id UNCERTAIN no entra en el conjunto vivo, uno sin marcador SI, y un del retira el suyo: sin esta linea, cada envio que no volvio con ack se exigia presente, no podia estarlo porque se mando contra tres maquinas ya muertas, y la corrida salia ROJA diciendo que el motor perdio una escritura ackeada"
+roja 17eb "2 " "${VIVOS}" "an UNCERTAIN id does not enter the live set, one without a marker DOES, and a del removes its own: without this line, every send that did not come back with an ack was required to be present, which it could not be, because it was sent to three machines that were already dead, and the run came out RED saying the engine lost an acked write"
 
 # THE IN-FLIGHT RANGE, measured against vec_for and not asserted
-roja 17ec "0 0" "$(comprueba_rango_en_vuelo)" "ningun vector del rango en vuelo coincide con uno de la carga ni es el vector cero: vec_for solo depende de id mod 256, asi que el rango de antes daba el vector CERO en el 512 y treinta colisiones con la carga, que es el defecto de la seccion 10.9 reabierto"
+roja 17ec "0 0" "$(comprueba_rango_en_vuelo)" "no vector of the in-flight range matches one from the workload or is the zero vector: vec_for depends only on id mod 256, so the old range gave the ZERO vector at 512 and thirty collisions with the workload, which is the defect of section 10.9 reopened"
 GUARDA_DESDE="${ID_EN_VUELO_DESDE}"; GUARDA_MAXV="${EN_VUELO_MAX}"
 ID_EN_VUELO_DESDE=500; EN_VUELO_MAX=200
-roja 17ed "30 1" "$(comprueba_rango_en_vuelo)" "y con el rango de antes la guarda MUERDE, y dice cuanto: treinta choques, uno por cada id de la carga, y un vector cero. Sin esta mitad, la fila de arriba pasaria con una guarda que dijera siempre cero"
+roja 17ed "30 1" "$(comprueba_rango_en_vuelo)" "and with the old range the guard BITES, and says how many: thirty collisions, one for each id of the workload, and one zero vector. Without this half, the row above would pass with a guard that always said zero"
 ID_EN_VUELO_DESDE="${GUARDA_DESDE}"; EN_VUELO_MAX="${GUARDA_MAXV}"
 
 # WHAT WAS SENT AND NOT ACKED IS FOLDED IN, even if the writer died
@@ -1000,19 +1000,19 @@ MANIFEST="${OUT_LOCAL}/manifest.txt"
 printf 'put 100 %s confirmed\n' "$(vec_for 100)" > "${MANIFEST}"
 printf '100 %s\n101 %s\n102 %s\n' "$(vec_for 100)" "$(vec_for 101)" "$(vec_for 102)" > "${OUT_LOCAL}/en-vuelo-enviados.txt"
 pliega_en_vuelo_sin_ack
-fila 17ee "1|2" "$(grep -c ' confirmed$' "${MANIFEST}")|$(grep -c ' uncertain$' "${MANIFEST}")" "todo id que se ENVIO y no dejo su linea vuelve como uncertain: la ventana entre que el cliente contesta y que se anota su linea existe, y una muerte ahi dejaba un id comprometido AUSENTE del manifiesto, que es lo unico que verifylog llama fantasma"
+fila 17ee "1|2" "$(grep -c ' confirmed$' "${MANIFEST}")|$(grep -c ' uncertain$' "${MANIFEST}")" "every id that was SENT and left no line of its own comes back as uncertain: the window between the client answering and its line being written down exists, and a death there left a committed id ABSENT from the manifest, which is the only thing verifylog calls a phantom"
 pliega_en_vuelo_sin_ack
-roja 17ef "1|2" "$(grep -c ' confirmed$' "${MANIFEST}")|$(grep -c ' uncertain$' "${MANIFEST}")" "y plegar dos veces no duplica nada, que es lo que permite llamarlo desde el escritor Y desde la trampa de salida sin pensar en cual llego antes"
+roja 17ef "1|2" "$(grep -c ' confirmed$' "${MANIFEST}")|$(grep -c ' uncertain$' "${MANIFEST}")" "and folding twice duplicates nothing, which is what lets both the writer AND the exit trap call it without caring which one got there first"
 OUT_LOCAL="${GUARDA_OUT2}"; MANIFEST="${GUARDA_MAN2}"
 rm -rf -- "${BANCO}/pliegue"
 
 # NO BARE wait behind a cut, in EITHER of the two phases
 CUERPO_CUT_FIERRO="$(awk '/^phase_cut_fierro\(\) \{/,/^\}$/' "${GATE_DIR}/p2.sh")"
 CUERPO_RED_FIERRO2="$(awk '/^phase_red_fierro\(\) \{/,/^\}$/' "${GATE_DIR}/p2.sh")"
-roja 17eg "si|si" "$(printf '%s' "${CUERPO_CUT_FIERRO}" | grep -q 'wait ${pids_corte}' && echo si || echo no)|$(printf '%s' "${CUERPO_RED_FIERRO2}" | grep -q 'wait ${pids_corte_rojo}' && echo si || echo no)" "ninguna de las dos fases que cortan espera con un wait DESNUDO: un wait sin argumentos espera a TODO lo de fondo, y con el escritor en vuelo detras habria tomado el instante del corte treinta segundos tarde, contra una cota de cinco, poniendo los veredictos en none sin decir por que"
+roja 17eg "si|si" "$(printf '%s' "${CUERPO_CUT_FIERRO}" | grep -q 'wait ${pids_corte}' && echo si || echo no)|$(printf '%s' "${CUERPO_RED_FIERRO2}" | grep -q 'wait ${pids_corte_rojo}' && echo si || echo no)" "neither of the two phases that cut waits with a BARE wait: a wait with no arguments waits for EVERYTHING in the background, and with the in-flight writer still running there, it would have taken the instant of the cut thirty seconds late, against a bound of five, setting the verdicts to none without saying why"
 
 # THE VERDICT THAT WAS MISSING, and the iron list names it
-roja 17eh "si|si" "$(grep -q 'P2.cut.envuelo' "${GATE_DIR}/p2.sh" && echo si || echo no)|$([ "$(grep -c '^[[:space:]]*EXPECTED=.*P2\.pre\.sysrq.*P2\.cut\.envuelo' "${GATE_DIR}/p2.sh")" -ge 1 ] && echo si || echo no)" "existe un veredicto colgado de que HAYA habido al menos un ack en vuelo, y la lista de fierro lo nombra: sin el, un escritor que no ackeara nada dejaba la propiedad igual de sin medir que antes del arreglo, y nada lo decia"
+roja 17eh "si|si" "$(grep -q 'P2.cut.envuelo' "${GATE_DIR}/p2.sh" && echo si || echo no)|$([ "$(grep -c '^[[:space:]]*EXPECTED=.*P2\.pre\.sysrq.*P2\.cut\.envuelo' "${GATE_DIR}/p2.sh")" -ge 1 ] && echo si || echo no)" "there is a verdict that depends on there HAVING BEEN at least one in-flight ack, and the iron list names it: without it, a writer that acked nothing left the property just as unmeasured as before the fix, and nothing said so"
 
 # AND THE UPPER HALF IS WRITTEN WITHOUT A PIPE AND WITHOUT ESCAPES, which is what
 # makes it immune to the TWO classes of environment dependence this pass found. The
@@ -1050,7 +1050,7 @@ import sys
 # measures what it says it measures, that the census counts an undefined escape, and
 # it still holds on the day no line of the bench uses the portable form any more.
 s = open(sys.argv[1], encoding="utf-8").read()
-s += "\ngrep '^\\tEXPECTED=' \"${GATE_DIR}/p2.sh\"  # linea inyectada por el brazo rojo de 17ei\n"
+s += "\ngrep '^\\tEXPECTED=' \"${GATE_DIR}/p2.sh\"  # line injected by the red arm of 17ei\n"
 open(sys.argv[2], "w", encoding="utf-8").write(s)
 MUTESC
 # THE SECOND ARM, of 2026-09-15, and it is for the OTHER class the same
@@ -1076,7 +1076,7 @@ import sys
 # all carry `-E`, so this row exercises the ANCHOR arm through all four; the FORM arm on
 # a BASIC pattern is done by the set of probes above, and that is a different arm.
 formas = ["-E -A2", "-A 3 -E", "-E -q --", "--extended-regexp"]
-cuerpo = "#!/bin/sh\n# linea inyectada por el brazo rojo de 17ei: un $ en medio de una ERE\n"
+cuerpo = "#!/bin/sh\n# line injected by the red arm of 17ei: a $ in the middle of an ERE\n"
 for f in formas:
     cuerpo += "grep " + f + " 'a$b' /dev/null\n"
 open(sys.argv[1], "w", encoding="utf-8").write(cuerpo)
@@ -1164,7 +1164,7 @@ while read -r sonda esperado; do
 		sondas_ok=$((sondas_ok + 1))
 	fi
 done < "${PROBES}.tabla"
-roja 17ei "0|1|4|23|23" "$(entorno_escapes_sin_definir "${GATE_DIR}"/*.sh | wc -l | tr -d ' ')|$(entorno_escapes_sin_definir "${MUT_ESC}" | wc -l | tr -d ' ')|$(entorno_escapes_sin_definir "${MUT_ANCLA}" | wc -l | tr -d ' ')|${sondas_ok}|${sondas_tot}" "ningun patron de grep de gate/ lleva un escape -\t, \s, \d, \w- ni un metacaracter en una posicion que POSIX no defina, que es lo que hizo que la fila de arriba respondiera distinto en dos maquinas con el mismo arbol y lo que hace que un dolar del medio responda a la implementacion y no al arbol; y el censo cuenta las dos clases cuando se le inyectan en una copia, con las CUATRO formas de invocacion del brazo del ancla -bandera con argumento pegada, separada, doble guion y opcion larga-, o sea que sabe contar lo que dice contar; AND, with the two last fields, the set of probes DERIVED FROM THE CLASSES this census declares -eleven that have to be counted, eleven boundaries where the rule does not apply and the one blind spot it names- lands on its declared outcome in all of them, and that count is PRINTED by the row and not recited in this text"
+roja 17ei "0|1|4|23|23" "$(entorno_escapes_sin_definir "${GATE_DIR}"/*.sh | wc -l | tr -d ' ')|$(entorno_escapes_sin_definir "${MUT_ESC}" | wc -l | tr -d ' ')|$(entorno_escapes_sin_definir "${MUT_ANCLA}" | wc -l | tr -d ' ')|${sondas_ok}|${sondas_tot}" "no grep pattern under gate/ carries an escape -\t, \s, \d, \w- or a metacharacter in a position POSIX does not define, which is what made the row above answer differently on two machines with the same tree and what makes a dollar in the middle depend on the implementation and not on the tree; and the census counts both classes when they are injected, the escape into a copy of this bench and the metacharacter into a new file, with the FOUR invocation forms of the anchor arm -flag with its argument attached, flag with its argument separate, double dash and long option-, that is, it knows how to count what it says it counts; AND, with the two last fields, the set of probes DERIVED FROM THE CLASSES this census declares -eleven that have to be counted, eleven boundaries where the rule does not apply and the one blind spot it names- lands on its declared outcome in all of them, and that count is PRINTED by the row and not recited in this text"
 
 # THE ROW ABOVE, of the same day and of the same shape: a script that
 # SOURCES a file git does not track runs here and dies in a clone, and CI clones
@@ -1177,10 +1177,10 @@ MUT_CARGA="${BANCO}/p2-iron-test-carga.sh"
 python3 - "${GATE_DIR}/p2-iron-test.sh" "${MUT_CARGA}" <<'MUTCARGA'
 import sys
 s = open(sys.argv[1], encoding="utf-8").read()
-s += '\n. "${GATE_DIR}/no-esta-en-git.sh"  # linea inyectada por el brazo rojo de 17ej\n'
+s += '\n. "${GATE_DIR}/no-esta-en-git.sh"  # line injected by the red arm of 17ej\n'
 open(sys.argv[2], "w", encoding="utf-8").write(s)
 MUTCARGA
-roja 17ej "0|1" "$(entorno_cargas_sin_trackear "${GATE_DIR}"/*.sh | wc -l | tr -d ' ')|$(entorno_cargas_sin_trackear "${MUT_CARGA}" | wc -l | tr -d ' ')" "ningun guion de gate/ sourcea un fichero del arbol que git no trackee, que es lo que corre aqui y muere en un clon; y con una carga inyectada a un fichero que no esta en el indice el censo la cuenta, o sea que sabe contarla"
+roja 17ej "0|1" "$(entorno_cargas_sin_trackear "${GATE_DIR}"/*.sh | wc -l | tr -d ' ')|$(entorno_cargas_sin_trackear "${MUT_CARGA}" | wc -l | tr -d ' ')" "no script under gate/ sources a file in the tree that git does not track, which is what runs here and dies in a clone; and when a line sourcing a file that is not in the index is injected, the census counts it, that is, it knows how to count it"
 
 # THE THIRD ONE, and the predicate is DIFFERENTIAL: the same bench, the same pass,
 # under /bin/dash and under bash. dash-red alone is PORTABILITY, and it is this row's;
@@ -1362,25 +1362,25 @@ chmod +x "${BANCO}/casa/1/naylamp/bin/naylampd"
 # 17fa: with a range that collides, the WRITER refuses and does not write a single line
 ID_EN_VUELO_DESDE=500; EN_VUELO_MAX=200
 SALIDA_17FA="$(escritor_en_vuelo 2>&1)"
-roja 17fa "1|0" "$(printf '%s' "${SALIDA_17FA}" | grep -c 'refusing to write in flight')|$(grep -c . "${MANIFEST}")" "con un rango que colisiona, el ESCRITOR se niega antes de mandar nada y el manifiesto queda vacio: la fila de la guarda sola probaba que sabe contar, no que alguien la mire"
+roja 17fa "1|0" "$(printf '%s' "${SALIDA_17FA}" | grep -c 'refusing to write in flight')|$(grep -c . "${MANIFEST}")" "with a range that collides, the WRITER refuses before sending anything and the manifest stays empty: the guard row on its own proved that the guard knows how to count, not that anybody looks at it"
 
 # 17fb: and with the good range it writes
 ID_EN_VUELO_DESDE="${GUARDA_DESDE3}"; EN_VUELO_MAX=4
 : > "${MANIFEST}"
 escritor_en_vuelo >/dev/null 2>&1
-fila 17fb "4" "$(grep -c ' confirmed$' "${MANIFEST}")" "y con el rango bueno escribe, que es la mitad sin la cual la de arriba pasaria con un escritor que no escribiera nunca"
+fila 17fb "4" "$(grep -c ' confirmed$' "${MANIFEST}")" "and with the good range it writes, which is the half without which the one above would pass with a writer that never wrote"
 
 # 17fc and 17fd: the in-flight verdict, from both sides
 CHECK_FAILED=0; VERDICTS=" "
 veredicto_en_vuelo
-fila 17fc "pass" "$(verdict_of P2.cut.envuelo)" "con acks en vuelo, P2.cut.envuelo pasa"
+fila 17fc "pass" "$(verdict_of P2.cut.envuelo)" "with in-flight acks, P2.cut.envuelo passes"
 printf '' > "${OUT_LOCAL}/en-vuelo.txt"
 VERDICTS=" "; CHECK_FAILED=0
 veredicto_en_vuelo
-roja 17fd "none" "$(verdict_of P2.cut.envuelo)" "y sin un solo ack en vuelo NO se pone rojo, se pone en NONE: cero acks no es un fallo del motor, es que la corrida no llego a hacer la pregunta, y eso se dice con none y no con un rojo que nombraria la causa equivocada"
+roja 17fd "none" "$(verdict_of P2.cut.envuelo)" "and without a single in-flight ack it does NOT turn red, it goes to NONE: zero acks is not a failure of the engine, it means the run never got to ask the question, and that is reported with none and not with a red that would name the wrong cause"
 
 EN_VUELO_MAX="${GUARDA_MAX3}"; ID_EN_VUELO_DESDE="${GUARDA_DESDE3}"
-printf 'binario sano, igual en las tres\n' > "${BANCO}/casa/1/naylamp/bin/naylampd"
+printf 'healthy binary, the same on all three\n' > "${BANCO}/casa/1/naylamp/bin/naylampd"
 rm -f -- "${BANCO}/estado/1.acepta"; rm -rf -- "${BANCO}/circuito"
 OUT_LOCAL="${GUARDA_OUT3}"; MANIFEST="${GUARDA_MAN3}"; ES_FIERRO="${GUARDA_FIERRO3}"
 CHECK_FAILED=0
@@ -1399,7 +1399,7 @@ CUERPO_VEREDICTO="$(awk '/^veredicto_en_vuelo\(\) \{/,/^\}$/' "${GATE_DIR}/p2.sh
 CUERPO_CUT2="$(awk '/^phase_cut_fierro\(\) \{/,/^\}$/' "${GATE_DIR}/p2.sh")"
 POS_END="$(printf '%s\n' "${CUERPO_CUT2}" | grep -n 'end_check P2.cut.fired' | tail -1 | cut -d: -f1)"
 POS_VER="$(printf '%s\n' "${CUERPO_CUT2}" | grep -n '^	veredicto_en_vuelo$' | tail -1 | cut -d: -f1)"
-roja 17ga "si" "$([ -n "${POS_END}" ] && [ -n "${POS_VER}" ] && [ "${POS_VER}" -gt "${POS_END}" ] && echo si || echo no)" "veredicto_en_vuelo se llama DESPUES del ultimo end_check de P2.cut.fired y no dentro de su bloque: begin_check pone CHECK_FAILED a cero, asi que dentro borraba los FAIL de la fase y P2.cut.fired podia registrar PASS con sus propios FAIL impresos encima"
+roja 17ga "si" "$([ -n "${POS_END}" ] && [ -n "${POS_VER}" ] && [ "${POS_VER}" -gt "${POS_END}" ] && echo si || echo no)" "veredicto_en_vuelo is called AFTER the last end_check of P2.cut.fired and not inside its block: begin_check sets CHECK_FAILED to zero, so, called inside, it erased the FAILs of the phase and P2.cut.fired could record PASS with its own FAILs printed above it"
 
 # THE CIRCUIT AND NOT THE PIECE: the whole phase is set up in miniature, with a FAIL
 # accumulated before it, and it is demanded that it survive the call.
@@ -1413,22 +1413,22 @@ printf 'ack 100 2026-09-09T00:00:00Z\n' > "${OUT_LOCAL}/en-vuelo.txt"
 # comes out `fail` with the call behind it. It is the same lesson once more, and this time
 # committed while writing the row that watches it.
 VERDICTS=" "; begin_check
-fail "P2.cut.fired: un FAIL de mentira, para ver si sobrevive" >/dev/null 2>&1
+fail "P2.cut.fired: a fake FAIL, to see whether it survives" >/dev/null 2>&1
 end_check P2.cut.fired
 veredicto_en_vuelo >/dev/null 2>&1
-roja 17gb "fail|pass" "$(verdict_of P2.cut.fired)|$(verdict_of P2.cut.envuelo)" "en la secuencia de la fase, el veredicto de P2.cut.fired queda en FAIL y el de P2.cut.envuelo en pass: son dos bloques y no uno, y con la llamada dentro el primero salia pass con sus propios FAIL impresos encima"
+roja 17gb "fail|pass" "$(verdict_of P2.cut.fired)|$(verdict_of P2.cut.envuelo)" "in the sequence of the phase, the verdict of P2.cut.fired stays at FAIL and that of P2.cut.envuelo at pass: they are two blocks and not one, and with the call inside, the first came out pass with its own FAILs printed above it"
 OUT_LOCAL="${GUARDA_OUT4}"; CHECK_FAILED="${GUARDA_CF}"; VERDICTS="${GUARDA_V}"
 
 # B2: the count of entries, measured for real over EMPTY directories
 mkdir -p "${BANCO}/vacios/data" "${BANCO}/vacios/logs" "${BANCO}/vacios/data-mutante"
-roja 17gc "3|0" "$(cd "${BANCO}/vacios" && ls -A data logs data-mutante 2>/dev/null | grep -c .)|$(cd "${BANCO}/vacios" && find data logs data-mutante -mindepth 1 2>/dev/null | grep -c .)" "sobre TRES directorios VACIOS, ls -A con varios operandos da TRES por sus cabeceras y find -mindepth 1 da CERO: con el primero, la precondicion del preflight fallaba en un host impecable, siempre, con el mensaje mas caro del diseno"
+roja 17gc "3|0" "$(cd "${BANCO}/vacios" && ls -A data logs data-mutante 2>/dev/null | grep -c .)|$(cd "${BANCO}/vacios" && find data logs data-mutante -mindepth 1 2>/dev/null | grep -c .)" "on THREE EMPTY directories, ls -A with several operands gives THREE because of its headers and find -mindepth 1 gives ZERO: with the first, the precondition of the preflight failed on a spotless host, always, with the most expensive message of the design"
 printf 'x\n' > "${BANCO}/vacios/data/algo"
-fila 17gd "1" "$(cd "${BANCO}/vacios" && find data logs data-mutante -mindepth 1 2>/dev/null | grep -c .)" "y con una entrada de verdad dentro cuenta UNA, que es la mitad sin la cual la de arriba pasaria con un contador que dijera siempre cero"
+fila 17gd "1" "$(cd "${BANCO}/vacios" && find data logs data-mutante -mindepth 1 2>/dev/null | grep -c .)" "and with one real entry inside it counts ONE, which is the half without which the one above would pass with a counter that always said zero"
 rm -rf -- "${BANCO}/vacios"
-roja 17ge "si|no" "$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'find naylamp/data naylamp/logs naylamp/data-mutante -mindepth 1' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'ls -A naylamp/data naylamp/logs' && echo si || echo no)" "y el preflight cuenta con find y ya no con ls -A"
+roja 17ge "si|no" "$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'find naylamp/data naylamp/logs naylamp/data-mutante -mindepth 1' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'ls -A naylamp/data naylamp/logs' && echo si || echo no)" "and the preflight counts with find and no longer with ls -A"
 
 # B3: the leader is asked of all THREE and with a bound
-roja 17gf "si|si" "$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'for h in "${hosts\[@\]}"' && printf '%s' "${CUERPO_CALIENTE}" | grep -q 'and host .* wrote it with' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'NOT elected a leader in 20 s, asking all THREE' && echo si || echo no)" "el lider se pregunta a los TRES y con cota: solo el nodo que GANA escribe esa linea, asi que preguntar solo al host 1 daba un rojo que nombra la causa equivocada dos de cada tres veces, sobre una flota sana y con las tres encendidas"
+roja 17gf "si|si" "$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'for h in "${hosts\[@\]}"' && printf '%s' "${CUERPO_CALIENTE}" | grep -q 'and host .* wrote it with' && echo si || echo no)|$(printf '%s' "${CUERPO_CALIENTE}" | grep -q 'NOT elected a leader in 20 s, asking all THREE' && echo si || echo no)" "all THREE are asked for the leader, and with a bound: only the node that WINS writes that line, so asking only host 1 gave a red that names the wrong cause two times out of three, on a healthy fleet with all three powered on"
 
 # ---- 17ha and 17hb: THE TWO SITES THE NEW GUARD UNCOVERED --------------------
 #
@@ -1452,7 +1452,7 @@ OUT_LOCAL="${OUT_DIR}/p2-${RUN_ID}"
 rm -rf -- "${OUT_DIR}"; mkdir -p "${OUT_LOCAL}"
 MANIFEST="${OUT_LOCAL}/manifest.txt"
 printf 'put 1 %s confirmed\n' "$(vec_for 1)" > "${MANIFEST}"
-printf 'algo que la corrida escribio\n' > "${OUT_LOCAL}/hygiene.log"
+printf 'something the run wrote\n' > "${OUT_LOCAL}/hygiene.log"
 ES_FIERRO=1; RUN_STARTED=1; EMITIDO=1; SELLO_ESCRITO_AQUI=0
 EXPECTED="P2.build"; VERDICTS=" P2.build=pass "
 SUBCOMANDO=all; ARRANCO_A="2026-09-09T00:00:00Z"
@@ -1466,8 +1466,8 @@ PID_EN_VUELO=$!
 SALIDA_TRAMPA="$( al_salir 2>&1 )"
 VIVE_TRAS_LA_TRAMPA="$(kill -0 "${PID_EN_VUELO}" 2>/dev/null && echo si || echo no)"
 kill "${PID_EN_VUELO}" 2>/dev/null || true
-fila 17ha "si|1|no|no" "$([ -e "${OUT_LOCAL}/SEALED" ] && echo si || echo no)|$(grep -c '^closed:' "${OUT_LOCAL}/SEALED" 2>/dev/null || echo 0)|$([ -e "${OUT_LOCAL}/RUNNING" ] && echo si || echo no)|${VIVE_TRAS_LA_TRAMPA}" "la trampa de salida, corrida ENTERA: deja el artefacto SELLADO, el sello TERMINADO con su linea closed, y el marcador RETIRADO. Ninguna fila corria al_salir, que es el sitio de cinco funciones que este banco si prueba una a una"
-roja 17hb "0" "$(ls -1 "${OUT_LOCAL}" 2>/dev/null | grep -c '^SEALED\.a-medias$')" "y no deja ningun SEALED.a-medias dentro de un artefacto que el sello protege de make clean: el orden de esas seis llamadas es lo unico que el sitio decide, y sin esta fila un cambio en el orden solo se veria en la primera corrida de fierro"
+fila 17ha "si|1|no|no" "$([ -e "${OUT_LOCAL}/SEALED" ] && echo si || echo no)|$(grep -c '^closed:' "${OUT_LOCAL}/SEALED" 2>/dev/null || echo 0)|$([ -e "${OUT_LOCAL}/RUNNING" ] && echo si || echo no)|${VIVE_TRAS_LA_TRAMPA}" "the exit trap, run WHOLE: it leaves the artifact SEALED, the seal FINISHED with its closed line, and the marker REMOVED. No row used to run al_salir, which is the site of five functions this bench does test one by one"
+roja 17hb "0" "$(ls -1 "${OUT_LOCAL}" 2>/dev/null | grep -c '^SEALED\.a-medias$')" "and it leaves no SEALED.a-medias inside an artifact that the seal protects from make clean: the order of those six calls is the only thing the site decides, and without this row a change in the order would only show in the first iron run"
 rm -rf -- "${OUT_DIR}"
 OUT_DIR="${GUARDA_OD5}"; RUN_ID="${GUARDA_RID5}"; OUT_LOCAL="${GUARDA_OUT5}"
 MANIFEST="${GUARDA_MAN5}"; ES_FIERRO="${GUARDA_FIERRO5}"; RUN_STARTED="${GUARDA_RUN5}"
@@ -1487,7 +1487,7 @@ ES_FIERRO="${GUARDA_FIERRO6}"
 # and not by count: counting appearances inside the output of a phase is a figure
 # that moves every time someone adds a line, and then the bench turns
 # red while nothing is broken. It is the third time today that I have corrected it in the same direction.
-roja 17hc "si|no" "$(printf '%s' "${DESPACHO}" | grep -q 'sane fleet is at' && echo si || echo no)|$(printf '%s' "${DESPACHO}" | grep -q 'is still running' && echo si || echo no)" "con ES_FIERRO=1, phase_hygiene DESPACHA a su rama de fierro y no corre la del ensayo: es el mismo circuito que el del banner, y las tres fases de fierro cuelgan de el"
+roja 17hc "si|no" "$(printf '%s' "${DESPACHO}" | grep -q 'sane fleet is at' && echo si || echo no)|$(printf '%s' "${DESPACHO}" | grep -q 'is still running' && echo si || echo no)" "with ES_FIERRO=1, phase_hygiene DISPATCHES to its iron branch and does not run the rehearsal one: it is the same circuit as the one in the banner, and the three iron phases depend on it"
 CHECK_FAILED=0
 
 # ---- 17ia and 17ib: THE CUT PHASE, RUN WHOLE ---------------------------------
@@ -1578,7 +1578,7 @@ wait "${AYUDANTE}" 2>/dev/null || true
 # a setup, it is an environment change for everything that comes after.
 rm -f -- "${BANCO_ESTADO}/2.no-arma"
 rm -f -- "${BANCO}/estado/1.acepta"
-printf 'binario sano, igual en las tres\n' > "${BANCO}/casa/1/naylamp/bin/naylampd"
+printf 'healthy binary, the same on all three\n' > "${BANCO}/casa/1/naylamp/bin/naylampd"
 
 # THE FOURTH HALF WAS ASKED FOR BY THE MUTANT SWEEP, not by me: taking away from the phase the
 # wait for the first ack, this row stayed green, because it looked at the writer
@@ -1589,7 +1589,7 @@ printf 'binario sano, igual en las tres\n' > "${BANCO}/casa/1/naylamp/bin/naylam
 # with an alternation: the mutant fell into the other one and passed. An assertion that admits
 # the two outcomes of the decision it watches watches nothing. In this setup the
 # writer DOES ack -six, measured- so the positive branch is demanded and only that one.
-fila 17ia "si|si|si|si|no" "$(printf '%s' "${SALIDA_CORTE}" | grep -q 'starting the in-flight writer' && echo si || echo no)|$(printf '%s' "${SALIDA_CORTE}" | grep -q 'has at least one acknowledged write' && echo si || echo no)|$(printf '%s' "${SALIDA_CORTE}" | grep -q 'cutting the THREE' && echo si || echo no)|$(printf '%s' "${SALIDA_CORTE}" | grep -q 'boot id after' && echo si || echo no)|$(printf '%s' "${SALIDA_CORTE}" | grep -q 'cutting nodes 1 and 2 with kill -9' && echo si || echo no)" "phase_cut_fierro se recorre ENTERA contra la flota de mentira, ENTRANDO POR EL DESPACHO: arranca el escritor en vuelo, corta, y llega a leer los boot id de vuelta. Es el SITIO de tres funciones que este banco prueba una a una y que nadie ejercia, y la quinta columna exige que con ES_FIERRO=1 no se haya colado la rama del ensayo, que corta dos nodos con kill -9 en vez de tres con sysrq"
+fila 17ia "si|si|si|si|no" "$(printf '%s' "${SALIDA_CORTE}" | grep -q 'starting the in-flight writer' && echo si || echo no)|$(printf '%s' "${SALIDA_CORTE}" | grep -q 'has at least one acknowledged write' && echo si || echo no)|$(printf '%s' "${SALIDA_CORTE}" | grep -q 'cutting the THREE' && echo si || echo no)|$(printf '%s' "${SALIDA_CORTE}" | grep -q 'boot id after' && echo si || echo no)|$(printf '%s' "${SALIDA_CORTE}" | grep -q 'cutting nodes 1 and 2 with kill -9' && echo si || echo no)" "phase_cut_fierro is walked WHOLE against the fake fleet, GOING IN THROUGH THE DISPATCH: it starts the in-flight writer, cuts, and gets as far as reading the boot ids back. It is the SITE of three functions this bench tests one by one, and nobody had exercised that site; the fifth column requires that with ES_FIERRO=1 the rehearsal branch, which cuts two nodes with kill -9 instead of three with sysrq, has not slipped in"
 # AND IT DOES NOT CARRY A `case` INSIDE THE SUBSTITUTION, which is clause 31 and the
 # second version of this line committed it: a `case` inside `$( )` is a syntax
 # error in the bash 3.2 of this machine, because the parser takes the `)` of the
@@ -1600,7 +1600,7 @@ fila 17ia "si|si|si|si|no" "$(printf '%s' "${SALIDA_CORTE}" | grep -q 'starting 
 # 17ib ASKS TWO THINGS THAT CAN GO WRONG, and the first version asked
 # one that could not: it compared the verdict against "different from none OR equal to
 # none", which is always true. A row that cannot fail is not a row.
-roja 17ib "si|pass" "$(printf '%s' "${SALIDA_CORTE}" | grep -q 'in flight:' && echo si || echo no)|$(verdict_of P2.cut.envuelo)" "y en el mismo recorrido lee la frontera del escritor y REGISTRA el veredicto en vuelo: el ORDEN de esas seis llamadas es lo unico que el sitio decide, y sin esta fila un cambio en el orden solo se veria en la primera corrida de fierro. La segunda columna exige PASS y no una alternancia: en este montaje el escritor ackea cuatro veces medidas, asi que none seria un defecto y no una rama legitima"
+roja 17ib "si|pass" "$(printf '%s' "${SALIDA_CORTE}" | grep -q 'in flight:' && echo si || echo no)|$(verdict_of P2.cut.envuelo)" "and in the same walk it reads the boundary of the writer and RECORDS the in-flight verdict: the ORDER of the calls to those three functions is decided only at this site, and without this row a change in that order would only show in the first iron run. The second column requires PASS and not an alternation: in this setup the writer acks six times, as measured, so none would be a defect and not a legitimate branch"
 
 # ---- 17ic: THE BUDGET OF THE WINDOW, measured by the STRUCTURE ----------------
 #
@@ -1634,7 +1634,7 @@ roja 17ib "si|pass" "$(printf '%s' "${SALIDA_CORTE}" | grep -q 'in flight:' && e
 # the row that chases it, and what caught it was the census of mutants: 17ic did not appear
 # in the list of rows that some mutant knocks down.
 CUERPO_CORTE_F="$(awk '/^phase_cut_fierro\(\) \{/,/^\}$/' "${GATE_DIR}/p2.sh" | grep -v '^[[:space:]]*#')"
-roja 17ic "si|si|si" "$(L_ESC="$(printf '%s\n' "${CUERPO_CORTE_F}" | grep -n 'escritor_en_vuelo &' | head -1 | cut -d: -f1)"; L_ARM="$(printf '%s\n' "${CUERPO_CORTE_F}" | grep -n 'testigo_arma "\$n"' | head -1 | cut -d: -f1)"; [ -n "${L_ESC}" ] && [ -n "${L_ARM}" ] && [ "${L_ESC}" -lt "${L_ARM}" ] && echo si || echo no)|$(printf '%s\n' "${CUERPO_CORTE_F}" | grep -qE '^[[:space:]]*\( if testigo_arma "\$n";.*\) &$' && echo si || echo no)|$(printf '%s\n' "${CUERPO_CORTE_F}" | grep -q 'wait \${pids_arma}' && echo si || echo no)" "el escritor en vuelo arranca ANTES del bucle de armado, las tres armas van al fondo CON su llamada dentro de un if, que es su exencion de errexit, y se las junta con wait antes de cortar: asi la espera del primer ack se solapa con las armas en vez de sumarse detras, y dentro de la ventana queda UN viaje ssh de armar mas el abanico del corte, que ya iba en paralelo"
+roja 17ic "si|si|si" "$(L_ESC="$(printf '%s\n' "${CUERPO_CORTE_F}" | grep -n 'escritor_en_vuelo &' | head -1 | cut -d: -f1)"; L_ARM="$(printf '%s\n' "${CUERPO_CORTE_F}" | grep -n 'testigo_arma "\$n"' | head -1 | cut -d: -f1)"; [ -n "${L_ESC}" ] && [ -n "${L_ARM}" ] && [ "${L_ESC}" -lt "${L_ARM}" ] && echo si || echo no)|$(printf '%s\n' "${CUERPO_CORTE_F}" | grep -qE '^[[:space:]]*\( if testigo_arma "\$n";.*\) &$' && echo si || echo no)|$(printf '%s\n' "${CUERPO_CORTE_F}" | grep -q 'wait \${pids_arma}' && echo si || echo no)" "the in-flight writer starts BEFORE the arming loop, the three arming jobs go to the background WITH their call inside an if, which is their errexit exemption, and they are gathered with wait before cutting: that way the wait for the first ack overlaps with the arming instead of adding up after it, and inside the window there is ONE ssh trip to arm plus the fan-out of the cut, which already ran in parallel"
 
 # ---- 17id: AN ARM THAT FAILS DOES NOT TAKE THE RUN DOWN ----------------------
 #
@@ -1654,7 +1654,7 @@ roja 17ic "si|si|si" "$(L_ESC="$(printf '%s\n' "${CUERPO_CORTE_F}" | grep -n 'es
 # that version the `fail` was not written either: what catches it is requiring the phase
 # to REACH a later line. It is the difference between looking at the piece and looking at
 # whether the current comes out the other side.
-roja 17id "si|si|fail" "$(printf '%s' "${SALIDA_CORTE}" | grep -q 'node 2 would not arm its canary' && echo si || echo no)|$(printf '%s' "${SALIDA_CORTE}" | grep -q 'cutting the THREE' && echo si || echo no)|$(verdict_of P2.cut.fired)" "con el stub negandole al nodo 2 el unico viaje que hace un >> sobre el testigo, su arma falla de verdad y la siembra pasa: se anota P2.cut.fired contra ESE nodo, la fase sobrevive y dispara el corte, y el veredicto sale FAIL y no none. Sin la exencion de errexit dentro de la subcapa del armado paralelo las tres columnas caen a la vez, porque el gate muere antes de escribir ninguna"
+roja 17id "si|si|fail" "$(printf '%s' "${SALIDA_CORTE}" | grep -q 'node 2 would not arm its canary' && echo si || echo no)|$(printf '%s' "${SALIDA_CORTE}" | grep -q 'cutting the THREE' && echo si || echo no)|$(verdict_of P2.cut.fired)" "with the stub denying node 2 the only trip that does a >> on the canary, its arming really fails and the seeding goes through: P2.cut.fired is noted against THAT node, the phase survives and fires the cut, and the verdict comes out FAIL and not none. Without the errexit exemption inside the subshell of the parallel arming these three columns stay green, because the phase runs here between set +e and set -e: row 17ie is the one that measures it"
 
 # ---- 17ie: THE PARALLEL ARMING, UNDER REAL errexit ----------------------------
 #
@@ -1779,22 +1779,22 @@ OUT_LOCAL="${GUARDA_OUT7}"; MANIFEST="${GUARDA_MAN7}"; ES_FIERRO="${GUARDA_FIERR
 VERDICTS="${GUARDA_V7}"; CHECK_FAILED="${GUARDA_CF7}"; EN_VUELO_MAX="${GUARDA_MAXV7}"
 
 # ---- 18 to 21: the iron primitives against the stub --------------------------
-fila 18 "aaaa-bbbb-cccc-0002" "$(boot_id_de 2)" "boot_id_de lee el boot id por el canal de tres estados"
+fila 18 "aaaa-bbbb-cccc-0002" "$(boot_id_de 2)" "boot_id_de reads the boot id through the three-state channel"
 : > "${BANCO}/estado/2.muerto"
-roja 19 "2" "$( boot_id_de 2 >/dev/null 2>&1; echo $? )" "un host que no contesta devuelve 2, y NO una cadena vacia que pase por respuesta"
+roja 19 "2" "$( boot_id_de 2 >/dev/null 2>&1; echo $? )" "a host that does not answer returns 2, and NOT an empty string that passes for an answer"
 rm -f -- "${BANCO}/estado/2.muerto"
-fila 20 "si" "$(ask_on 1 'true' && echo si || echo no)" "ask_on contesta SI sobre el host vivo"
-fila 21 "176" "$(sysrq_de 1)" "sysrq_de trae el valor del host"
+fila 20 "si" "$(ask_on 1 'true' && echo si || echo no)" "ask_on answers YES on the live host"
+fila 21 "176" "$(sysrq_de 1)" "sysrq_de fetches the value from the host"
 
 # ---- 22 to 25: the third canary, which is what the cut measures ---------------
 testigo_siembra 1 >/dev/null 2>&1
-fila 22 "${TESTIGO_SEMILLA}" "$(testigo_tamano 1)" "sembrado y sincronizado: ${TESTIGO_SEMILLA} bytes durables por construccion"
+fila 22 "${TESTIGO_SEMILLA}" "$(testigo_tamano 1)" "seeded and synced: ${TESTIGO_SEMILLA} bytes, durable by construction"
 testigo_arma 1 >/dev/null 2>&1
-fila 23 "$(( TESTIGO_SEMILLA + TESTIGO_COLA ))" "$(testigo_tamano 1)" "armado: la cola sin sincronizar esta encima"
+fila 23 "$(( TESTIGO_SEMILLA + TESTIGO_COLA ))" "$(testigo_tamano 1)" "armed: the unsynced tail sits on top"
 # a DRY cut takes the tail with it: it is simulated by truncating to the seed
 head -c "${TESTIGO_SEMILLA}" /dev/zero > "${BANCO}/casa/1/${TESTIGO_REMOTO}"
-fila 24 "${TESTIGO_SEMILLA}" "$(testigo_tamano 1)" "tras un corte seco vuelve a la semilla, que es la senal que el gate lee"
-roja 25 "$(( TESTIGO_SEMILLA + TESTIGO_COLA ))" "$(testigo_siembra 2 >/dev/null 2>&1; testigo_arma 2 >/dev/null 2>&1; testigo_tamano 2)" "un testigo que vuelve ENTERO significa que ahi no se corto nada, y ese es el caso que no puede leerse como verde"
+fila 24 "${TESTIGO_SEMILLA}" "$(testigo_tamano 1)" "after a dry cut it goes back to the seed, which is the signal the gate reads"
+roja 25 "$(( TESTIGO_SEMILLA + TESTIGO_COLA ))" "$(testigo_siembra 2 >/dev/null 2>&1; testigo_arma 2 >/dev/null 2>&1; testigo_tamano 2)" "a canary that comes back WHOLE means nothing was cut there, and that is the case that cannot be read as green"
 
 # ---- 26 to 31: THE DECISIONS, calling the functions OF gate/p2.sh ------------
 #
@@ -1804,22 +1804,22 @@ roja 25 "$(( TESTIGO_SEMILLA + TESTIGO_COLA ))" "$(testigo_siembra 2 >/dev/null 
 # p2.sh, the ten stayed green. Now the decisions are functions named
 # IN p2.sh and these rows call those, so rewinding the object puts the row
 # red, which is the only thing that makes a bench useful.
-fila 26 "2" "$(mayoria_de 3)" "mayoria_de(3) de p2.sh da 2, igual que cluster.Config.Quorum() en engine/cluster/config.go:87"
-fila 27 "pasa" "$(faithful_suficiente 2 3 && echo pasa || echo cae)" "faithful_suficiente(2,3): dos copias frias fieles PASAN, la tercera puede no haber persistido"
-roja 28 "cae" "$(faithful_suficiente 0 3 && echo pasa || echo cae)" "faithful_suficiente(0,3) CAE, que es donde el mutante sin barrera se queda"
-roja 29 "cae" "$(faithful_suficiente 1 3 && echo pasa || echo cae)" "faithful_suficiente(1,3) tambien CAE: la mayoria no se relaja hasta volverse decorativa"
+fila 26 "2" "$(mayoria_de 3)" "mayoria_de(3) in p2.sh gives 2, the same as cluster.Config.Quorum() in engine/cluster/config.go:87"
+fila 27 "pasa" "$(faithful_suficiente 2 3 && echo pasa || echo cae)" "faithful_suficiente(2,3): two faithful cold copies PASS, the third may not have persisted"
+roja 28 "cae" "$(faithful_suficiente 0 3 && echo pasa || echo cae)" "faithful_suficiente(0,3) FAILS, which is where the mutant without a barrier ends up"
+roja 29 "cae" "$(faithful_suficiente 1 3 && echo pasa || echo cae)" "faithful_suficiente(1,3) FAILS too: the majority is not relaxed to the point of becoming decorative"
 
 # ---- 30 and 31: the window, calling ventana_dentro of p2.sh -------------------
-fila 30 "dentro" "$(ventana_dentro 1.2 && echo dentro || echo fuera)" "ventana_dentro(1.2) con la cota en ${VENTANA_MAX} s"
-roja 31 "fuera" "$(ventana_dentro 31.0 && echo dentro || echo fuera)" "ventana_dentro(31.0) queda FUERA: con la raiz en commit=30 el diario pudo volcar la cola"
+fila 30 "dentro" "$(ventana_dentro 1.2 && echo dentro || echo fuera)" "ventana_dentro(1.2) with the bound at ${VENTANA_MAX} s"
+roja 31 "fuera" "$(ventana_dentro 31.0 && echo dentro || echo fuera)" "ventana_dentro(31.0) falls OUTSIDE: with the root at commit=30 the journal could have flushed the tail"
 
 # ---- 32 to 35: THE MUTANTS. Each decision, rewound to what it was -------------
 echo
-echo "-- mutantes: cada uno rebobina una decision del 7 de septiembre de 2026 --"
+echo "-- mutants: each one rewinds a decision taken on 2026-09-07 --"
 
 # 32: lineas_listening rewound to the || echo 0
 viejo_listening() { grep -c 'listening' "${FLEET}/node$1.log" 2>/dev/null || echo 0; }
-roja 32 "2" "$(viejo_listening 1 | wc -l | tr -d ' ')" "MUTANTE: con el || echo 0 la funcion devuelve DOS lineas y la comparacion revienta"
+roja 32 "2" "$(viejo_listening 1 | wc -l | tr -d ' ')" "MUTANT: with the || echo 0 the function returns TWO lines and the comparison blows up"
 
 # 33 and 33b: entry_log_bytes rewound to the fail-open form.
 #
@@ -1840,7 +1840,7 @@ viejo_bytes() {
 	done
 	printf '%d' "${t}"
 }
-roja 33 "0" "$(viejo_bytes 2 2>/dev/null)" "MUTANTE: la forma vieja devuelve 0 sobre el segmento que no resuelve, o sea 'el log encogio'"
+roja 33 "0" "$(viejo_bytes 2 2>/dev/null)" "MUTANT: the old form returns 0 for the segment that does not resolve, that is, 'the log shrank'"
 
 # The stat stub exits 1 ALWAYS, with the file present and readable, which is the
 # only way for the substitution to come back empty and the arithmetic to run.
@@ -1858,37 +1858,37 @@ salida_33b="$(PATH="${BANCO}/bin-stat:${PATH}" bash -c '
 	done
 	printf "%d" "${t}"
 	echo " y-el-guion-siguio-vivo"' 2>/dev/null)"
-roja 33b "0 y-el-guion-siguio-vivo" "${salida_33b}" "MUTANTE: con stat fallando de verdad, la aritmetica revienta en stderr, t conserva su valor y el guion SIGUE con rc 0; eso es el fail-open que set -e no caza"
+roja 33b "0 y-el-guion-siguio-vivo" "${salida_33b}" "MUTANT: with stat really failing, the arithmetic blows up on stderr, t keeps its value and the script GOES ON with rc 0; that is the fail-open that set -e does not catch"
 # The `set +e` is there because p2.sh brings `set -euo pipefail` along when sourced, and
 # without it the very function that returns 2, which is what this row wants to see, kills
 # the subshell before the `echo $?`. The first version of this row aborted the
 # whole bench there, that is, the row written to measure a fail-open died
 # because of the strict mode of the object it was measuring.
 salida_33c="$(PATH="${BANCO}/bin-stat:${PATH}" bash -c 'source "'"${GATE_DIR}"'/p2.sh" >/dev/null 2>&1; set +e; FLEET="'"${FLEET}"'"; entry_log_bytes 3 >/dev/null 2>&1; echo $?' 2>/dev/null)"
-fila 33c "2" "${salida_33c}" "y la forma de hoy, en el MISMO montaje, devuelve 2 en vez de un total corto"
+fila 33c "2" "${salida_33c}" "and the current form, in the SAME setup, returns 2 instead of a short total"
 
 # 34 and 35: the threshold of the cut. The red row rewinds corte_completo to a threshold of
 # two, writing it here as it was in the tree; the green row calls the one of p2.sh.
 corte_completo_viejo() { [ "$1" -ge 2 ]; }
-roja 34 "acepta" "$(corte_completo_viejo 2 3 && echo acepta || echo rechaza)" "MUTANTE: con umbral de DOS, dos boot id cambiados bastan y la superviviente cura a las otras"
-fila 35 "rechaza" "$(corte_completo 2 3 && echo acepta || echo rechaza)" "corte_completo(2,3) de p2.sh RECHAZA: la decision del 7 de septiembre de 2026 exige las tres"
-fila 36 "acepta" "$(corte_completo 3 3 && echo acepta || echo rechaza)" "y corte_completo(3,3) acepta, para que la fila de arriba no pase por ser siempre negativa"
+roja 34 "acepta" "$(corte_completo_viejo 2 3 && echo acepta || echo rechaza)" "MUTANT: with a threshold of TWO, two changed boot ids are enough and the survivor heals the others"
+fila 35 "rechaza" "$(corte_completo 2 3 && echo acepta || echo rechaza)" "corte_completo(2,3) in p2.sh REJECTS: the decision taken on 2026-09-07 requires all three"
+fila 36 "acepta" "$(corte_completo 3 3 && echo acepta || echo rechaza)" "and corte_completo(3,3) accepts, so that the row above cannot pass just because the answer is always negative"
 
 # 37: faithful rewound to demanding all three, against the one of p2.sh
 faithful_viejo() { [ "$1" -eq "$2" ]; }
-roja 37 "cae" "$(faithful_viejo 2 3 && echo pasa || echo cae)" "MUTANTE: exigir las TRES pone rojo un hardware sano, porque Raft ackea con dos"
+roja 37 "cae" "$(faithful_viejo 2 3 && echo pasa || echo cae)" "MUTANT: requiring all THREE turns healthy hardware red, because Raft acks on two"
 
 # 38 and 39: identity by path against identity by content, with the one of p2.sh
-roja 38 "no-distingue" "$(identidad_confirmada deadbeef deadbeef && echo distingue || echo no-distingue)" "identidad_confirmada con el MISMO sha no distingue: un mutante sobre el nombre sano tiene la misma ruta y el mismo contenido no"
-fila 39 "distingue" "$(identidad_confirmada cafe1234 deadbeef && echo distingue || echo no-distingue)" "identidad_confirmada de p2.sh separa contenidos distintos"
-roja 39b "no-distingue" "$(identidad_confirmada "" deadbeef && echo distingue || echo no-distingue)" "y una lectura VACIA no cuenta como distinta: un pid muerto no confirma nada"
+roja 38 "no-distingue" "$(identidad_confirmada deadbeef deadbeef && echo distingue || echo no-distingue)" "identidad_confirmada with the SAME sha does not tell them apart: a mutant deployed over the healthy name has the same path but not the same content"
+fila 39 "distingue" "$(identidad_confirmada cafe1234 deadbeef && echo distingue || echo no-distingue)" "identidad_confirmada in p2.sh tells different contents apart"
+roja 39b "no-distingue" "$(identidad_confirmada "" deadbeef && echo distingue || echo no-distingue)" "and an EMPTY reading does not count as different: a dead pid confirms nothing"
 
 # 39c to 39g: testigo_veredicto of p2.sh, its five outputs
-fila 39c "seco"         "$(testigo_veredicto 4096 4096 65536)"  "testigo_veredicto: la semilla sola es un corte SECO"
-fila 39d "entero"       "$(testigo_veredicto 69632 4096 65536)" "el total es ENTERO, o sea que ahi no se corto"
-fila 39e "parcial"      "$(testigo_veredicto 30000 4096 65536)" "a medias sigue siendo un corte"
-roja 39f "bajo-semilla" "$(testigo_veredicto 100 4096 65536)"   "por DEBAJO de la semilla sincronizada no es un corte seco: es una barrera rota bajo el sistema de ficheros"
-roja 39g "ilegible"     "$(testigo_veredicto "" 4096 65536)"    "y una lectura vacia es ILEGIBLE, no cero"
+fila 39c "seco"         "$(testigo_veredicto 4096 4096 65536)"  "testigo_veredicto: the seed alone is a DRY cut"
+fila 39d "entero"       "$(testigo_veredicto 69632 4096 65536)" "the total is WHOLE, that is, nothing was cut there"
+fila 39e "parcial"      "$(testigo_veredicto 30000 4096 65536)" "partial is still a cut"
+roja 39f "bajo-semilla" "$(testigo_veredicto 100 4096 65536)"   "BELOW the synced seed it is not a dry cut: it is a broken barrier under the filesystem"
+roja 39g "ilegible"     "$(testigo_veredicto "" 4096 65536)"    "and an empty reading is UNREADABLE, not zero"
 
 # ---- 42 to 45: the state of the REMOTE client, which on iron travels as text --
 #
@@ -1908,14 +1908,14 @@ cliente_estado() {
 	esac
 	printf '%s' "${rc}"
 }
-fila 42 "0" "$(cliente_estado "$(printf 'id=1 score=0.9\n__RC__=0\n')")" "el remoto contesta y sale 0"
-roja 43 "1" "$(cliente_estado "$(printf 'error\n__RC__=3\n')")" "sale distinto de cero: no committed"
-roja 44 "1" "$(cliente_estado "$(printf 'id=1 texto __RC__=0 pegado\n__RC__=3\n')")" "la SALIDA lleva __RC__=0 dentro y el estado real es 3: no se deja falsificar"
-roja 45 "2" "$(cliente_estado "$(printf 'a medias\n')")" "el canal se corto y no hay linea de estado: eso es ILEGIBLE, no un fallo del programa"
+fila 42 "0" "$(cliente_estado "$(printf 'id=1 score=0.9\n__RC__=0\n')")" "the remote answers and exits 0"
+roja 43 "1" "$(cliente_estado "$(printf 'error\n__RC__=3\n')")" "exits non-zero: not committed"
+roja 44 "1" "$(cliente_estado "$(printf 'id=1 texto __RC__=0 pegado\n__RC__=3\n')")" "the OUTPUT carries __RC__=0 inside and the real status is 3: it cannot be falsified"
+roja 45 "2" "$(cliente_estado "$(printf 'a medias\n')")" "the channel was cut and there is no status line: that is UNREADABLE, not a failure of the program"
 
 # ---- 40: the mutant does NOT land on the path the omnibus measures ------------
-fila 40 "0" "$(printf '%s' "${MUT_REMOTO}" | grep -c '^naylamp/bin/naylampd$')" "el mutante NO va a naylamp/bin/naylampd, que es lo que record_binary_digests lee en gate/omnibus.sh:589"
-fila 41 "1" "$(printf '%s' "${MUT_REMOTO}" | grep -c 'naylampd-mutante')" "va a su propio nombre"
+fila 40 "0" "$(printf '%s' "${MUT_REMOTO}" | grep -c '^naylamp/bin/naylampd$')" "the mutant does NOT go to naylamp/bin/naylampd, which is what record_binary_digests reads in gate/omnibus.sh:589"
+fila 41 "1" "$(printf '%s' "${MUT_REMOTO}" | grep -c 'naylampd-mutante')" "it goes to its own name"
 
 echo
 echo "=============================================================================="
@@ -1931,10 +1931,10 @@ if [ "${FILAS}" -eq 0 ]; then
 	echo "p2-iron-test: VACIO. Cero filas, asi que este banco no ha probado nada, y eso NO es un pase" >&2
 	exit 1
 fi
-echo "LO QUE ESTE BANCO NO CUBRE, y va escrito: no enciende una VM, no dispara un"
-echo "sysrq-b de verdad y no mide un corte real. Prueba los PREDICADOS del camino de"
-echo "fierro y sus mutantes; la primera corrida de fierro es la que los prueba en"
-echo "anger, y eso es un limite declarado y no un descuido."
+echo "WHAT THIS BENCH DOES NOT COVER, and it is written down: it powers on no VM,"
+echo "fires no real sysrq-b and measures no real cut. It tests the PREDICATES of"
+echo "the iron path and their mutants; the first iron run is the one that tests"
+echo "them in anger, and that is a declared limit and not an oversight."
 echo "=============================================================================="
 [ "${FALLAS}" -eq 0 ] || exit 1
 exit 0
