@@ -382,7 +382,7 @@ techo_de_ensayos() {
 		MAL=$((MAL + 1))
 		return
 	fi
-	quedan="$(ls -1d "${REPO_DIR}"/gate/out/p2-local-[0-9]*Z-[0-9]* 2>/dev/null | wc -l | tr -d ' ')"
+	quedan="$(find "${REPO_DIR}/gate/out/" -maxdepth 1 -name 'p2-local-[0-9]*Z-[0-9]*' | wc -l | tr -d ' ')"
 	if [ "${quedan}" -le "${techo}" ]; then
 		anota_fila OK
 		printf '%-26s %s\n' "techo-de-ensayos" "quedan ${quedan} artefactos de ensayo bajo un techo de ${techo}, tras 18 corridas del ensayo   OK"
@@ -764,6 +764,49 @@ sin_supervivientes F9 "tras un corte que dejo una replica viva"
 # escuchando en loopback despues de que el guion hubiera terminado. Los pid viven
 # ahora fuera de ese directorio, y esta comprobacion es la que lo sostiene.
 sin_supervivientes F8 "al cerrar el banco, tras las filas de higiene y de corte parcial"
+
+# F10 runs the count that techo-de-ensayos makes, by itself, against a gate/out
+# that holds nothing and against one that holds three artifacts. The ceiling row
+# counts once, at the end, whatever gate/out holds by then, and in a fresh clone
+# that is no rehearsal artifact at all. The count lists gate/out with find
+# instead of a glob: find returns 0 when no name matches and fails with its own
+# message when gate/out cannot be read as a directory. The trailing slash makes
+# find follow gate/out through a symlink, as the glob does, and fail when
+# gate/out is a dangling link or not a directory at all.
+#
+# The line is read out of the function with declare -f, as the shell holds it,
+# so this row runs the text the ceiling row runs, not a copy kept by hand. It
+# runs in a subshell that sets the bench's own options, and the subshell's
+# status is read with errexit off, so a count that fails is a failing row here
+# and never the end of the bench.
+#
+# STEPS is the sixth category of the epilogue: one step of another row, run
+# alone. F10 is not a TECHO row, because that one counts what eighteen rehearsals
+# left behind and this one runs no rehearsal at all.
+STEPS=0
+FILAS=$((FILAS + 1))
+STEPS=$((STEPS + 1))
+count_dir="${SCRATCH}/F10-ceiling-count"
+mkdir -p "${count_dir}/empty/gate/out"
+for i in 1 2 3; do
+	mkdir -p "${count_dir}/three/gate/out/p2-local-20260101T00000${i}Z-${i}"
+done
+set +e
+count_line="$(declare -f techo_de_ensayos | sed -n 's/^[[:space:]]*\(quedan="\$(.*)"\);*$/\1/p')"
+found="$(printf '%s\n' "${count_line}" | grep -c '^quedan=')"
+got_empty="$(set -euo pipefail; REPO_DIR="${count_dir}/empty"; eval "${count_line}"; printf '%s' "${quedan}")"
+rc_empty=$?
+got_three="$(set -euo pipefail; REPO_DIR="${count_dir}/three"; eval "${count_line}"; printf '%s' "${quedan}")"
+rc_three=$?
+set -e
+if [ "${found}" = 1 ] && [ "${rc_empty}" -eq 0 ] && [ "${got_empty}" = 0 ] && [ "${rc_three}" -eq 0 ] && [ "${got_three}" = 3 ]; then
+	anota_fila OK
+	printf '%-26s %s\n' "F10-ceiling-count" "0 in an empty gate/out and 3 in one holding three artifacts, status 0 both times   OK"
+else
+	anota_fila FAILING
+	printf '%-26s %s\n' "F10-ceiling-count" "FAILING: count lines found ${found}; empty gate/out: status ${rc_empty}, count [${got_empty}]; three artifacts: status ${rc_three}, count [${got_three}]"
+	MAL=$((MAL + 1))
+fi
 techo_de_ensayos
 
 echo
@@ -787,7 +830,7 @@ echo
 # crudo archivado decia "0 en FALLA" y el guion salia con 1. La marca de
 # terminacion mentia sobre el color de su propia corrida, que es la clase que
 # este registro persigue por nombre.
-if [ "$((NO_EMPIEZAN + SIGUEN + ABORTAN + SUPERVIV + TECHO))" -ne "${FILAS}" ]; then
+if [ "$((NO_EMPIEZAN + SIGUEN + ABORTAN + SUPERVIV + TECHO + STEPS))" -ne "${FILAS}" ]; then
 	echo "guard: el reparto por categorias no suma las filas corridas" >&2
 	anota_fila FAILING
 	MAL=$((MAL + 1))
@@ -834,7 +877,9 @@ printf '  %d filas no miran veredicto sino lo que queda vivo despues, porque un 
 printf '  y tres daemons huerfanos caben en la misma corrida.\n'
 printf '  %d fila no mira lo que queda vivo sino lo que queda ESCRITO: que el techo de\n' "${TECHO}"
 printf '  artefactos de ensayo se cumplio despues de correr el ensayo dieciocho veces.\n'
-printf '  suma: %d, y FILAS dice %d\n' "$((NO_EMPIEZAN + SIGUEN + ABORTAN + SUPERVIV + TECHO))" "${FILAS}"
+printf '  %d row runs one step of another row by itself: the count of the ceiling row, on\n' "${STEPS}"
+printf '  an empty gate/out and on one holding three artifacts, both built for it.\n'
+printf '  suma: %d, y FILAS dice %d\n' "$((NO_EMPIEZAN + SIGUEN + ABORTAN + SUPERVIV + TECHO + STEPS))" "${FILAS}"
 echo
 echo "LO QUE ESTE BANCO COMPRUEBA DE CADA FILA, y no solo el veredicto: el codigo de"
 echo "salida, si la corrida llego a su final o aborto, y que una fila roja NO cierre con"
