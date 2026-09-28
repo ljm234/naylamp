@@ -545,7 +545,7 @@ node_alive() { local p; p="$(node_pid "$1")"; [ -n "${p}" ] && kill -0 "${p}" 2>
 # read, the first line only, and anything that is not a plain number becomes 0.
 lineas_listening() {
 	local n
-	n="$(grep -c 'listening' "${FLEET}/node$1.log" 2>/dev/null | head -1)"
+	n="$(head -1 <<< "$(grep -c 'listening' "${FLEET}/node$1.log" 2>/dev/null)")"
 	case "${n}" in
 		''|*[!0-9]*) n=0 ;;
 	esac
@@ -616,7 +616,7 @@ client_op() {
 	set -e
 	printf '%s\nexit=%d\n' "${out}" "${rc}"
 }
-committed() { printf '%s' "$1" | grep -q 'exit=0$'; }
+committed() { grep -q 'exit=0$' <<< "$1"; }
 
 # manifest_put appends to the manifest ONLY when the client exited 0, so the
 # manifest is exactly the acked set and never the attempted set. That is the
@@ -1414,7 +1414,7 @@ artefactos_de_fierro_sin_sello() {
 marcador_de() {
 	local d="$1" pid
 	[ -f "${d}/RUNNING" ] || { printf 'sin-marcador'; return 0; }
-	pid="$(sed -n 's/^pid: //p' "${d}/RUNNING" 2>/dev/null | head -n1)"
+	pid="$(head -n1 <<< "$(sed -n 's/^pid: //p' "${d}/RUNNING" 2>/dev/null)")"
 	case "${pid}" in
 		''|0|*[!0-9]*) printf 'ilegible'; return 0 ;;
 	esac
@@ -2115,7 +2115,7 @@ escritor_en_vuelo() {
 	{
 		echo "the in-flight manifest closes at the LAST ack received before the cut"
 		echo "last ack:        $(grep '^ack ' "${OUT_LOCAL}/en-vuelo.txt" | tail -1)"
-		echo "first sin-ack:   $(grep '^sin-ack ' "${OUT_LOCAL}/en-vuelo.txt" | head -1)"
+		echo "first sin-ack:   $(head -1 <<< "$(grep '^sin-ack ' "${OUT_LOCAL}/en-vuelo.txt")")"
 		echo "acks:            $(grep -c '^ack ' "${OUT_LOCAL}/en-vuelo.txt" || true)"
 		echo "no acks:         $(grep -c '^sin-ack ' "${OUT_LOCAL}/en-vuelo.txt" || true)"
 	} > "${OUT_LOCAL}/en-vuelo-frontera.txt"
@@ -2612,7 +2612,7 @@ PY
 	while read -r id; do
 		[ -z "${id}" ] && continue
 		out="$(client_op -op search -vec "$(vec_for "${id}")" -k 1)"
-		if committed "${out}" && printf '%s' "${out}" | grep -q "^id=${id} "; then
+		if committed "${out}" && grep -q "^id=${id} " <<< "${out}"; then
 			vivos=$((vivos + 1))
 		else
 			ausentes=$((ausentes + 1))
@@ -2823,7 +2823,7 @@ MUTPY
 	if [ "${ES_FIERRO}" -eq 1 ]; then
 		( cd "${MUT_ROOT}/arbol" && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o "${MUT_LINUX}" ./engine/cmd/naylampd ) >>"${OUT_LOCAL}/red-build.log" 2>&1 \
 			|| fail "P2.red.mutation: the mutant did not cross compile for linux/arm64, so nothing could be shipped"
-		if [ -f "${MUT_LINUX}" ] && ! file "${MUT_LINUX}" 2>/dev/null | grep -q 'ELF.*ARM aarch64'; then
+		if [ -f "${MUT_LINUX}" ] && ! grep -q 'ELF.*ARM aarch64' <<< "$(file "${MUT_LINUX}" 2>/dev/null)"; then
 			fail "P2.red.mutation: the cross compiled mutant is not an aarch64 ELF: $(file "${MUT_LINUX}" 2>/dev/null | cut -c1-90)"
 		fi
 	fi
@@ -3293,7 +3293,7 @@ barre_mutantes_huerfanos() {
 		if [ ! -f "${marca}" ]; then
 			continue
 		fi
-		pid="$(sed -n 's/^pid: \([0-9][0-9]*\)$/\1/p' "${marca}" 2>/dev/null | head -1)"
+		pid="$(sed -n 's/^pid: \([0-9][0-9]*\)$/\1/p' "${marca}" 2>/dev/null)"; pid="$(head -1 <<< "${pid}")"
 		if [ -z "${pid}" ]; then
 			dudosos=$((dudosos + 1))
 			note "mutant tree ${d##*/} carries no pid in its marker, so it is LEFT ALONE: nothing here can tell whether its run is alive"
