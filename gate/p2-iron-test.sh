@@ -1913,6 +1913,20 @@ roja 43 "1" "$(cliente_estado "$(printf 'error\n__RC__=3\n')")" "exits non-zero:
 roja 44 "1" "$(cliente_estado "$(printf 'id=1 texto __RC__=0 pegado\n__RC__=3\n')")" "the OUTPUT carries __RC__=0 inside and the real status is 3: it cannot be falsified"
 roja 45 "2" "$(cliente_estado "$(printf 'a medias\n')")" "the channel was cut and there is no status line: that is UNREADABLE, not a failure of the program"
 
+# ---- 46: committed() of p2.sh reads the LAST line and opens nothing -----------
+#
+# client_op prints the status of the client as the last line of its answer, and
+# every caller holds that answer as $( ) captured it, so the text committed()
+# reads ends in exit=N. It used to read it with grep through a here-string,
+# which took exit=0 at the end of ANY line and which the shell has to write to
+# a new file or pipe: a shell that could not open one answered "not committed"
+# for an acked put, the in-flight writer recorded that id as not acked, the fold
+# made it uncertain, and P2.recover.acked never asked for it again. The third
+# answer runs in a subshell limited to three open files, where the shell can
+# open no new file and no pipe; its redirections stand outside it, because
+# inside it not even /dev/null opens.
+roja 46 "yes|no|yes" "$(committed $'ok index=7\nexit=0' && echo yes || echo no)|$(committed $'exit=0\nexit=1' && echo yes || echo no)|$( (ulimit -n 3 && committed $'ok index=7\nexit=0') </dev/null 2>/dev/null && echo yes || echo no)" "committed() of p2.sh takes exit=0 from the LAST line, where client_op prints the status, and not from a line before it, and a shell that can open no new file and no pipe still reads the answer it already holds"
+
 # ---- 40: the mutant does NOT land on the path the omnibus measures ------------
 fila 40 "0" "$(printf '%s' "${MUT_REMOTO}" | grep -c '^naylamp/bin/naylampd$')" "the mutant does NOT go to naylamp/bin/naylampd, which is what record_binary_digests reads in gate/omnibus.sh:589"
 fila 41 "1" "$(printf '%s' "${MUT_REMOTO}" | grep -c 'naylampd-mutante')" "it goes to its own name"

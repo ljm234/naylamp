@@ -616,7 +616,7 @@ client_op() {
 	set -e
 	printf '%s\nexit=%d\n' "${out}" "${rc}"
 }
-committed() { grep -q 'exit=0$' <<< "$1"; }
+committed() { [[ ${1##*$'\n'} == 'exit=0' ]]; }
 
 # manifest_put appends to the manifest ONLY when the client exited 0, so the
 # manifest is exactly the acked set and never the attempted set. That is the
