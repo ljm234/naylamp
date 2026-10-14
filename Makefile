@@ -34,11 +34,14 @@ lint:
 
 # vuln scans the module for known vulnerabilities. The scanner is pinned to
 # @latest on purpose: the vulnerability database is a moving target, so the newest
-# scanner is wanted. It analyzes the code as compiled by the active toolchain, so
-# it needs Go 1.26.5 or later, the minimum go.mod declares; an older local Go
-# would report the toolchain's own vulnerabilities, which is correct. The module
-# has no external dependencies, so the standard library and toolchain are the
-# whole surface, and the scanner runs as a tool without joining them.
+# scanner is wanted. It analyzes the code as compiled by the active toolchain,
+# and while go.work is in force never with one older than the one it names.
+# Under GOTOOLCHAIN=auto, the default, an older go on the path switches to that
+# one and a newer one is used as it is; under GOTOOLCHAIN=local with an older
+# go, or GOTOOLCHAIN set to an older release with no suffix, the scan stops on
+# the go line of go.work rather than report on an older standard library. The
+# module has no external dependencies, so the standard library and toolchain
+# are the whole surface, and the scanner runs as a tool without joining them.
 vuln:
 	cd engine && $(GO) run golang.org/x/vuln/cmd/govulncheck@latest ./...
 

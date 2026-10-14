@@ -1,4 +1,4 @@
-go 1.26.6
+go 1.26.9
 
 // Two lines, and which one is read depends on who is asking, so both are set
 // to the same release on purpose.
@@ -19,13 +19,18 @@ go 1.26.6
 // release carrying GO-2026-6090 and GO-2026-5972. And with GOTOOLCHAIN=local
 // and an older toolchain on the path, this line is the only thing that errors
 // instead of building quietly against a superseded standard library:
-// "go.work requires go >= 1.26.6 (running go 1.26.5; GOTOOLCHAIN=local)".
+// "go.work requires go >= 1.26.9 (running go 1.26.6; GOTOOLCHAIN=local)".
 //
 // Downloads of a toolchain are verified against the checksum database, not just
-// against the file server: golang.org/toolchain@v0.0.1-go1.26.6.darwin-arm64
-// carries ziphash h1:bWbVug832DkhCPVPonMoyglnCu5t1R0qMSxflM2MZA8=, which is
-// what sum.golang.org publishes for it. That holds while GOSUMDB is on and
-// neither GOPRIVATE nor GONOSUMDB matches golang.org/toolchain.
-toolchain go1.26.6
+// against the file server: golang.org/toolchain@v0.0.1-go1.26.9.darwin-arm64
+// carries ziphash h1:u1IV5D8HPeURJjWAqzcC8QRXDJqvXlh7FpsA4lGIg1c=, which is
+// what sum.golang.org publishes for it. For a toolchain the go command makes
+// that lookup whatever GONOSUMDB and GOPRIVATE say, and with GOSUMDB=off it
+// refuses the download instead of skipping the check. Its source names two
+// exceptions, a GOPROXY that is a single file:// URL and a GIT_HTTP_USER_AGENT
+// that contains proxy.golang.org. A third, GO-2026-6602, closed in go1.26.9
+// and go1.27.2: until then a matching line in a sum file the command had read
+// stood in for the lookup. The switch this file starts reads no sum file.
+toolchain go1.26.9
 
 use ./engine

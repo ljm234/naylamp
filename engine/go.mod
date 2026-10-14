@@ -10,4 +10,4 @@ go 1.26
 // version bump goes first. This one is kept in step with it because it is what
 // the module declares to anyone who builds it on its own, with GOWORK=off or
 // outside this repository, where it does govern.
-toolchain go1.26.6
+toolchain go1.26.9
