@@ -138,7 +138,14 @@ MARCA_BANCO="${TMPDIR:-/tmp}/naylamp-p2-bench-EN-CURSO"
 otro_banco_vivo() {
 	local pid args
 	[ -f "${MARCA_BANCO}" ] || return 1
-	pid="$(sed -n 's/^pid: \([0-9][0-9]*\)$/\1/p' "${MARCA_BANCO}" 2>/dev/null | head -1)"
+	local _l
+	pid=""
+	while _l=""; IFS= read -r _l || [ -n "${_l}" ]; do
+		case "${_l}" in
+			'pid: ' | 'pid: '*[!0123456789]*) ;;
+			'pid: '*) pid="${_l#pid: }"; break ;;
+		esac
+	done 2>/dev/null <"${MARCA_BANCO}" || false
 	[ -n "${pid}" ] || { echo "guard: el marcador de banco no lleva pid legible; se retira" >&2; rm -f -- "${MARCA_BANCO}"; return 1; }
 	args="$(ps -p "${pid}" -o args= 2>/dev/null || true)"
 	case "${args}" in
@@ -375,7 +382,16 @@ techo_de_ensayos() {
 	local techo quedan
 	FILAS=$((FILAS + 1))
 	TECHO=$((TECHO + 1))
-	techo="$(sed -n 's/^CONSERVA_ENSAYOS=\([0-9]*\)$/\1/p' "${P2}" | head -1)"
+	local _l
+	techo=""
+	exec 3<"${P2}"
+	while _l=""; IFS= read -r -u 3 _l || [ -n "${_l}" ]; do
+		case "${_l}" in
+			CONSERVA_ENSAYOS=*[!0123456789]*) ;;
+			CONSERVA_ENSAYOS=*) techo="${_l#CONSERVA_ENSAYOS=}"; break ;;
+		esac
+	done
+	exec 3<&-
 	if [ -z "${techo}" ]; then
 		anota_fila FAILING
 		printf '%-26s %s\n' "techo-de-ensayos" "NO CUADRA: no se puede leer CONSERVA_ENSAYOS de ${P2}, asi que esta fila no mide nada"
@@ -412,7 +428,7 @@ fila() {
 	# day p2.sh learned to print the block from its exit trap. What it asks now is
 	# whether the run REACHED ITS OWN END or was cut short, which is the
 	# distinction clause 20 is about, and the script says so itself.
-	if printf '%s' "${salida}" | grep -q 'the run ABORTED before reaching its verdict block'; then
+	if [[ ${salida} == *'the run ABORTED before reaching its verdict block'* ]]; then
 		llego_final=abort
 	else
 		llego_final=carry
@@ -421,7 +437,7 @@ fila() {
 	# row whose verdict is red must never close with the success line. That
 	# sentence sat in the epilogue of this file for one version with nothing
 	# behind it, which is the same defect it exists to catch in p2.sh.
-	if printf '%s' "${salida}" | grep -q 'all rehearsal checks passed'; then cierre=verde; else cierre=rojo; fi
+	if [[ ${salida} == *'all rehearsal checks passed'* ]]; then cierre=verde; else cierre=rojo; fi
 
 	local bien=si
 	[ "${v}" = "${espera}" ] || bien=no
@@ -495,7 +511,7 @@ set +e
 salida="$(env -u NAYLAMP_GATE_HOSTS -u NAYLAMP_GATE_PRIVATE -u NAYLAMP_GATE_KEY "${P2}" all 2>&1)"; rc=$?
 set -e
 FILAS=$((FILAS + 1))
-if [ "${rc}" -eq 2 ] && printf '%s' "${salida}" | grep -q 'NAYLAMP_GATE_HOSTS is required' && ! printf '%s' "${salida}" | grep -q 'gate: verdict '; then
+if [ "${rc}" -eq 2 ] && [[ ${salida} == *'NAYLAMP_GATE_HOSTS is required'* ]] && ! [[ ${salida} == *'gate: verdict '* ]]; then
 	anota_fila OK; echo "F0-fierro-sin-identidad      sin las variables de la flota     rc=2, ninguna fase corrio, ningun veredicto   OK"
 	NO_EMPIEZAN=$((NO_EMPIEZAN + 1))
 else
@@ -517,7 +533,7 @@ salida="$(NAYLAMP_RED_ARM=1 \
 	NAYLAMP_GATE_KEY="${llave_falsa}" \
 	NAYLAMP_P2_SOURCE_ONLY=1 bash -c "source '${P2}'; echo ES_FIERRO=\${ES_FIERRO}; basename \"\${OUT_LOCAL}\"" 2>&1)"; rc=$?
 set -e
-if [ "${rc}" -eq 0 ] && printf '%s' "${salida}" | grep -q 'ES_FIERRO=1' && printf '%s' "${salida}" | grep -qE '^p2-[0-9]'; then
+if [ "${rc}" -eq 0 ] && [[ ${salida} == *'ES_FIERRO=1'* ]] && [[ ${salida} == 'p2-'[0123456789]* || ${salida} == *$'\n''p2-'[0123456789]* ]]; then
 	anota_fila OK; echo "F0b-fierro-elegido           con la identidad de la flota      toma el camino de fierro y nombra p2-<run id>  OK"
 	NO_EMPIEZAN=$((NO_EMPIEZAN + 1))
 else
@@ -528,7 +544,7 @@ set +e
 salida="$(NAYLAMP_P2_LOCAL=1 "${P2}" 2>&1)"; rc=$?
 set -e
 FILAS=$((FILAS + 1))
-if [ "${rc}" -eq 2 ] && printf '%s' "${salida}" | grep -q 'usage:' && ! printf '%s' "${salida}" | grep -q 'gate: verdict '; then
+if [ "${rc}" -eq 2 ] && [[ ${salida} == *'usage:'* ]] && ! [[ ${salida} == *'gate: verdict '* ]]; then
 	anota_fila OK; echo "F1-sin-subcomando            invocacion desnuda               rc=2, uso impreso, ningun veredicto           OK"
 	NO_EMPIEZAN=$((NO_EMPIEZAN + 1))
 else
@@ -543,7 +559,7 @@ salida="$(NAYLAMP_P2_LOCAL=1 "${P2}" hygiene 2>&1)"; rc=$?
 set -e
 FILAS=$((FILAS + 1))
 sobra="$(ls -d "${REPO_DIR}"/gate/out/p2-local-* 2>/dev/null | wc -l | tr -d ' ' || true)"
-if [ "${rc}" -eq 2 ] && printf '%s' "${salida}" | grep -q 'usage:' && ! printf '%s' "${salida}" | grep -q 'gate: verdict '; then
+if [ "${rc}" -eq 2 ] && [[ ${salida} == *'usage:'* ]] && ! [[ ${salida} == *'gate: verdict '* ]]; then
 	anota_fila OK; echo "F1b-subcomando-no-cableado   'hygiene', que el uso no anuncia   rc=2 y ningun veredicto                      OK"
 	NO_EMPIEZAN=$((NO_EMPIEZAN + 1))
 else
@@ -557,7 +573,7 @@ set +e
 salida="$(NAYLAMP_P2_LOCAL=1 NAYLAMP_P2_REPO="${REPO_DIR}" "${copia}" all 2>&1)"; rc=$?
 set -e
 FILAS=$((FILAS + 1))
-if [ "${rc}" -eq 2 ] && printf '%s' "${salida}" | grep -q 'not the shape this script deletes by' && ! printf '%s' "${salida}" | grep -q 'gate: verdict '; then
+if [ "${rc}" -eq 2 ] && [[ ${salida} == *'not the shape this script deletes by'* ]] && ! [[ ${salida} == *'gate: verdict '* ]]; then
 	anota_fila OK; echo "F2-runid-fuera-de-forma      la guarda del borrado            rc=2, antes de crear nada, ningun veredicto   OK"
 	NO_EMPIEZAN=$((NO_EMPIEZAN + 1))
 else
