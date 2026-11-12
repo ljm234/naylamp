@@ -128,7 +128,7 @@ control() {
 	salida="$(corre)"
 	n="$(printf '%s' "${salida}" | grep -cE '^ROW .* FAILING ' || true)"
 	CONTROL="${n}"
-	if ! printf '%s' "${salida}" | grep -q '^RESULTADO: '; then
+	if ! [[ ${salida} == 'RESULTADO: '* || ${salida} == *$'\n''RESULTADO: '* ]]; then
 		echo "CONTROL   unmutated: the bench ABORTS. Without a green control this sweep says nothing" >&2
 		CONTROL=-1
 		return
@@ -175,7 +175,7 @@ mitad() {
 	fi
 	salida="$(corre)"
 	caidas="$(printf '%s' "${salida}" | grep -E '^ROW .* FAILING ' | awk '{print $2}' | tr '\n' ' ')"
-	if ! printf '%s' "${salida}" | grep -q '^RESULTADO: '; then
+	if ! [[ ${salida} == 'RESULTADO: '* || ${salida} == *$'\n''RESULTADO: '* ]]; then
 		printf '%-5s UNEXPECTED  the bench ABORTS with half a guard removed   %s\n' "${etiqueta}" "${glosa}"
 		MITADES_MAL=$((MITADES_MAL + 1))
 	elif [ -z "${caidas}" ]; then
@@ -207,7 +207,7 @@ mutante() {
 	local salida
 	salida="$(corre)"
 	caidas="$(printf '%s' "${salida}" | grep -E '^ROW .* FAILING ' | awk '{print $2}' | tr '\n' ' ')"
-	if ! printf '%s' "${salida}" | grep -q '^RESULTADO: '; then
+	if ! [[ ${salida} == 'RESULTADO: '* || ${salida} == *$'\n''RESULTADO: '* ]]; then
 		printf '%-5s BITES  the bench ABORTS and does not reach its summary   %s\n' "${etiqueta}" "$4"
 	elif [ -z "${caidas}" ]; then
 		printf '%-5s SILENT  NO ROW FALLS   <-- nobody watches that decision   %s\n' "${etiqueta}" "$4"
