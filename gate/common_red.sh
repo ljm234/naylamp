@@ -441,7 +441,7 @@ cp "${RED}/state/node1.log.kept" "${RED}/home/1/naylamp/logs/node.log"
 fl_src=""
 fl_take() { # $1 fichero, $2 funcion, $3 minimo de lineas, $4 texto obligatorio
 	fl_src="$(awk -v fn="^$2\\\\(\\\\) \\\\{" '$0 ~ fn {f=1} f{print} f&&/^\}$/{exit}' "$1")"
-	if [ "$(printf '%s\n' "${fl_src}" | grep -c . || true)" -lt "$3" ] || ! printf '%s' "${fl_src}" | grep -q -- "$4"; then
+	if [ "$(printf '%s\n' "${fl_src}" | grep -c . || true)" -lt "$3" ] || ! grep -q -- "$4" <<< "${fl_src}"; then
 		echo "common_red: ${2} did not come whole out of ${1}; the F rows would test nothing" >&2
 		return 1
 	fi
@@ -622,12 +622,12 @@ row "G3" "1" "${rc}" "wait_converged: no leader with every host readable is stil
 # El bloque se saca POR TEXTO del guion real, desde el comentario del if hasta su
 # fi, y se corre con wait_converged forzado a cada uno de sus tres valores.
 h_src="$(awk '/# AND THE ELSE OF THIS IF WAS THE WIDE PATH/{f=1} f{print} f&&/^\tfi$/{exit}' "${GATE_DIR}/checkquorum.sh")"
-if [ "$(printf '%s\n' "${h_src}" | grep -c . || true)" -lt 12 ] || ! printf '%s' "${h_src}" | grep -q 'wc}" -eq 2'; then
+if [ "$(printf '%s\n' "${h_src}" | grep -c . || true)" -lt 12 ] || ! [[ ${h_src} == *'wc}" -eq 2'* ]]; then
 	echo "common_red: el bloque de las tres ramas no salio entero de checkquorum.sh; las filas H no medirian nada" >&2
 	exit 1
 fi
 w_src="$(awk '/^wait_converged\(\) \{/{f=1} f{print} f&&/^\}$/{exit}' "${GATE_DIR}/checkquorum.sh")"
-if [ "$(printf '%s\n' "${w_src}" | grep -c . || true)" -lt 20 ] || ! printf '%s' "${w_src}" | grep -q 'unread=0'; then
+if [ "$(printf '%s\n' "${w_src}" | grep -c . || true)" -lt 20 ] || ! [[ ${w_src} == *'unread=0'* ]]; then
 	echo "common_red: wait_converged no salio entera de checkquorum.sh; H6 y H7 no medirian nada" >&2
 	exit 1
 fi
@@ -671,10 +671,31 @@ h_bucle() { # $1 el valor de la primera vuelta, $2 el de las siguientes
 	(
 		set +e
 		POLL_S=0
-		eval "i=0; cluster_converged() { i=\$((i + 1)); [ \"\${i}\" -ne 1 ] || return $1; return $2; }"
+		# The row brings its own clock, as it brings its own cluster_converged: it
+		# answers only date +%s, reads 100 for the start and the first two hundred
+		# checks, and then one second more per check, so a budget of 1 runs out
+		# after the 201st read in whatever second the arm runs. On the real clock
+		# it runs out at the first change of second, which can come right after
+		# the first read, and H6 then answers 2. A file carries the count, because
+		# each $(date +%s) runs in a subshell of its own.
+		echo 0 > "${RED}/state/h-clock"
+		date() { [ "$*" = "+%s" ] || return 1; local n; n="$(cat "${RED}/state/h-clock")"; echo "$((n + 1))" > "${RED}/state/h-clock"; if [ "${n}" -le 200 ]; then echo 100; else echo "$((n - 100))"; fi; }
+		# The row's cluster_converged ends the row after 1000 reads, about five
+		# times the 201 a sound loop makes, with an answer that begins with rc= and
+		# says why: a loop whose budget never runs out fails the row instead of
+		# holding the arm. It ends the subshell with status 0, so that under the
+		# set -e and pipefail of the arm the answer reaches the row.
+		eval "i=0; cluster_converged() { i=\$((i + 1)); if [ \"\${i}\" -gt 1000 ]; then echo \"rc=none, the row stopped the loop after 1000 reads of cluster_converged\"; exit 0; fi; [ \"\${i}\" -ne 1 ] || return $1; return $2; }"
 		eval "${w_src}"
 		wait_converged 1
-		echo "rc=$?"
+		r=$?
+		# The loop reads the clock once at the start and once after each read, and
+		# stops at the first check at which the budget has run out: 202 times. Any
+		# other count means it read another clock, stopped early or overshot the
+		# budget, and the row says so.
+		c="$(cat "${RED}/state/h-clock")"
+		[ "${c}" -eq 202 ] || r="${r}, the row clock read ${c} times"
+		echo "rc=${r}"
 	)
 }
 got="$(h_bucle 2 1 | tail -1)"
@@ -685,7 +706,7 @@ row "H7" "rc=2" "${got}" "and when the budget really runs out with a read still 
 # H8 y H9: las dos ramas nuevas de la precondicion de F0, que no tenian fila
 # ninguna: un mutante que mata su condicion dejaba el brazo entero verde.
 p_src="$(awk '/^precondition\(\) \{/{f=1} f{print} f&&/^\}$/{exit}' "${GATE_DIR}/checkquorum.sh")"
-if [ "$(printf '%s\n' "${p_src}" | grep -c . || true)" -lt 25 ] || ! printf '%s' "${p_src}" | grep -q 'rl0rc}" -ne 0'; then
+if [ "$(printf '%s\n' "${p_src}" | grep -c . || true)" -lt 25 ] || ! [[ ${p_src} == *'rl0rc}" -ne 0'* ]]; then
 	echo "common_red: precondition no salio entera de checkquorum.sh; las filas H8 y H9 no medirian nada" >&2
 	exit 1
 fi
