@@ -438,7 +438,7 @@ caliente() {
 			# `Failed`. With the `cold` guard dodged, that path reached `hechos=3` without
 			# having taken one, and the gate cuts the three trusting old disks. The state
 			# and the date are read, and only one that is good and from today counts.
-			local estado_snap fecha_snap
+			local estado_snap fecha_snap salida_snap
 			estado_snap="$(az_lee snapshot show -g "${GRUPO}" -n "${snap}" --query provisioningState -o tsv)"
 			fecha_snap="$(az_lee snapshot show -g "${GRUPO}" -n "${snap}" --query timeCreated -o tsv)"
 			if [ -n "${estado_snap}" ]; then
@@ -454,9 +454,9 @@ caliente() {
 			if [ -z "${disco}" ]; then
 				mal "the OS disk of ${v} could not be read"; continue
 			fi
-			if "${AZ}" snapshot create -g "${GRUPO}" -n "${snap}" -l "${REGION}" \
+			if salida_snap="$("${AZ}" snapshot create -g "${GRUPO}" -n "${snap}" -l "${REGION}" \
 				--source "${disco}" --sku Standard_LRS --incremental true \
-				--query provisioningState -o tsv 2>/dev/null | grep -q '^Succeeded$'; then
+				--query provisioningState -o tsv 2>/dev/null)" && grep -q '^Succeeded$' <<< "${salida_snap}"; then
 				ok "${snap} created in ${REGION}"
 				hechos=$((hechos + 1))
 			else

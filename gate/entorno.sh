@@ -311,7 +311,7 @@ fi
 
 printf 'ENTORNO: %s | bash %s | %s | grep lee \\t como %s\n' \
 	"$(uname -s -r -m)" "${BASH_VERSION:-no-bash}" \
-	"$(grep --version 2>/dev/null | head -1)" "$(entorno_lectura_de_tab)"
+	"$(grep --version 2>/dev/null | sed -n 1p)" "$(entorno_lectura_de_tab)"
 
 ENTORNO_SOSPECHOSOS="$(entorno_escapes_sin_definir "$0")"
 if [ -n "${ENTORNO_SOSPECHOSOS}" ]; then
