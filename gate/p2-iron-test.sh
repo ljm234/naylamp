@@ -1762,6 +1762,87 @@ printf '%s\n' "${READER_LINE}" > "${BANCO}/arming-channel.reader"
 } > "${BANCO}/arming-channel.sh"
 roja 17if "1|3|si|si" "$(bash "${BANCO}/arming-channel.sh" 2>/dev/null | grep -c '^ARMED 3$')|$(cat "${BANCO}"/arming-channel/arma-rc-* 2>/dev/null | awk 'END{print NR}')|$(range_ok "${BANCO}/arming-channel.piece" 'testigo_arma' 'wait ${pids_arma}' && echo si || echo no)|$(piece_ok "${BANCO}/arming-channel.reader" "${READER_PATTERN}" && echo si || echo no)" "the parallel arming, with the writer and the reader EXTRACTED from the phase and a testigo_arma that arms well and ALSO prints one line: the three canaries are read as armed and the status channel keeps ONE line per node. With the redirect behind the fi, the testigo's line lands in the status file, the reader compares the WHOLE FILE against 0, the three nodes are noted as unable to arm and the phase reddens over a healthy fleet. The third and fourth columns are the EXTRACTION GUARDS of the two halves this row takes out of the phase: the arming range, which has to end on the anchor that closes it, and the reader's line, which has to keep being the one that reads the status file. Without them either anchor moving would bring the first two columns down for a cause that is not the one being measured"
 
+# ---- 17ja and 17jb: THE QUESTION THE TWO verify-log CALLS ASK -------------------
+#
+# CONDITION TWO OF 2026-09-09, and these are its rows. gate/p2.sh calls verify-log with
+# -durable in two places: in phase_recover_lecturas, where P2.recover.faithful counts
+# the cold copies that verify faithful, and in phase_red_fierro, where P2.red.barrier
+# counts the hosts whose barrierless mutant lost its acked write. The flag makes
+# verify-log audit what the copy holds on disk instead of what its hard state calls
+# committed. A replica cut milliseconds after an acknowledgement holds the entry on
+# disk and learns that it is committed only from a later message, and
+# TestVerifyLog_DurableFlagChangesTheQuestion, in engine/cmd/naylampd, measures that
+# the two readings answer differently on such a copy. Without the flag a correct
+# replica cut right after an ack verifies unfaithful, so P2.recover.faithful can turn
+# red over a correct engine; and a host whose mutant kept the acked write on disk
+# counts as a loss, so P2.red.barrier can pass over a barrier whose absence cost the
+# mutant nothing.
+#
+# EACH ROW RUNS ITS LOOP, EXTRACTED FROM THE PHASE, against a stub verify-log that
+# answers as such a copy does: faithful when -durable is among its arguments, and NOT
+# FAITHFUL otherwise. The first column is what the loop counts against the stub; the
+# second, how many of its three calls carried -durable; the third, what the same loop
+# counts with -durable taken out of it, which is the half that proves the stub tells
+# the two readings apart; and the fourth is the extraction guard, the range that has to
+# hold the call and end on the done that closes the loop. The sweep's mutants M57 and
+# M58 take the flag out of gate/p2.sh itself, one call each, and each has to bring down
+# its row. The rows read the text of the two phases and call neither of them, so the
+# names of the phases go quoted, as data, which is how gate/sitio-test.sh tells a row
+# that reads a phase from one that calls it. Everything these rows write is under the
+# workshop, and nothing is piped.
+DURABLE_DIR="${BANCO}/durable"
+rm -rf -- "${DURABLE_DIR}"
+mkdir -p "${DURABLE_DIR}"
+printf '%s\n' '#!/bin/sh' \
+	'# verify-log as a copy cut right after an ack answers it: the entry is on disk and' \
+	'# the hard state does not yet call it committed (stub of rows 17ja and 17jb)' \
+	'[ "$1" = verify-log ] || exit 2' \
+	'd=no' \
+	'for a in "$@"; do [ "${a}" = -durable ] && d=si; done' \
+	'echo "durable=${d}" >> "${DURABLE_CALLS}"' \
+	'[ "${d}" = si ] && exit 0' \
+	'echo "verify: NOT FAITHFUL instrument=committed (stub of rows 17ja and 17jb)"' \
+	'exit 1' > "${DURABLE_DIR}/naylampd"
+chmod +x "${DURABLE_DIR}/naylampd"
+# durable_piece <function> <first line of the piece> <file>: the lines of the function in
+# gate/p2.sh from the first one that holds the text given to the done that closes its
+# loop, read from files and not through a pipe.
+durable_piece() {
+	awk -v f="$1" '$0 == f "() {" {p = 1} p {print} p && $0 == "}" {exit}' "${GATE_DIR}/p2.sh" > "$3.body"
+	awk -v a="$2" 'index($0, a) {p = 1} p {print} p && $0 == "\tdone" {exit}' "$3.body" > "$3"
+}
+# durable_run <piece> <directory> <name of the count> <script>: writes the script that runs
+# the piece inside a function, with the stub as BIN and the functions it calls stubbed,
+# runs it, and prints the count the piece leaves; the directory is made anew each time.
+durable_run() {
+	rm -rf -- "$2"
+	mkdir -p "$2/cold-node1" "$2/cold-node2" "$2/cold-node3"
+	{
+		printf '%s\n' 'set -euo pipefail' 'NODE_IDS=(1 2 3)' 'ES_FIERRO=1' 'DIM=3'
+		printf '%s\n' 'HOSTS=([1]=192.0.2.1 [2]=192.0.2.2 [3]=192.0.2.3)' 'SSH_OPTS=(-o BatchMode=yes)' 'NAYLAMP_GATE_USER=stub'
+		printf 'OUT_LOCAL=%s\n' "'$2'"
+		printf 'MANIFEST=%s\n' "'$2/manifest.txt'"
+		printf 'BIN=%s\n' "'${DURABLE_DIR}/naylampd'"
+		printf 'export DURABLE_CALLS=%s\n' "'$2/calls'"
+		printf '%s\n' 'fail() { :; }' 'note() { :; }' 'scp() { return 0; }' 'vec_for() { echo "[1 0 0]"; }'
+		printf '%s\n' 'peers_of() { echo "1=a,2=b,3=c"; }' 'mayoria_de() { echo 2; }'
+		printf '%s\n' 'echo "put 7 [1 0 0] confirmed" > "${MANIFEST}"' ': > "${DURABLE_CALLS}"'
+		printf '%s\n' 'the_loop() {' '	local perdidas=0 fieles=0'
+		cat "$1"
+		printf '%s\n' "	echo \"$3 \${$3}\"" '}' 'the_loop'
+	} > "$4"
+	bash "$4" > "$4.out" 2>&1
+	sed -n "s/^$3 //p" "$4.out"
+}
+durable_piece 'phase_recover_lecturas' 'local copia fieles=0 mayoria' "${DURABLE_DIR}/recover.piece"
+durable_piece 'phase_red_fierro' 'local ilegibles_perdida=0' "${DURABLE_DIR}/red.piece"
+DURABLE_TEXT="$(cat "${DURABLE_DIR}/recover.piece")"
+printf '%s\n' "${DURABLE_TEXT// -durable / }" > "${DURABLE_DIR}/recover-without.piece"
+DURABLE_TEXT="$(cat "${DURABLE_DIR}/red.piece")"
+printf '%s\n' "${DURABLE_TEXT// -durable / }" > "${DURABLE_DIR}/red-without.piece"
+roja 17ja "3|3|0|si" "$(durable_run "${DURABLE_DIR}/recover.piece" "${DURABLE_DIR}/recover" fieles "${DURABLE_DIR}/recover.sh")|$(awk '$0 == "durable=si" {n++} END {print n + 0}' "${DURABLE_DIR}/recover/calls" 2>/dev/null)|$(durable_run "${DURABLE_DIR}/recover-without.piece" "${DURABLE_DIR}/recover-without" fieles "${DURABLE_DIR}/recover-without.sh")|$(range_ok "${DURABLE_DIR}/recover.piece" 'verify-log' 'done' && echo si || echo no)" "P2.recover.faithful asks verify-log the DURABLE question: its loop, extracted from phase_recover_lecturas and run against a verify-log that answers as a replica cut right after an ack, with the entry on disk and its hard state not yet calling it committed, counts the three cold copies faithful, and each of its three calls carries -durable. With -durable taken out of the same loop it counts none, which is the committed reading calling a correct engine unfaithful. The fourth column is the extraction guard: the range holds the call and ends on the done of its loop"
+roja 17jb "0|3|3|si" "$(durable_run "${DURABLE_DIR}/red.piece" "${DURABLE_DIR}/red" perdidas "${DURABLE_DIR}/red.sh")|$(awk '$0 == "durable=si" {n++} END {print n + 0}' "${DURABLE_DIR}/red/calls" 2>/dev/null)|$(durable_run "${DURABLE_DIR}/red-without.piece" "${DURABLE_DIR}/red-without" perdidas "${DURABLE_DIR}/red-without.sh")|$(range_ok "${DURABLE_DIR}/red.piece" 'verify-log' 'done' && echo si || echo no)" "and P2.red.barrier asks the barrierless mutant the same question: its loop, extracted from phase_red_fierro and run against the same verify-log, counts no host as having lost the acked write, and each of its three calls carries -durable. With -durable taken out it counts a loss on all three, which would let the red arm pass over a barrier whose absence cost the mutant nothing. The fourth column is the extraction guard of that loop"
+
 
 
 

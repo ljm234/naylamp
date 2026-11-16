@@ -631,6 +631,18 @@ mutante M56 '	if [ "${acks_en_vuelo}" -gt 0 ]; then' \
 '	if [ "${acks_en_vuelo}" -gt 999 ]; then' \
 'the in-flight verdict never reaches pass, even with acks'
 
+# M57 AND M58: CONDITION TWO OF 2026-09-09. Each takes -durable out of one of the two
+# verify-log calls of gate/p2.sh, and the row of the bench that has to fall is 17ja for
+# the first and 17jb for the second: without the flag the copy is audited for what its
+# hard state calls committed, and not for what it holds on disk.
+mutante M57 '-manifest "${MANIFEST}" -dim "${DIM}" -durable' \
+'-manifest "${MANIFEST}" -dim "${DIM}"' \
+'P2.recover.faithful audits what the hard state calls committed: a correct replica cut right after an ack verifies unfaithful'
+
+mutante M58 '-manifest "${OUT_LOCAL}/manifest-mutante.txt" -dim "${DIM}" -durable' \
+'-manifest "${OUT_LOCAL}/manifest-mutante.txt" -dim "${DIM}"' \
+'the red arm audits what the hard state calls committed: a mutant that kept its acked write on disk counts as a loss'
+
 T_FIN="$(/usr/bin/python3 -c 'import time; print("%.3f" % time.time())' 2>/dev/null || echo 0)"
 /usr/bin/python3 -c "print('clock: %.1f s end to end, %s bench runs, the control run included' % (${T_FIN} - ${T_INICIO}, ${MUTANTES} + 1))" 2>/dev/null || true
 echo "RESULTADO: ${MUTANTES} rows, $((MUDOS + MITADES_MAL)) failing"
